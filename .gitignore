@@ -1,0 +1,46 @@
+.DS_Store
+.vscode
+__pycache__/
+.pytest_cache/
+logs/
+artifacts/
+assets/
+examples/
+sample_results/
+gradio_results/
+gradio_results_multigpu/
+checkpoints/
+*.ckpt
+*.safetensors
+*.bin
+tools/
+*.egg-info/
+dist/
+bin/
+node_modules/
+frontend/dist/
+.env
+.env.local
+.venv/
+.agents/
+.cursor/
+server/cyberverse-server
+
+# Generated proto code
+inference/generated/*_pb2*.py
+
+# Local configuration files
+*.local.md
+
+
+server/recordings/
+data/
+.superpowers/
+
+# LiveAct outputs
+*.mp4
+tmp_*.mp4
+models/SoulX-LiveAct/hls_output/
+models/SoulX-LiveAct/uploads/
+
+skills-lock.json

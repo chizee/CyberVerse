@@ -1,0 +1,263 @@
+# CyberVerse
+
+[English](README.md) | **简体中文** | [日本語](README.ja.md) | [한국어](README.ko.md)
+
+### 一张照片，让数字人真正「活」起来。
+
+> 你是否想过拥有一个属于自己的 J.A.R.V.I.S.——能真正看见你、听见你、陪伴你的 AI？
+
+> 想再次见到思念之人，听见 TA 的声音，看见 TA 对你微笑？
+
+> 又或者，你一直想把某个角色带到现实世界中？
+>
+**只需一张照片，CyberVerse 就能让 TA 「活」过来。**
+
+CyberVerse 是开源的**数字人智能体平台**，支持实时视频通话。你可以创建一个能看、能听、能面对面交流的 AI 智能体，体验与真实视频通话无异。
+
+[![License: GPL v3](https://img.shields.io/badge/License-GPL%20v3-blue.svg)](LICENSE)
+
+## 功能特性
+
+### 实时视频通话
+
+不是预录视频，也不是回合制交互，而是与数字人进行低延迟的实时视频通话，首帧约 **1.5 秒**。底层基于 WebRTC，支持 P2P 流传输，并内置 TURN / NAT 穿透能力。
+
+### 数字人即 Agent
+
+数字人不只是一个能和你对话的形象，更是一个真正能帮你做事的 AI。
+
+### 一张照片即可生成
+
+上传一张照片即可创建数字人。由行业最新的数字人模型提供实时面部动画、自然口型同步与待机呼吸感，无需 3D 建模或动作捕捉。
+
+### 自由组装你的 Agent
+
+大脑、面孔、声音、听觉——各模块可插拔。通过 YAML 即可组合 LLM、TTS、ASR 与 Avatar 后端。
+
+## 演示
+
+<!-- TODO: 在这里添加演示 GIF 或截图 -->
+<!-- ![Demo](docs/assets/demo.gif) -->
+
+## 硬件要求
+
+实时视频对话需要 GPU 加速。下表为 FlashHead 和 LiveAct 数字人模型的性能基准：
+
+| 模型 | 档位 | GPU | 数量 | 分辨率 | FPS | 实时运行？ |
+|-------|---------|-----|-------|------------|-----|------------|
+| FlashHead 1.3B | Pro | RTX 5090 | 2 | 512×512 | 25+ | ✅ 是 |
+| FlashHead 1.3B | Pro | RTX 4090 | 1 | 512×512 | ~10.8 | ❌ 否 |
+| FlashHead 1.3B | Lite | RTX 4090 | 1 | 512×512 | 96 | ✅ 是 |
+| LiveAct 18B | — | RTX PRO 6000 | 2 | 320×480 | 20 | ✅ 是 |
+
+> **Pro** 提供更高的画质；**Lite** 针对速度进行了优化。算力接近 2× RTX 5090 的 GPU（例如 A100 80GB、H100）可以实时运行 Pro 模型。Lite 可在单张 RTX 4090 上实现实时运行。
+
+## 快速开始
+
+### 前置条件
+
+- Python 3.10+
+- Node 18+
+- Go 1.22+
+- PyTorch 2.8（CUDA 12.8）
+- 支持 CUDA 12.8+ 的 GPU
+- FFmpeg（需包含 `libvpx`，用于视频编码）
+
+### 第 1 步：克隆仓库
+
+```bash
+git clone https://github.com/anthropics/CyberVerse.git
+cd CyberVerse
+```
+
+### 第 2 步：创建 Python 环境
+
+```bash
+conda create -n cyberverse python=3.10
+conda activate cyberverse
+```
+
+### 第 3 步：配置环境变量
+
+```bash
+cp infra/.env.example .env
+```
+
+编辑 `.env`，填入你的 API Key：
+
+```
+DOUBAO_ACCESS_TOKEN=your_doubao_access_token   # ByteDance Doubao 语音 LLM
+DOUBAO_APP_ID=your_doubao_app_id
+```
+
+服务启动后，你也可以在 Web UI 的 **`/settings`** 页面修改这些值（以及其他 API Key / 服务端点），而不必只依赖编辑 `.env`。
+
+### 第 4 步：下载模型权重
+
+CyberVerse 可以使用 **FlashHead** 或 **LiveAct** 作为 Avatar 后端（参见 `cyberverse_config.yaml` 中的 `inference.avatar.default`）。**你不需要下载下面的所有资源**，只需下载你实际要运行的那一套即可（FlashHead 使用 `facebook/wav2vec2-base-960h`；LiveAct 使用 `chinese-wav2vec2-base`）。
+
+```bash
+pip install "huggingface_hub[cli]"
+```
+
+#### FlashHead（SoulX-FlashHead）
+
+| 模型组件 | 说明 | 链接 |
+| :--- | :--- | :--- |
+| `SoulX-FlashHead-1_3B` | 1.3B FlashHead 权重 | [Hugging Face](https://huggingface.co/Soul-AILab/SoulX-FlashHead-1_3B) |
+| `wav2vec2-base-960h` | 音频特征提取器 | [Hugging Face](https://huggingface.co/facebook/wav2vec2-base-960h) |
+
+```bash
+# 如果你在中国大陆，可以先使用镜像：
+# export HF_ENDPOINT=https://hf-mirror.com
+
+huggingface-cli download Soul-AILab/SoulX-FlashHead-1_3B \
+  --local-dir ./checkpoints/SoulX-FlashHead-1_3B
+
+huggingface-cli download facebook/wav2vec2-base-960h \
+  --local-dir ./checkpoints/wav2vec2-base-960h
+```
+
+#### LiveAct（SoulX-LiveAct）
+
+| 模型名称 | 下载 |
+|-----------|----------|
+| SoulX-LiveAct | [Hugging Face](https://huggingface.co/Soul-AILab/LiveAct), [ModelScope](https://modelscope.cn/models/Soul-AILab/LiveAct) |
+| chinese-wav2vec2-base | [Hugging Face](https://huggingface.co/TencentGameMate/chinese-wav2vec2-base) |
+
+```bash
+huggingface-cli download Soul-AILab/LiveAct \
+  --local-dir ./checkpoints/LiveAct
+
+huggingface-cli download TencentGameMate/chinese-wav2vec2-base \
+  --local-dir ./checkpoints/chinese-wav2vec2-base
+```
+
+
+### 第 5 步：更新配置
+
+编辑 `cyberverse_config.yaml`，将模型路径更新为你的本地 checkpoint 路径：
+
+```yaml
+inference:
+  avatar:
+    flash_head:
+      checkpoint_dir: "./checkpoints/SoulX-FlashHead-1_3B"  # ← 你的路径
+      wav2vec_dir: "./checkpoints/wav2vec2-base-960h"        # ← 你的路径
+      cuda_visible_devices: 0      # 你的 GPU ID，例如多卡可写 0,1
+      world_size: 1                # GPU 数量，双卡时设为 2
+      model_type: "lite"           # 如需更高画质可设为 "pro"（需要更多 GPU）
+```
+
+你也可以先跳过这里的路径编辑，稍后再在 Web UI 中调整这些选项。
+
+### 第 6 步：安装 SageAttention 和 FlashAttention（可选）
+
+```bash
+# SageAttention
+pip install sageattention==2.2.0 --no-build-isolation
+```
+
+```bash
+# FlashAttention（可选）
+pip install ninja
+pip install flash_attn==2.8.0.post2 --no-build-isolation
+```
+
+> 如果编译很慢，可以从 [flash-attention releases](https://github.com/Dao-AILab/flash-attention/releases/tag/v2.8.0.post2) 下载预编译 wheel，然后执行 `pip install <wheel>.whl`。
+
+
+
+### 第 7 步：安装项目依赖
+
+```bash
+make setup
+```
+
+这一步会安装基础可编辑包（`[dev,inference]`）、生成 gRPC stubs，并安装前端依赖。若你还需要额外的 Python 包，可以选择一次安装**全部**（体积较大），或按需安装 [`pyproject.toml`](pyproject.toml) 中 `[project.optional-dependencies]` 列出的可选组：
+
+```bash
+# 一次安装全部可选组
+pip install -e ".[all]"
+
+# 或按需选择，例如：
+pip install -e ".[voice_llm,flash_head]"
+pip install -e ".[live_act]"
+```
+
+### 第 8 步：启动服务（3 个终端）
+
+**终端 1** — Python 推理服务：
+
+```bash
+conda activate cyberverse
+make inference
+```
+
+`make inference` 会读取 `cyberverse_config.yaml` 中的 `inference.avatar.default`，并且只在当前推理进程中初始化该一个 Avatar 模型。启动日志会打印当前激活的 Avatar 模型名称。
+
+等待日志中出现：
+
+- `Active avatar model initialized: <model_name>`
+- `CyberVerse Inference Server started on port 50051`
+
+**终端 2** — Go API 服务：
+
+```bash
+make server
+```
+
+**终端 3** — 前端：
+
+```bash
+make frontend
+```
+
+### 第 9 步：验证
+
+```bash
+# 检查 API 健康状态
+curl -s http://localhost:8080/api/v1/health
+```
+
+在浏览器中打开 http://localhost:5173，即可开始使用。
+
+## 路线图
+
+### **数字人创建平台**
+配置角色、推理参数，并启动实时数字人会话。
+
+- [x] 支持角色 CRUD，包含多张参考图、激活图、固定/随机展示模式、可选人脸裁剪、标签、声音字段、人格设定、欢迎语和系统提示词
+- [x] 基于参考图，通过可配置 Avatar 插件（例如 FlashHead、LiveAct）驱动实时头像视频
+- [x] 基于 WebRTC 的实时语音和视频能力，支持**直连** P2P（内嵌 TURN）或 **LiveKit** SFU（`pipeline.streaming_mode`）；会话支持 **voice_llm** 和 **standard**（text → LLM → TTS → avatar）两种流水线
+- [x] YAML 可插拔推理栈（avatar、voice LLM、LLM、TTS、ASR）；提供 Avatar 参数启动 UI；切换默认 Avatar 模型通常需要重启推理服务
+- [x] 提供 Web **Settings**（`/settings`）用于配置 API Key 和服务端点，支持连接测试和持久化
+- [x] 按角色将会话历史持久化到磁盘，并通过 REST API 暴露
+- [x] 支持可选的会话视频录制（`cyberverse_config.yaml` 中的 `recording`）
+- [ ] 支持知识和文档导入，用于基于角色知识的回答（RAG）
+
+### 2. **可执行任务的数字人**
+让数字人成为具备记忆、工具和任务执行能力的智能体。
+
+- [ ] 增加跨会话的长期记忆
+- [ ] 增加工具使用和函数调用
+- [ ] 增加工作流执行和任务完成能力
+
+### 3. **智能体网络**
+连接多个智能体，让它们能够沟通、协作并形成网络。
+
+- [ ] 支持 agent-to-agent 通信
+- [ ] 支持多智能体协作与委派
+- [ ] 支持智能体之间共享记忆与知识
+- [ ] 构建开放的智能体互联网络
+
+## 许可证
+
+GNU General Public License v3.0，详见 [LICENSE](LICENSE)
+
+## 致谢
+
+- [SoulX-FlashHead](https://github.com/Soul-AILab/SoulX-FlashHead) — Soul AI Lab 提供的 Avatar 模型
+
+- [SoulX-LiveAct](https://github.com/Soul-AILab/SoulX-LiveAct) - Soul AI Lab 提供的 Avatar 模型
+- [Pion](https://github.com/pion/webrtc) — Go WebRTC 实现

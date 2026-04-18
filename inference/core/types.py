@@ -1,0 +1,64 @@
+from dataclasses import dataclass, field
+from typing import Any
+import numpy as np
+
+
+@dataclass
+class AudioChunk:
+    data: bytes
+    sample_rate: int = 16000
+    channels: int = 1
+    format: str = "float32"
+    is_final: bool = False
+    timestamp_ms: int = 0
+    duration_ms: int = 0
+
+
+@dataclass
+class VideoChunk:
+    frames: np.ndarray  # (N, H, W, 3) uint8
+    fps: int = 25
+    chunk_index: int = 0
+    is_final: bool = False
+
+
+@dataclass
+class TranscriptEvent:
+    text: str
+    is_final: bool = False
+    language: str = ""
+    confidence: float = 0.0
+
+
+@dataclass
+class LLMResponseChunk:
+    token: str
+    accumulated_text: str = ""
+    is_sentence_end: bool = False
+    is_final: bool = False
+
+
+@dataclass
+class VoiceLLMOutputEvent:
+    audio: AudioChunk | None = None
+    transcript: str = ""
+    user_transcript: str = ""
+    is_final: bool = False
+
+
+@dataclass
+class VoiceLLMSessionConfig:
+    """Per-session character config passed from Go through gRPC."""
+    session_id: str = ""
+    system_prompt: str = ""
+    voice: str = ""
+    bot_name: str = ""
+    speaking_style: str = ""
+    welcome_message: str | None = None
+
+
+@dataclass
+class PluginConfig:
+    plugin_name: str
+    params: dict[str, Any] = field(default_factory=dict)
+    shared: dict[str, Any] = field(default_factory=dict)

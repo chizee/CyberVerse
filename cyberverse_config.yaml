@@ -1,0 +1,109 @@
+server:
+    host: "0.0.0.0"
+    http_port: 8080
+    grpc_port: 50051
+    cors_origins: ["*"]
+livekit:
+    url: "${LIVEKIT_URL}"
+    api_key: "${LIVEKIT_API_KEY}"
+    api_secret: "${LIVEKIT_API_SECRET}"
+redis:
+    url: "redis://localhost:6379"
+# Warmup configuration for reducing first frame inference latency
+warmup:
+    enabled: true
+    distributed:
+        enabled: true # Enable warmup in multi-GPU mode
+        timeout_s: 30 # Timeout in seconds to prevent hangs
+inference:
+    avatar:
+        default: "live_act"
+        flash_head:
+            plugin_class: "inference.plugins.avatar.flash_head_plugin.FlashHeadAvatarPlugin"
+            models_dir: "models"
+            checkpoint_dir: "/root/autodl-tmp/models/SoulX-FlashHead-1_3B"
+            wav2vec_dir: "/root/autodl-tmp/models/wav2vec2-base-960h"
+            model_type: "pro"
+            # 指定可见GPU卡号，等价于导出 CUDA_VISIBLE_DEVICES=0,1
+            cuda_visible_devices: 0,1
+            # 单机单任务多卡：设置为2/4等；需使用torchrun启动并保证WORLD_SIZE一致
+            world_size: 2
+            device: "cuda:0"
+            seed: 9999
+            # 相对路径相对于启动推理服务时的进程工作目录（仓库根目录执行 make inference 时即仓库根）
+            default_avatar_image: "examples/girl.png"
+            default_avatar_use_face_crop: false
+        live_act:
+            plugin_class: "inference.plugins.avatar.live_act_plugin.LiveActAvatarPlugin"
+            models_dir: "models/SoulX-LiveAct"
+            ckpt_dir: "/root/autodl-tmp/models/LiveAct"
+            wav2vec_dir: "/root/autodl-tmp/models/chinese-wav2vec2-base"
+            size: "320*480"
+            fps: 20
+            seed: 42
+            audio_cfg: 1.0
+            t5_cpu: false
+            fp8_kv_cache: false
+            offload_cache: false
+            block_offload: false
+            mean_memory: false
+            cuda_visible_devices: 0,1
+            world_size: 2
+            compile_wan_model: false
+            compile_vae_decode: false
+            default_avatar_image: "models/SoulX-LiveAct/examples/image/1.png"
+            default_prompt: "一个人在说话"
+
+    voice_llm:
+        default: "doubao"
+        doubao:
+            plugin_class: "inference.plugins.voice_llm.doubao_realtime.DoubaoRealtimePlugin"
+            access_token: "${DOUBAO_ACCESS_TOKEN}"
+            app_id: "${DOUBAO_APP_ID}"
+            # 参考 skill 文档与 code-example：示例所用域名，否则在当前环境会出现 DNS 解析失败
+            ws_url: "wss://openspeech.bytedance.com/api/v3/realtime/dialogue"
+            voice_type: "zh_female_default"
+            system_prompt: "你是一个友善的数字人助手。"
+            # Avoid DialogAudioIdleTimeoutError before FlashHead's first chunk arrives.
+            end_smooth_window_ms: 6000
+    llm:
+        default: "openai"
+        openai:
+            plugin_class: "inference.plugins.llm.openai_plugin.OpenAILLMPlugin"
+            api_key: "${OPENAI_API_KEY}"
+            model: "gpt-4o"
+            temperature: 0.7
+            system_prompt: "你是一个友善的数字人助手。"
+    tts:
+        default: "openai"
+        openai:
+            plugin_class: "inference.plugins.tts.openai_tts_plugin.OpenAITTSPlugin"
+            api_key: "${OPENAI_API_KEY}"
+            model: "tts-1"
+            voice: "nova"
+    asr:
+        default: "whisper"
+        whisper:
+            plugin_class: "inference.plugins.asr.whisper_plugin.WhisperASRPlugin"
+            model_size: "base"
+            language: "auto"
+            device: "cpu"
+session:
+    max_concurrent: 4
+    idle_timeout_s: 300
+    max_duration_s: 3600
+pipeline:
+    default_mode: "voice_llm"
+    streaming_mode: "direct" # "direct" = P2P WebRTC (pion), "livekit" = LiveKit SFU
+    turn_enabled: true
+    turn_port: 8443 # TCP port for embedded TURN server (SSH tunnel)
+    turn_realm: "cyberverse"
+    turn_username: "cyberverse"
+    turn_password: "${TURN_PASSWORD}"
+    ice_public_ip: "" # Set real public IP/domain when needed; empty defaults to 127.0.0.1
+recording:
+    enabled: true # 设为 true 开启录制
+    output_dir: "./recordings"
+    crf: 23
+inference_grpc:
+    addr: "localhost:50051"

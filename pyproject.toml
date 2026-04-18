@@ -1,0 +1,81 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cyberverse"
+version = "0.1.0"
+description = "CyberVerse - Real-time Interactive Digital Human Platform"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.24",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+inference = [
+    "grpcio>=1.60",
+    "grpcio-tools>=1.60",
+]
+llm = ["openai>=1.0"]
+tts = ["openai>=1.0"]
+voice_llm = ["websockets>=12.0"]
+flash_head = [
+    "opencv-python>=4.12.0",
+    "opencv-python-headless>=4.12.0",
+    "diffusers>=0.34.0",
+    "transformers==4.57.3",
+    "tokenizers>=0.20.3",
+    "accelerate>=1.8.1",
+    "tqdm",
+    "imageio",
+    "easydict",
+    "ftfy",
+    "imageio-ffmpeg",
+    "scikit-image",
+    "loguru",
+    "gradio==5.50.0",
+    "xfuser>=0.4.3",
+    "pyloudnorm",
+    "decord",
+    "xformers==0.0.31",
+    "librosa",
+    "mediapipe>=0.10.13",
+    "flask",
+    "nvidia-nccl-cu12==2.26.2",
+]
+live_act = [
+    "opencv-python>=4.11.0",
+    "diffusers>=0.31.0",
+    "transformers>=4.49.0",
+    "tokenizers>=0.20.3",
+    "accelerate>=1.12.1",
+    "tqdm",
+    "imageio",
+    "easydict",
+    "ftfy",
+    "imageio-ffmpeg",
+    "scikit-image",
+    "loguru",
+    "xfuser==0.4.5",
+    "einops",
+    "safetensors",
+]
+asr = ["openai-whisper>=20231117"]
+dev = [
+    "pytest>=7.0",
+    "pytest-asyncio>=0.21",
+]
+all = [
+    "cyberverse[inference,llm,tts,voice_llm,asr,flash_head,live_act]",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+markers = [
+    "integration: 需要 GPU、权重与 flash_head 等重依赖的端到端测试（较慢）",
+]
+
+[tool.setuptools.packages.find]
+include = ["inference*"]

@@ -1,0 +1,45 @@
+syntax = "proto3";
+package cyberverse;
+
+option go_package = "github.com/cyberverse/server/internal/pb";
+
+import "common.proto";
+
+service VoiceLLMService {
+  rpc Converse (stream VoiceLLMInput) returns (stream VoiceLLMOutput);
+  rpc Interrupt (InterruptRequest) returns (InterruptResponse);
+}
+
+message VoiceLLMInput {
+  oneof input {
+    AudioChunk audio = 1;
+    string text = 2;
+    VoiceLLMConfig config = 3;
+  }
+}
+
+message VoiceLLMOutput {
+  AudioChunk audio = 1;
+  string transcript = 2;
+  string user_transcript = 3;
+  bool is_final = 4;
+  reserved 5; // removed: video comes from AvatarService.GenerateStream only
+}
+
+message VoiceLLMConfig {
+  string session_id = 1;
+  string system_prompt = 2;
+  string voice = 3;
+  float temperature = 4;
+  string bot_name = 5;
+  string speaking_style = 6;
+  string welcome_message = 7;
+}
+
+message InterruptRequest {
+  string session_id = 1;
+}
+
+message InterruptResponse {
+  bool success = 1;
+}

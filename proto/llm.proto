@@ -1,0 +1,32 @@
+syntax = "proto3";
+package cyberverse;
+
+option go_package = "github.com/cyberverse/server/internal/pb";
+
+service LLMService {
+  rpc GenerateStream (LLMRequest) returns (stream LLMChunk);
+}
+
+message LLMRequest {
+  string session_id = 1;
+  repeated ChatMessage messages = 2;
+  LLMConfig config = 3;
+}
+
+message ChatMessage {
+  string role = 1;
+  string content = 2;
+}
+
+message LLMConfig {
+  string model = 1;
+  float temperature = 2;
+  int32 max_tokens = 3;
+}
+
+message LLMChunk {
+  string token = 1;
+  string accumulated_text = 2;
+  bool is_sentence_end = 3;
+  bool is_final = 4;
+}

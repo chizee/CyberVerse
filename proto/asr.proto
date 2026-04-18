@@ -1,0 +1,17 @@
+syntax = "proto3";
+package cyberverse;
+
+option go_package = "github.com/cyberverse/server/internal/pb";
+
+import "common.proto";
+
+service ASRService {
+  rpc TranscribeStream (stream AudioChunk) returns (stream TranscriptEvent);
+}
+
+message TranscriptEvent {
+  string text = 1;
+  bool is_final = 2;
+  string language = 3;
+  float confidence = 4;
+}

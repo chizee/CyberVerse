@@ -1,0 +1,61 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
+@import "tailwindcss";
+
+/* Design tokens as CSS custom properties */
+@theme {
+  --color-cv-base: #121214;
+  --color-cv-surface: #1c1c20;
+  --color-cv-elevated: #26262c;
+  --color-cv-hover: #2e2e36;
+  --color-cv-accent: #3b82f6;
+  --color-cv-accent-hover: #60a5fa;
+  --color-cv-accent-muted: #1e3a5f;
+  --color-cv-accent-glow: rgba(59, 130, 246, 0.15);
+  --color-cv-success: #22c55e;
+  --color-cv-success-muted: #162d1f;
+  --color-cv-warning: #f59e0b;
+  --color-cv-warning-muted: #2d2510;
+  --color-cv-danger: #ef4444;
+  --color-cv-danger-muted: #2d1515;
+  --color-cv-text: #f0f0f5;
+  --color-cv-text-secondary: #8b8b9e;
+  --color-cv-text-muted: #55556a;
+  --color-cv-border: #2a2a35;
+  --color-cv-border-subtle: #222228;
+
+  /* Cyber theme colors */
+  --color-cyber-base: #040507;
+  --color-cyber-cyan: #34e6f3;
+  --color-cyber-cyan-glow: rgba(52, 230, 243, 0.42);
+  --color-cyber-rose: #ff5f89;
+  --color-cyber-rose-glow: rgba(255, 95, 137, 0.34);
+  --color-cyber-text: #fbf6ef;
+  --color-cyber-surface: #090b10;
+  --color-cyber-muted: #6a7280;
+  --color-cyber-label: #8dcdd2;
+  --color-cyber-border: rgba(61, 68, 81, 0.82);
+}
+
+/* Base styles */
+body {
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  background: var(--color-cv-base);
+  color: var(--color-cv-text);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-cv-border);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-cv-text-muted);
+}
