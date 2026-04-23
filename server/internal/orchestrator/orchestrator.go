@@ -234,6 +234,15 @@ func (o *Orchestrator) HealthCheck(ctx context.Context) error {
 	return o.inference.HealthCheck(ctx)
 }
 
+func (o *Orchestrator) CheckVoice(ctx context.Context, voiceType string) (string, error) {
+	if o == nil || o.inference == nil {
+		return "", errors.New("inference service is not configured")
+	}
+	return o.inference.CheckVoice(ctx, inference.VoiceLLMSessionConfig{
+		Voice: voiceType,
+	})
+}
+
 func (o *Orchestrator) AvatarInfo(ctx context.Context) (*pb.AvatarInfo, error) {
 	if o == nil || o.inference == nil {
 		return nil, errors.New("inference service is not configured")

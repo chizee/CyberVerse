@@ -5,7 +5,18 @@ from inference.core.types import VoiceLLMOutputEvent, VoiceLLMSessionConfig
 from inference.plugins.base import CyberVersePlugin
 
 
+class VoiceCheckError(RuntimeError):
+    """Raised when a provider rejects a voice check request."""
+
+
 class VoiceLLMPlugin(CyberVersePlugin):
+    @abstractmethod
+    async def check_voice(
+        self,
+        session_config: VoiceLLMSessionConfig | None = None,
+    ) -> None:
+        ...
+
     @abstractmethod
     async def converse_stream(
         self,

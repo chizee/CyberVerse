@@ -1,9 +1,12 @@
+import asyncio
 import logging
+
+import grpc
 
 from inference.core.registry import PluginRegistry
 from inference.core.types import AudioChunk, VoiceLLMSessionConfig
 from inference.generated import common_pb2, voice_llm_pb2, voice_llm_pb2_grpc
-from inference.plugins.voice_llm.base import VoiceLLMPlugin
+from inference.plugins.voice_llm.base import VoiceCheckError, VoiceLLMPlugin
 
 logger = logging.getLogger(__name__)
 
@@ -16,6 +19,17 @@ def _audio_chunk_to_pb(ac: AudioChunk) -> common_pb2.AudioChunk:
         format=ac.format or "",
         is_final=ac.is_final,
         timestamp_ms=ac.timestamp_ms,
+    )
+
+
+def _session_config_from_pb(cfg: voice_llm_pb2.VoiceLLMConfig) -> VoiceLLMSessionConfig:
+    return VoiceLLMSessionConfig(
+        session_id=cfg.session_id,
+        system_prompt=cfg.system_prompt,
+        voice=cfg.voice,
+        bot_name=cfg.bot_name,
+        speaking_style=cfg.speaking_style,
+        welcome_message=cfg.welcome_message,
     )
 
 
@@ -43,15 +57,7 @@ class VoiceLLMGRPCService(voice_llm_pb2_grpc.VoiceLLMServiceServicer):
         async for msg in request_iterator:
             which = msg.WhichOneof("input")
             if which == "config":
-                cfg = msg.config
-                session_config = VoiceLLMSessionConfig(
-                    session_id=cfg.session_id,
-                    system_prompt=cfg.system_prompt,
-                    voice=cfg.voice,
-                    bot_name=cfg.bot_name,
-                    speaking_style=cfg.speaking_style,
-                    welcome_message=cfg.welcome_message,
-                )
+                session_config = _session_config_from_pb(msg.config)
                 logger.debug(
                     "VoiceLLM session config: voice=%r bot_name=%r system_prompt=%r welcome=%r",
                     session_config.voice,
@@ -79,6 +85,34 @@ class VoiceLLMGRPCService(voice_llm_pb2_grpc.VoiceLLMServiceServicer):
             if event.user_transcript:
                 output.user_transcript = event.user_transcript
             yield output
+
+    async def CheckVoice(self, request, context):
+        try:
+            plugin = self._get_plugin()
+        except Exception as exc:
+            context.set_code(grpc.StatusCode.INTERNAL)
+            context.set_details(str(exc))
+            return voice_llm_pb2.CheckVoiceResponse(ok=False)
+
+        try:
+            await asyncio.wait_for(
+                plugin.check_voice(session_config=_session_config_from_pb(request.config)),
+                timeout=4.5,
+            )
+            return voice_llm_pb2.CheckVoiceResponse(ok=True)
+        except VoiceCheckError as exc:
+            return voice_llm_pb2.CheckVoiceResponse(
+                ok=False,
+                provider_error=str(exc),
+            )
+        except asyncio.TimeoutError:
+            context.set_code(grpc.StatusCode.DEADLINE_EXCEEDED)
+            context.set_details("voice check timed out")
+            return voice_llm_pb2.CheckVoiceResponse(ok=False)
+        except Exception as exc:
+            context.set_code(grpc.StatusCode.INTERNAL)
+            context.set_details(str(exc))
+            return voice_llm_pb2.CheckVoiceResponse(ok=False)
 
     async def Interrupt(self, request, context):
         plugin = self._get_plugin()

@@ -1,11 +1,12 @@
 """Tests for VoiceLLM gRPC service (audio-only; avatar is AvatarService)."""
 
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from inference.core.types import AudioChunk, VoiceLLMOutputEvent
 from inference.services.voice_llm_service import VoiceLLMGRPCService
+from inference.plugins.voice_llm.base import VoiceCheckError
 
 
 @pytest.mark.asyncio
@@ -60,3 +61,53 @@ async def test_converse_without_voice_llm_plugin_raises():
     with pytest.raises(RuntimeError, match="No VoiceLLM"):
         async for _ in svc.Converse(requests(), MagicMock()):
             pass
+
+
+@pytest.mark.asyncio
+async def test_check_voice_returns_ok():
+    reg = MagicMock()
+    voice = MagicMock()
+    voice.check_voice = AsyncMock(return_value=None)
+    reg.get_by_category = MagicMock(return_value=voice)
+
+    svc = VoiceLLMGRPCService(reg)
+
+    from inference.generated import voice_llm_pb2
+
+    req = voice_llm_pb2.CheckVoiceRequest(
+        config=voice_llm_pb2.VoiceLLMConfig(voice="温柔文雅")
+    )
+    ctx = MagicMock()
+
+    resp = await svc.CheckVoice(req, ctx)
+
+    assert resp.ok is True
+    assert resp.provider_error == ""
+    ctx.set_code.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_check_voice_returns_provider_error():
+    reg = MagicMock()
+    voice = MagicMock()
+
+    async def fake_check_voice(session_config=None):
+        raise VoiceCheckError("raw provider error")
+
+    voice.check_voice = fake_check_voice
+    reg.get_by_category = MagicMock(return_value=voice)
+
+    svc = VoiceLLMGRPCService(reg)
+
+    from inference.generated import voice_llm_pb2
+
+    req = voice_llm_pb2.CheckVoiceRequest(
+        config=voice_llm_pb2.VoiceLLMConfig(voice="S_123456")
+    )
+    ctx = MagicMock()
+
+    resp = await svc.CheckVoice(req, ctx)
+
+    assert resp.ok is False
+    assert resp.provider_error == "raw provider error"
+    ctx.set_code.assert_not_called()

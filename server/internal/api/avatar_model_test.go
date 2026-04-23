@@ -20,8 +20,10 @@ import (
 )
 
 type fakeInferenceService struct {
-	avatarInfo *pb.AvatarInfo
-	infoErr    error
+	avatarInfo              *pb.AvatarInfo
+	infoErr                 error
+	checkVoiceProviderError string
+	checkVoiceErr           error
 }
 
 func (f *fakeInferenceService) HealthCheck(ctx context.Context) error {
@@ -71,6 +73,12 @@ func (f *fakeInferenceService) TranscribeStream(context.Context, <-chan []byte) 
 	close(ch)
 	close(errCh)
 	return ch, errCh
+}
+func (f *fakeInferenceService) CheckVoice(context.Context, inference.VoiceLLMSessionConfig) (string, error) {
+	if f.checkVoiceErr != nil {
+		return "", f.checkVoiceErr
+	}
+	return f.checkVoiceProviderError, nil
 }
 func (f *fakeInferenceService) ConverseStream(context.Context, <-chan []byte, inference.VoiceLLMSessionConfig) (<-chan *pb.VoiceLLMOutput, <-chan error) {
 	ch := make(chan *pb.VoiceLLMOutput)

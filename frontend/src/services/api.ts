@@ -124,6 +124,13 @@ export async function deleteCharacter(id: string): Promise<void> {
   return request(`/characters/${id}`, { method: 'DELETE' })
 }
 
+export async function testCharacterVoice(data: { voice_provider: string; voice_type: string }): Promise<{ status: string }> {
+  return request('/characters/test-voice', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  })
+}
+
 export async function uploadAvatar(id: string, file: File): Promise<{ path: string }> {
   const formData = new FormData()
   formData.append('avatar', file)

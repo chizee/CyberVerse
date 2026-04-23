@@ -2,10 +2,43 @@ package inference
 
 import (
 	"context"
+	"errors"
 	"io"
 
 	pb "github.com/cyberverse/server/internal/pb"
+	"google.golang.org/grpc/status"
 )
+
+func voiceLLMConfigPB(config VoiceLLMSessionConfig) *pb.VoiceLLMConfig {
+	return &pb.VoiceLLMConfig{
+		SessionId:      config.SessionID,
+		SystemPrompt:   config.SystemPrompt,
+		Voice:          config.Voice,
+		BotName:        config.BotName,
+		SpeakingStyle:  config.SpeakingStyle,
+		WelcomeMessage: config.WelcomeMessage,
+	}
+}
+
+func unwrapGRPCError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if st, ok := status.FromError(err); ok {
+		return errors.New(st.Message())
+	}
+	return err
+}
+
+func (c *Client) CheckVoice(ctx context.Context, config VoiceLLMSessionConfig) (string, error) {
+	resp, err := c.voiceLLM.CheckVoice(ctx, &pb.CheckVoiceRequest{
+		Config: voiceLLMConfigPB(config),
+	})
+	if err != nil {
+		return "", unwrapGRPCError(err)
+	}
+	return resp.GetProviderError(), nil
+}
 
 // ConverseStream opens a bidirectional stream for voice-to-voice conversation.
 // Sends a config message first, then streams user audio. Receives VoiceLLM output.
@@ -26,14 +59,7 @@ func (c *Client) ConverseStream(ctx context.Context, audioCh <-chan []byte, conf
 		// Send config message first
 		err = stream.Send(&pb.VoiceLLMInput{
 			Input: &pb.VoiceLLMInput_Config{
-				Config: &pb.VoiceLLMConfig{
-					SessionId:      config.SessionID,
-					SystemPrompt:   config.SystemPrompt,
-					Voice:          config.Voice,
-					BotName:        config.BotName,
-					SpeakingStyle:  config.SpeakingStyle,
-					WelcomeMessage: config.WelcomeMessage,
-				},
+				Config: voiceLLMConfigPB(config),
 			},
 		})
 		if err != nil {

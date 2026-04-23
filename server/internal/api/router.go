@@ -61,6 +61,7 @@ func (r *Router) registerRoutes() {
 	// Character CRUD
 	r.mux.HandleFunc("GET /api/v1/characters", r.handleListCharacters)
 	r.mux.HandleFunc("POST /api/v1/characters", r.handleCreateCharacter)
+	r.mux.HandleFunc("POST /api/v1/characters/test-voice", r.handleTestCharacterVoice)
 	r.mux.HandleFunc("GET /api/v1/characters/{id}", r.handleGetCharacter)
 	r.mux.HandleFunc("PUT /api/v1/characters/{id}", r.handleUpdateCharacter)
 	r.mux.HandleFunc("DELETE /api/v1/characters/{id}", r.handleDeleteCharacter)

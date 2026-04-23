@@ -5,7 +5,7 @@ import uuid
 from typing import AsyncIterator
 
 from inference.core.types import AudioChunk, PluginConfig, VoiceLLMOutputEvent, VoiceLLMSessionConfig
-from inference.plugins.voice_llm.base import VoiceLLMPlugin
+from inference.plugins.voice_llm.base import VoiceCheckError, VoiceLLMPlugin
 from inference.plugins.voice_llm.doubao_config import DoubaoSessionConfig
 from inference.plugins.voice_llm.doubao_protocol import (
     DecodedFrame,
@@ -38,6 +38,187 @@ class DoubaoRealtimePlugin(VoiceLLMPlugin):
     async def initialize(self, config: PluginConfig) -> None:
         self._config = DoubaoSessionConfig.from_plugin_config(config)
 
+    def _effective_config(
+        self,
+        session_config: VoiceLLMSessionConfig | None = None,
+    ) -> DoubaoSessionConfig:
+        assert self._config is not None
+        if session_config is None:
+            return self._config
+        return self._config.with_overrides(session_config)
+
+    @staticmethod
+    def _decode_payload_text(decoded: DecodedFrame) -> str:
+        if not decoded.payload:
+            return ""
+        try:
+            payload = decompress_payload(decoded.payload, decoded.compression_bits)
+        except Exception:
+            payload = decoded.payload
+        if isinstance(payload, (bytes, bytearray)):
+            return payload.decode("utf-8", errors="ignore")
+        return str(payload)
+
+    async def _recv_expected_control_event(
+        self,
+        ws,
+        *,
+        expected_event: int,
+        stage: str,
+        preserve_provider_error: bool = False,
+    ) -> DecodedFrame:
+        frame = await ws.recv()
+        if isinstance(frame, str):
+            raise RuntimeError(f"Doubao {stage} returned text frame unexpectedly")
+
+        decoded = decode_frame(frame)
+        payload_text = self._decode_payload_text(decoded)
+
+        if decoded.is_error():
+            if preserve_provider_error:
+                raise VoiceCheckError(payload_text or f"Doubao {stage} failed")
+            message = (
+                f"Doubao {stage} failed: code={decoded.error_code} payload={payload_text}"
+            )
+            logger.error(message)
+            raise RuntimeError(message)
+        if decoded.is_full_server() and decoded.event == DoubaoEvent.SESSION_FAILED:
+            if preserve_provider_error:
+                raise VoiceCheckError(payload_text or f"Doubao {stage} failed")
+            message = (
+                f"Doubao {stage} failed: event={decoded.event} payload={payload_text}"
+            )
+            logger.error(message)
+            raise RuntimeError(message)
+        if not decoded.is_full_server():
+            message = (
+                f"Doubao {stage} returned unexpected frame type={decoded.msg_type_bits}"
+            )
+            logger.error(message)
+            raise RuntimeError(message)
+        if decoded.event != expected_event:
+            message = (
+                f"Doubao {stage} returned unexpected event={decoded.event}, "
+                f"expected={expected_event}, payload={payload_text}"
+            )
+            logger.error(message)
+            raise RuntimeError(message)
+        return decoded
+
+    async def _send_full_client_event(
+        self,
+        ws,
+        *,
+        event: int,
+        session_id: str | None,
+        config: DoubaoSessionConfig,
+        payload: dict | bytes,
+    ) -> None:
+        if isinstance(payload, (bytes, bytearray)):
+            payload_bytes = bytes(payload)
+        else:
+            payload_bytes = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        await ws.send(
+            encode_frame(
+                msg_type_bits=MSGTYPE_FULL_CLIENT,
+                serialization_bits=SERIALIZATION_JSON,
+                event=event,
+                session_id=session_id,
+                payload=compress_payload(payload_bytes, config.compression_bits),
+                compression_bits=config.compression_bits,
+            )
+        )
+
+    async def _start_session(
+        self,
+        ws,
+        *,
+        session_id: str,
+        config: DoubaoSessionConfig,
+        preserve_provider_error: bool = False,
+    ) -> str:
+        await self._send_full_client_event(
+            ws,
+            event=DoubaoEvent.START_CONNECTION,
+            session_id=None,
+            config=config,
+            payload=b"{}",
+        )
+        await self._recv_expected_control_event(
+            ws,
+            expected_event=DoubaoEvent.CONNECTION_STARTED,
+            stage="connection handshake",
+            preserve_provider_error=preserve_provider_error,
+        )
+
+        start_session_payload = config.build_start_session_payload()
+        speaker = start_session_payload["tts"]["speaker"]
+        await self._send_full_client_event(
+            ws,
+            event=DoubaoEvent.START_SESSION,
+            session_id=session_id,
+            config=config,
+            payload=start_session_payload,
+        )
+        await self._recv_expected_control_event(
+            ws,
+            expected_event=DoubaoEvent.SESSION_STARTED,
+            stage=f"start session for speaker={speaker!r}",
+            preserve_provider_error=preserve_provider_error,
+        )
+        return speaker
+
+    async def _finish_session(
+        self,
+        ws,
+        *,
+        session_id: str,
+        config: DoubaoSessionConfig,
+        stage: str,
+        preserve_provider_error: bool = False,
+    ) -> None:
+        await self._send_full_client_event(
+            ws,
+            event=DoubaoEvent.FINISH_SESSION,
+            session_id=session_id,
+            config=config,
+            payload=b"{}",
+        )
+        await self._recv_expected_control_event(
+            ws,
+            expected_event=DoubaoEvent.SESSION_FINISHED,
+            stage=stage,
+            preserve_provider_error=preserve_provider_error,
+        )
+
+    async def check_voice(
+        self,
+        session_config: VoiceLLMSessionConfig | None = None,
+    ) -> None:
+        import websockets
+
+        effective_config = self._effective_config(session_config)
+        session_id = str(uuid.uuid4())
+        connect_id = str(uuid.uuid4())
+        headers = effective_config.build_ws_headers(connect_id)
+
+        async with websockets.connect(
+            effective_config.ws_url, additional_headers=headers
+        ) as ws:
+            speaker = await self._start_session(
+                ws,
+                session_id=session_id,
+                config=effective_config,
+                preserve_provider_error=True,
+            )
+            await self._finish_session(
+                ws,
+                session_id=session_id,
+                config=effective_config,
+                stage=f"finish session for speaker={speaker!r}",
+                preserve_provider_error=True,
+            )
+
     async def converse_stream(
         self,
         audio_stream: AsyncIterator[bytes],
@@ -45,10 +226,7 @@ class DoubaoRealtimePlugin(VoiceLLMPlugin):
     ) -> AsyncIterator[VoiceLLMOutputEvent]:
         import websockets
 
-        assert self._config is not None
-        effective_config = self._config
-        if session_config is not None:
-            effective_config = self._config.with_overrides(session_config)
+        effective_config = self._effective_config(session_config)
 
         attempt = 0
         last_error = None
@@ -99,69 +277,22 @@ class DoubaoRealtimePlugin(VoiceLLMPlugin):
             self._ws = ws
             self._session_id = session_id
 
-            # 1) StartConnection (event=1)
-            await ws.send(
-                encode_frame(
-                    msg_type_bits=MSGTYPE_FULL_CLIENT,
-                    serialization_bits=SERIALIZATION_JSON,
-                    event=DoubaoEvent.START_CONNECTION,
-                    session_id=None,
-                    payload=compress_payload(
-                        b"{}", config.compression_bits
-                    ),
-                    compression_bits=config.compression_bits,
-                )
+            # 1) StartConnection / 2) Wait ConnectionStarted / 3) StartSession / 4) Wait SessionStarted
+            speaker = await self._start_session(
+                ws,
+                session_id=session_id,
+                config=config,
             )
-
-            # 2) Wait ConnectionStarted (event=50)
-            first = await ws.recv()
-            if isinstance(first, str):
-                raise RuntimeError("Doubao handshake returned text frame unexpectedly")
-            _ = decode_frame(first)
-
-            # 3) StartSession (event=100)
-            start_session_payload = config.build_start_session_payload()
-            await ws.send(
-                encode_frame(
-                    msg_type_bits=MSGTYPE_FULL_CLIENT,
-                    serialization_bits=SERIALIZATION_JSON,
-                    event=DoubaoEvent.START_SESSION,
-                    session_id=session_id,
-                    payload=compress_payload(
-                        json.dumps(start_session_payload, ensure_ascii=False).encode(
-                            "utf-8"
-                        ),
-                        config.compression_bits,
-                    ),
-                    compression_bits=config.compression_bits,
-                )
-            )
-
-            # 4) Wait SessionStarted (event=150)
-            second = await ws.recv()
-            if isinstance(second, str):
-                raise RuntimeError(
-                    "Doubao StartSession returned text frame unexpectedly"
-                )
-            _ = decode_frame(second)
 
             # 5) SayHello (event=300) only when the character explicitly defines one.
             if config.has_welcome_message:
                 say_hello_payload = config.build_say_hello_payload()
-                await ws.send(
-                    encode_frame(
-                        msg_type_bits=MSGTYPE_FULL_CLIENT,
-                        serialization_bits=SERIALIZATION_JSON,
-                        event=DoubaoEvent.SAY_HELLO,
-                        session_id=session_id,
-                        payload=compress_payload(
-                            json.dumps(say_hello_payload, ensure_ascii=False).encode(
-                                "utf-8"
-                            ),
-                            config.compression_bits,
-                        ),
-                        compression_bits=config.compression_bits,
-                    )
+                await self._send_full_client_event(
+                    ws,
+                    event=DoubaoEvent.SAY_HELLO,
+                    session_id=session_id,
+                    config=config,
+                    payload=say_hello_payload,
                 )
 
             sender_task = asyncio.create_task(

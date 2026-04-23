@@ -50,6 +50,7 @@ type InferenceService interface {
 	TranscribeStream(ctx context.Context, audioCh <-chan []byte) (<-chan *pb.TranscriptEvent, <-chan error)
 
 	// VoiceLLM
+	CheckVoice(ctx context.Context, config VoiceLLMSessionConfig) (string, error)
 	ConverseStream(ctx context.Context, audioCh <-chan []byte, config VoiceLLMSessionConfig) (<-chan *pb.VoiceLLMOutput, <-chan error)
 	Interrupt(ctx context.Context, sessionID string) error
 
