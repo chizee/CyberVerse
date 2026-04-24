@@ -373,7 +373,7 @@ const breadcrumb = computed(() =>
                     ? 'bg-cv-accent text-white'
                     : 'text-cv-text-secondary hover:bg-cv-hover hover:text-cv-text'"
                 >
-                  自定义复刻
+                  克隆音色
                 </button>
               </div>
             </div>

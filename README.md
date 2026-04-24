@@ -264,11 +264,11 @@ Configure characters, inference, and launch real-time digital-human sessions.
 - [x] Real-time voice and video over WebRTC — direct P2P (embedded TURN) or LiveKit SFU
 - [x] Pluggable modules (avatar, voice LLM, LLM, TTS, ASR); configure different vendors’ API keys via YAML (a single Doubao Voice API key is enough to run today)
 - [x] Session management: per-character chat history persisted to disk and loaded when a conversation starts
+- [x] Voice cloning: supports Doubao voice cloning
+- [ ] Voice interruption while the model is speaking, plus session pause and resume
 - [ ] Import knowledge, documents, and biographical material for character-grounded RAG Q&A
 - [ ] Face-to-face: user-side camera/video input with understanding of motion, gestures, and other visual cues
 - [ ] Embeddable for developers (Web component or SDK) to integrate self-hosted instances into their own sites
-- [ ] Voice cloning: match a character’s voice from a small amount of reference audio
-- [ ] Voice interruption while the model is speaking, plus session pause and resume
 - [ ] Live streaming: audio/video output for broadcast-style use cases
 
 ### 2. **Digital Humans as Agents**  
