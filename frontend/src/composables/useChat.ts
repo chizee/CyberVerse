@@ -1,5 +1,5 @@
 import { ref, computed } from 'vue'
-import { getConversationMessages } from '../services/api'
+import { getConversationMessages, sendMessage } from '../services/api'
 
 export interface ChatMessage {
   id?: string  // Optional ID for deduplication
@@ -202,11 +202,45 @@ export function useChat(sessionId: () => string) {
   }
 
   function sendText(text: string) {
-    if (!ws.value || ws.value.readyState !== WebSocket.OPEN) return
-    ws.value.send(JSON.stringify({ type: 'text_input', text }))
+    const trimmed = text.trim()
+    if (!trimmed) return
+
+    const sid = sessionId()
+    const payload = JSON.stringify({ type: 'text_input', text: trimmed })
+    let sentViaWS = false
+
+    if (ws.value && ws.value.readyState === WebSocket.OPEN) {
+      try {
+        ws.value.send(payload)
+        sentViaWS = true
+      } catch (err) {
+        console.error('[useChat] WS send failed, fallback to HTTP:', err)
+      }
+    }
+
+    if (!sentViaWS) {
+      if (!sid) {
+        console.error('[useChat] Cannot send text: missing session id')
+        messages.value.push({
+          role: 'system',
+          content: '发送失败：会话未初始化，请刷新后重试。',
+          timestamp: Date.now(),
+        })
+        return
+      }
+      void sendMessage(sid, trimmed).catch((err) => {
+        console.error('[useChat] HTTP fallback send failed:', err)
+        messages.value.push({
+          role: 'system',
+          content: '发送失败：网络异常，请稍后重试。',
+          timestamp: Date.now(),
+        })
+      })
+    }
+
     messages.value.push({
       role: 'user',
-      content: text,
+      content: trimmed,
       timestamp: Date.now(),
     })
   }

@@ -225,7 +225,7 @@ func (r *Router) handleSendMessage(w http.ResponseWriter, req *http.Request) {
 
 	// Trigger the standard pipeline via orchestrator
 	if r.orch != nil {
-		if err := r.orch.HandleTextInput(req.Context(), id, body.Text); err != nil {
+		if err := r.orch.HandleTextInput(context.Background(), id, body.Text); err != nil {
 			log.Printf("Failed to handle text input for session %s: %v", id, err)
 			writeJSON(w, http.StatusInternalServerError, ErrorResponse{Error: "failed to process message"})
 			return
@@ -263,7 +263,8 @@ func (r *Router) handleWebSocket(w http.ResponseWriter, req *http.Request) {
 			case "text_input":
 				if r.orch != nil && msg.Text != "" {
 					go func() {
-						if err := r.orch.HandleTextInput(req.Context(), sessionID, msg.Text); err != nil {
+						// Detach from request context to avoid cancelling an in-flight text turn.
+						if err := r.orch.HandleTextInput(context.Background(), sessionID, msg.Text); err != nil {
 							log.Printf("Failed to handle WS text input for session %s: %v", sessionID, err)
 						}
 					}()

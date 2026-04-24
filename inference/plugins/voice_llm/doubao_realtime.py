@@ -4,7 +4,13 @@ import logging
 import uuid
 from typing import AsyncIterator
 
-from inference.core.types import AudioChunk, PluginConfig, VoiceLLMOutputEvent, VoiceLLMSessionConfig
+from inference.core.types import (
+    AudioChunk,
+    PluginConfig,
+    VoiceLLMInputEvent,
+    VoiceLLMOutputEvent,
+    VoiceLLMSessionConfig,
+)
 from inference.plugins.voice_llm.base import VoiceCheckError, VoiceLLMPlugin
 from inference.plugins.voice_llm.doubao_config import DoubaoSessionConfig
 from inference.plugins.voice_llm.doubao_protocol import (
@@ -34,6 +40,7 @@ class DoubaoRealtimePlugin(VoiceLLMPlugin):
         self._ws = None
         self._session_id: str | None = None
         self._interrupting = False
+        self._dialog_ids: dict[str, str] = {}
 
     async def initialize(self, config: PluginConfig) -> None:
         self._config = DoubaoSessionConfig.from_plugin_config(config)
@@ -137,6 +144,7 @@ class DoubaoRealtimePlugin(VoiceLLMPlugin):
         config: DoubaoSessionConfig,
         preserve_provider_error: bool = False,
     ) -> str:
+        # 1) StartConnection (event=1)
         await self._send_full_client_event(
             ws,
             event=DoubaoEvent.START_CONNECTION,
@@ -144,6 +152,7 @@ class DoubaoRealtimePlugin(VoiceLLMPlugin):
             config=config,
             payload=b"{}",
         )
+        # 2) Wait ConnectionStarted (event=50)
         await self._recv_expected_control_event(
             ws,
             expected_event=DoubaoEvent.CONNECTION_STARTED,
@@ -151,8 +160,12 @@ class DoubaoRealtimePlugin(VoiceLLMPlugin):
             preserve_provider_error=preserve_provider_error,
         )
 
-        start_session_payload = config.build_start_session_payload()
+        dialog_id = self._dialog_ids.get(config.conversation_id, "")
+        start_session_payload = config.build_start_session_payload(
+            dialog_id=dialog_id or None
+        )
         speaker = start_session_payload["tts"]["speaker"]
+        # 3) StartSession (event=100)
         await self._send_full_client_event(
             ws,
             event=DoubaoEvent.START_SESSION,
@@ -160,12 +173,23 @@ class DoubaoRealtimePlugin(VoiceLLMPlugin):
             config=config,
             payload=start_session_payload,
         )
-        await self._recv_expected_control_event(
+        # 4) Wait SessionStarted (event=150)
+        started = await self._recv_expected_control_event(
             ws,
             expected_event=DoubaoEvent.SESSION_STARTED,
             stage=f"start session for speaker={speaker!r}",
             preserve_provider_error=preserve_provider_error,
         )
+        try:
+            started_payload = decompress_payload(
+                started.payload, started.compression_bits
+            )
+            started_data = json.loads(started_payload)
+        except (json.JSONDecodeError, Exception):
+            started_data = {}
+        dialog_id = str(started_data.get("dialog_id", "") or "")
+        if dialog_id and config.conversation_id:
+            self._dialog_ids[config.conversation_id] = dialog_id
         return speaker
 
     async def _finish_session(
@@ -177,6 +201,7 @@ class DoubaoRealtimePlugin(VoiceLLMPlugin):
         stage: str,
         preserve_provider_error: bool = False,
     ) -> None:
+        # 1) FinishSession (event=102)
         await self._send_full_client_event(
             ws,
             event=DoubaoEvent.FINISH_SESSION,
@@ -184,6 +209,7 @@ class DoubaoRealtimePlugin(VoiceLLMPlugin):
             config=config,
             payload=b"{}",
         )
+        # 2) Wait SessionFinished (event=152)
         await self._recv_expected_control_event(
             ws,
             expected_event=DoubaoEvent.SESSION_FINISHED,
@@ -221,7 +247,7 @@ class DoubaoRealtimePlugin(VoiceLLMPlugin):
 
     async def converse_stream(
         self,
-        audio_stream: AsyncIterator[bytes],
+        input_stream: AsyncIterator[VoiceLLMInputEvent],
         session_config: VoiceLLMSessionConfig | None = None,
     ) -> AsyncIterator[VoiceLLMOutputEvent]:
         import websockets
@@ -232,7 +258,7 @@ class DoubaoRealtimePlugin(VoiceLLMPlugin):
         last_error = None
         while attempt <= effective_config.max_retries:
             try:
-                async for event in self._converse_stream_inner(audio_stream, effective_config):
+                async for event in self._converse_stream_inner(input_stream, effective_config):
                     yield event
                 return
             except (websockets.ConnectionClosed, ConnectionError, OSError) as e:
@@ -257,7 +283,7 @@ class DoubaoRealtimePlugin(VoiceLLMPlugin):
         )
 
     async def _converse_stream_inner(
-        self, audio_stream: AsyncIterator[bytes], config: DoubaoSessionConfig
+        self, input_stream: AsyncIterator[VoiceLLMInputEvent], config: DoubaoSessionConfig
     ) -> AsyncIterator[VoiceLLMOutputEvent]:
         import websockets
 
@@ -277,8 +303,8 @@ class DoubaoRealtimePlugin(VoiceLLMPlugin):
             self._ws = ws
             self._session_id = session_id
 
-            # 1) StartConnection / 2) Wait ConnectionStarted / 3) StartSession / 4) Wait SessionStarted
-            speaker = await self._start_session(
+            # StartConnection + ConnectionStarted + StartSession + SessionStarted.
+            await self._start_session(
                 ws,
                 session_id=session_id,
                 config=config,
@@ -296,7 +322,7 @@ class DoubaoRealtimePlugin(VoiceLLMPlugin):
                 )
 
             sender_task = asyncio.create_task(
-                self._send_audio(ws, audio_stream, session_id, config)
+                self._send_inputs(ws, input_stream, session_id, config)
             )
             receiver_task = asyncio.create_task(
                 self._receive_audio(ws, output_queue, done, config)
@@ -337,16 +363,34 @@ class DoubaoRealtimePlugin(VoiceLLMPlugin):
                     except (asyncio.CancelledError, Exception):
                         pass
 
-    async def _send_audio(
-        self, ws, audio_stream: AsyncIterator[bytes], session_id: str,
+    async def _send_inputs(
+        self, ws, input_stream: AsyncIterator[VoiceLLMInputEvent], session_id: str,
         config: DoubaoSessionConfig,
     ) -> None:
         try:
-            chunk_count = 0
-            async for chunk_bytes in audio_stream:
+            sent_text_query = False
+            async for event in input_stream:
+                if event.text:
+                    sent_text_query = True
+                    payload = json.dumps(
+                        {"content": event.text}, ensure_ascii=False
+                    ).encode("utf-8")
+                    await ws.send(
+                        encode_frame(
+                            msg_type_bits=MSGTYPE_FULL_CLIENT,
+                            serialization_bits=SERIALIZATION_JSON,
+                            event=DoubaoEvent.CHAT_TEXT_QUERY,
+                            session_id=session_id,
+                            payload=compress_payload(
+                                payload, config.compression_bits
+                            ),
+                            compression_bits=config.compression_bits,
+                        )
+                    )
+                    continue
+                chunk_bytes = event.audio
                 if not chunk_bytes:
                     continue
-                chunk_count += 1
                 await ws.send(
                     encode_frame(
                         msg_type_bits=MSGTYPE_AUDIO_ONLY_CLIENT,
@@ -359,18 +403,21 @@ class DoubaoRealtimePlugin(VoiceLLMPlugin):
                         compression_bits=config.compression_bits,
                     )
                 )
-            await ws.send(
-                encode_frame(
-                    msg_type_bits=MSGTYPE_FULL_CLIENT,
-                    serialization_bits=SERIALIZATION_JSON,
-                    event=DoubaoEvent.FINISH_SESSION,
-                    session_id=session_id,
-                    payload=compress_payload(
-                        b"{}", config.compression_bits
-                    ),
-                    compression_bits=config.compression_bits,
+            # For text mode, wait for REPLY_DONE from server side first; sending
+            # FINISH_SESSION immediately can terminate before the reply arrives.
+            if not sent_text_query:
+                await ws.send(
+                    encode_frame(
+                        msg_type_bits=MSGTYPE_FULL_CLIENT,
+                        serialization_bits=SERIALIZATION_JSON,
+                        event=DoubaoEvent.FINISH_SESSION,
+                        session_id=session_id,
+                        payload=compress_payload(
+                            b"{}", config.compression_bits
+                        ),
+                        compression_bits=config.compression_bits,
+                    )
                 )
-            )
         except Exception:
             logger.exception("Failed to send audio to Doubao")
             raise
@@ -505,6 +552,9 @@ class DoubaoRealtimePlugin(VoiceLLMPlugin):
                             )
                             turn_final_sent = True
                             turn_transcript = ""
+                        if config.input_mod == "text":
+                            await output_queue.put(None)
+                            break
                     elif decoded.event in (
                         DoubaoEvent.SESSION_FINISHED,
                         DoubaoEvent.SESSION_FAILED,

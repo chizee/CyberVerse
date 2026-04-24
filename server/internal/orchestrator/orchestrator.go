@@ -609,34 +609,155 @@ func (o *Orchestrator) SetupSession(ctx context.Context, session *Session, roomM
 	return peer, nil
 }
 
-// HandleTextInput processes a text message through the standard pipeline:
-// LLM → TTS → Avatar.
-func (o *Orchestrator) HandleTextInput(ctx context.Context, sessionID string, text string) error {
+func (o *Orchestrator) stopPipelineAndWait(session *Session, sessionID string, interruptVoice bool) {
+	if interruptVoice && session.Mode == ModeVoiceLLM && o.inference != nil {
+		if err := o.inference.Interrupt(context.Background(), sessionID); err != nil {
+			log.Printf("Failed to interrupt VoiceLLM for session %s: %v", sessionID, err)
+		}
+	}
+	o.cancelPipeline(session)
+	session.WaitPipelineDone(3 * time.Second)
+}
+
+func (o *Orchestrator) buildVoiceLLMSessionConfig(session *Session, sessionID string) inference.VoiceLLMSessionConfig {
+	voiceConfig := inference.VoiceLLMSessionConfig{SessionID: sessionID}
+	if session.CharacterID != "" && o.charStore != nil {
+		if char, err := o.charStore.Get(session.CharacterID); err == nil {
+			voiceConfig.SystemPrompt = char.SystemPrompt
+			voiceConfig.Voice = char.VoiceType
+			voiceConfig.BotName = char.Name
+			voiceConfig.SpeakingStyle = char.SpeakingStyle
+			voiceConfig.WelcomeMessage = session.ConsumeVoiceWelcomeMessage(char.WelcomeMessage)
+		} else {
+			log.Printf("buildVoiceLLMSessionConfig: could not fetch character %s: %v", session.CharacterID, err)
+		}
+	}
+	return voiceConfig
+}
+
+func wrapVoiceAudioInput(ctx context.Context, audioCh <-chan []byte) <-chan inference.VoiceLLMInputEvent {
+	inputCh := make(chan inference.VoiceLLMInputEvent, 64)
+	go func() {
+		defer close(inputCh)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case data, ok := <-audioCh:
+				if !ok {
+					return
+				}
+				if len(data) == 0 {
+					continue
+				}
+				select {
+				case inputCh <- inference.VoiceLLMInputEvent{Audio: data}:
+				case <-ctx.Done():
+					return
+				}
+			}
+		}
+	}()
+	return inputCh
+}
+
+func singleVoiceTextInput(text string) <-chan inference.VoiceLLMInputEvent {
+	inputCh := make(chan inference.VoiceLLMInputEvent, 1)
+	inputCh <- inference.VoiceLLMInputEvent{Text: text}
+	close(inputCh)
+	return inputCh
+}
+
+func drainUserAudio(audioCh <-chan []byte, maxDrain int) {
+	for i := 0; i < maxDrain; i++ {
+		select {
+		case <-audioCh:
+		default:
+			return
+		}
+	}
+}
+
+func (o *Orchestrator) resumeVoiceAudioStream(sessionID string) error {
 	session, err := o.sessionMgr.Get(sessionID)
 	if err != nil {
 		return err
 	}
+	if session.Mode != ModeVoiceLLM {
+		return nil
+	}
 
-	// Cancel any existing pipeline
-	o.cancelPipeline(session)
+	o.mu.RLock()
+	peer := o.peers[sessionID]
+	o.mu.RUnlock()
+	if peer == nil {
+		return errors.New("media peer not found")
+	}
 
-	// Create a new cancellable context for this pipeline
+	audioCh := peer.SubscribeUserAudio()
+	drainUserAudio(audioCh, 256)
+	return o.HandleAudioStream(context.Background(), sessionID, audioCh)
+}
+
+func (o *Orchestrator) handleStandardTextInput(ctx context.Context, session *Session, sessionID string, text string) error {
+	o.stopPipelineAndWait(session, sessionID, false)
+
 	pipeCtx, cancel := context.WithCancel(ctx)
 	session.mu.Lock()
 	session.PipelineCancel = cancel
 	session.mu.Unlock()
 
-	// Add user message to history
 	session.AddMessage(ChatMessage{Role: "user", Content: text})
-
-	// Run pipeline in background
-	session.MarkPipelineRunning()
-	go o.runStandardPipeline(pipeCtx, session, sessionID)
+	pipelineSeq := session.MarkPipelineRunning()
+	go o.runStandardPipeline(pipeCtx, session, sessionID, pipelineSeq)
 	return nil
 }
 
+func (o *Orchestrator) handleVoiceLLMTextInput(ctx context.Context, session *Session, sessionID string, text string) error {
+	o.stopPipelineAndWait(session, sessionID, true)
+
+	pipeCtx, cancel := context.WithCancel(ctx)
+	session.mu.Lock()
+	session.PipelineCancel = cancel
+	session.mu.Unlock()
+
+	session.AddMessage(ChatMessage{Role: "user", Content: text})
+	pipelineSeq := session.MarkPipelineRunning()
+	inputCh := singleVoiceTextInput(text)
+
+	go func(seq uint64) {
+		o.runVoiceLLMPipeline(pipeCtx, session, sessionID, inputCh, seq)
+		if pipeCtx.Err() != nil || !session.IsCurrentPipeline(seq) {
+			return
+		}
+		if err := o.resumeVoiceAudioStream(sessionID); err != nil {
+			log.Printf("Failed to resume VoiceLLM audio stream for session %s: %v", sessionID, err)
+		}
+	}(pipelineSeq)
+
+	return nil
+}
+
+// HandleTextInput processes a text message through either the standard
+// LLM→TTS→Avatar pipeline or the VoiceLLM text-query path.
+func (o *Orchestrator) HandleTextInput(ctx context.Context, sessionID string, text string) error {
+	session, err := o.sessionMgr.Get(sessionID)
+	if err != nil {
+		return err
+	}
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return nil
+	}
+
+	if session.Mode == ModeVoiceLLM {
+		return o.handleVoiceLLMTextInput(ctx, session, sessionID, text)
+	}
+	return o.handleStandardTextInput(ctx, session, sessionID, text)
+}
+
 // runStandardPipeline executes: LLM → sentence detection → TTS → Avatar.
-func (o *Orchestrator) runStandardPipeline(ctx context.Context, session *Session, sessionID string) {
+func (o *Orchestrator) runStandardPipeline(ctx context.Context, session *Session, sessionID string, pipelineSeq uint64) {
 	var fullResponseCh chan string // set below; read in defer to store assistant message
 	defer func() {
 		// Store assistant message in session history
@@ -645,7 +766,7 @@ func (o *Orchestrator) runStandardPipeline(ctx context.Context, session *Session
 				session.AddMessage(ChatMessage{Role: "assistant", Content: resp})
 			}
 		}
-		session.MarkPipelineFinished()
+		session.MarkPipelineFinished(pipelineSeq)
 		session.SetState(StateListening)
 		o.broadcastStatus(sessionID, "idle")
 	}()
@@ -903,16 +1024,16 @@ func (o *Orchestrator) HandleAudioStream(ctx context.Context, sessionID string, 
 	session.PipelineCancel = cancel
 	session.mu.Unlock()
 
-	session.MarkPipelineRunning()
-	go o.runVoiceLLMPipeline(pipeCtx, session, sessionID, audioCh)
+	pipelineSeq := session.MarkPipelineRunning()
+	go o.runVoiceLLMPipeline(pipeCtx, session, sessionID, wrapVoiceAudioInput(pipeCtx, audioCh), pipelineSeq)
 	return nil
 }
 
-// runVoiceLLMPipeline executes: UserAudio -> VoiceLLM (audio+transcript) -> Avatar (video).
+// runVoiceLLMPipeline executes a VoiceLLM turn source -> VoiceLLM -> Avatar (video).
 //
 // Serial flow: collect all audio for one turn, merge into a single chunk,
 // generate avatar video, and publish each video chunk immediately.
-func (o *Orchestrator) runVoiceLLMPipeline(ctx context.Context, session *Session, sessionID string, userAudioCh <-chan []byte) {
+func (o *Orchestrator) runVoiceLLMPipeline(ctx context.Context, session *Session, sessionID string, inputCh <-chan inference.VoiceLLMInputEvent, pipelineSeq uint64) {
 	// Function-level message accumulators: track pending user/assistant text
 	// so we can store them even when ctx is cancelled mid-turn.
 	var pendingUserText string
@@ -929,7 +1050,7 @@ func (o *Orchestrator) runVoiceLLMPipeline(ctx context.Context, session *Session
 			session.AddMessage(ChatMessage{Role: "assistant", Content: pendingAssistantText})
 		}
 		log.Printf("voiceLLM defer done: session=%s finalHistoryLen=%d", sessionID, len(session.History))
-		session.MarkPipelineFinished()
+		session.MarkPipelineFinished(pipelineSeq)
 		session.SetState(StateListening)
 		o.broadcastStatus(sessionID, "idle")
 	}()
@@ -946,23 +1067,11 @@ func (o *Orchestrator) runVoiceLLMPipeline(ctx context.Context, session *Session
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	// Build per-session VoiceLLM config from character data.
-	voiceConfig := inference.VoiceLLMSessionConfig{SessionID: sessionID}
-	if session.CharacterID != "" && o.charStore != nil {
-		if char, err := o.charStore.Get(session.CharacterID); err == nil {
-			voiceConfig.SystemPrompt = char.SystemPrompt
-			voiceConfig.Voice = char.VoiceType
-			voiceConfig.BotName = char.Name
-			voiceConfig.SpeakingStyle = char.SpeakingStyle
-			voiceConfig.WelcomeMessage = char.WelcomeMessage
-		} else {
-			log.Printf("runVoiceLLMPipeline: could not fetch character %s: %v", session.CharacterID, err)
-		}
-	}
+	voiceConfig := o.buildVoiceLLMSessionConfig(session, sessionID)
 
 	// outputCh stays open for the entire session; a single turn ends with
 	// audio.IsFinal=true. The channel closes when the bot disconnects.
-	outputCh, errCh := o.inference.ConverseStream(ctx, userAudioCh, voiceConfig)
+	outputCh, errCh := o.inference.ConverseStream(ctx, inputCh, voiceConfig)
 
 	// Outer loop: one iteration = one complete assistant turn.
 	for {
