@@ -32,11 +32,14 @@ async function request<T>(path: string, opts?: RequestInit): Promise<T> {
 
 export interface CreateSessionResponse {
   session_id: string
+  mode: string
   streaming_mode: string  // "direct" or "livekit"
   livekit_url?: string
   livekit_token?: string
   idle_video_url?: string
   idle_video_urls?: string[]
+  text_input_enabled: boolean
+  text_input_hint?: string
 }
 
 export interface SessionInfo {
@@ -122,13 +125,6 @@ export async function updateCharacter(id: string, data: CharacterForm): Promise<
 
 export async function deleteCharacter(id: string): Promise<void> {
   return request(`/characters/${id}`, { method: 'DELETE' })
-}
-
-export async function testCharacterVoice(data: { voice_provider: string; voice_type: string }): Promise<{ status: string }> {
-  return request('/characters/test-voice', {
-    method: 'POST',
-    body: JSON.stringify(data),
-  })
 }
 
 export async function uploadAvatar(id: string, file: File): Promise<{ path: string }> {

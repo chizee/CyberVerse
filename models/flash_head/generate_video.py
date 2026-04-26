@@ -8,61 +8,42 @@ import torch.distributed as dist
 import subprocess
 import imageio
 import librosa
+import numpy as np
 from loguru import logger
 from collections import deque
 from datetime import datetime
 
-from flash_head.inference import (
-    get_pipeline,
-    get_base_data,
-    get_infer_params,
-    get_audio_embedding,
-    load_flash_head_runtime_config,
-    resolve_config_path,
-    run_pipeline,
-)
+from flash_head.inference import get_pipeline, get_base_data, get_infer_params, get_audio_embedding, run_pipeline
 
 def _validate_args(args):
     # Basic check
     assert args.ckpt_dir is not None, "Please specify FlashHead model checkpoint directory."
     assert args.wav2vec_dir is not None, "Please specify the wav2vec checkpoint directory."
-    assert args.model_type in {"pro", "lite", "pretrained"}, "Please specify the model name (pro, lite, pretrained)."
+    assert args.model_type=="pro" or args.model_type=="lite", "Please specify the model name (pro, lite)."
     assert args.cond_image_dir is not None or args.cond_image is not None, "Please specify the condition image or directory."
     assert args.audio_path is not None, "Please specify the audio path."
 
     args.base_seed = args.base_seed if args.base_seed >= 0 else 42
 
 def _parse_args():
-    config_parser = argparse.ArgumentParser(add_help=False)
-    config_parser.add_argument(
-        "--config",
-        type=str,
-        default=None,
-        help="Path to cyberverse_config.yaml.",
-    )
-    config_args, _ = config_parser.parse_known_args()
-    config_path = resolve_config_path(config_args.config)
-    flash_head_config = load_flash_head_runtime_config(config_path)
-
     parser = argparse.ArgumentParser(
-        description="Generate video from one image using FlashHead",
-        parents=[config_parser],
+        description="Generate video from one image using FlashHead"
     )
     parser.add_argument(
         "--ckpt_dir",
         type=str,
-        default=flash_head_config.get("checkpoint_dir"),
+        default=None,
         help="The path to FlashHead model checkpoint directory.")
     parser.add_argument(
         "--wav2vec_dir",
         type=str,
-        default=flash_head_config.get("wav2vec_dir"),
+        default=None,
         help="The path to the wav2vec checkpoint directory.")
     parser.add_argument(
         "--model_type",
         type=str,
-        default=flash_head_config.get("model_type"),
-        help="Choose from pro, lite, or pretrained.")
+        default=None,
+        help="Choose from pro or lite.")
     parser.add_argument(
         "--save_file",
         type=str,
@@ -71,7 +52,7 @@ def _parse_args():
     parser.add_argument(
         "--base_seed",
         type=int,
-        default=int(flash_head_config.get("seed", 42)),
+        default=42,
         help="The seed to use for generating the video.")
     parser.add_argument(
         "--cond_image",
@@ -100,7 +81,7 @@ def _parse_args():
         default=False,
         help="Enable face detection and crop for condition image")
     args = parser.parse_args()
-    args.config = str(config_path)
+    args = parser.parse_args()
 
     _validate_args(args)
 

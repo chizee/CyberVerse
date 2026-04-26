@@ -15,8 +15,8 @@ const testResult = ref<string | null>(null)
 const form = ref<Settings>({
   doubao: { access_token: '', app_id: '', ws_url: 'wss://openspeech.bytedance.com/api/v3/realtime/dialogue' },
   livekit: { url: '', api_key: '', api_secret: '' },
-  llm: { api_key: '', model: 'gpt-4o', temperature: 0.7 },
-  tts: { model: 'tts-1', voice: 'nova' },
+  llm: { api_key: '', model: 'qwen-plus', temperature: 0.7 },
+  tts: { model: 'qwen3-tts-flash', voice: 'Cherry' },
   asr: { model_size: 'base', language: 'auto', device: 'cpu' },
   inference: { grpc_addr: 'localhost:50051' },
 })
@@ -121,7 +121,7 @@ async function test() {
 
         <!-- LLM -->
         <section class="bg-cv-surface border border-cv-border rounded-cv-lg p-6">
-          <h3 class="text-sm font-semibold text-cv-text mb-4">LLM 服务 (OpenAI)</h3>
+          <h3 class="text-sm font-semibold text-cv-text mb-4">LLM 服务 (Qwen)</h3>
           <label class="block mb-3">
             <span class="text-[13px] text-cv-text-secondary">API Key <span class="text-cv-danger">*</span></span>
             <div class="relative mt-1.5">
@@ -137,7 +137,7 @@ async function test() {
               <span class="text-[13px] text-cv-text-secondary">默认模型</span>
               <CvSelect
                 v-model="form.llm.model"
-                :options="['gpt-4o', 'gpt-4o-mini', 'gpt-3.5-turbo']"
+                :options="['qwen-plus', 'qwen-flash', 'qwen-max']"
                 class="mt-1.5"
               />
             </label>
@@ -151,14 +151,14 @@ async function test() {
 
         <!-- TTS -->
         <section class="bg-cv-surface border border-cv-border rounded-cv-lg p-6">
-          <h3 class="text-sm font-semibold text-cv-text mb-1">TTS 服务 (OpenAI)</h3>
-          <p class="text-[13px] text-cv-text-muted mb-4">共用 LLM 的 OpenAI API Key</p>
+          <h3 class="text-sm font-semibold text-cv-text mb-1">TTS 服务 (Qwen)</h3>
+          <p class="text-[13px] text-cv-text-muted mb-4">共用 LLM 的 Qwen API Key</p>
           <div class="grid grid-cols-2 gap-4">
             <label class="block">
               <span class="text-[13px] text-cv-text-secondary">模型</span>
               <CvSelect
                 v-model="form.tts.model"
-                :options="['tts-1', 'tts-1-hd']"
+                :options="['qwen3-tts-flash', 'qwen3-tts-instruct-flash']"
                 class="mt-1.5"
               />
             </label>
@@ -166,7 +166,7 @@ async function test() {
               <span class="text-[13px] text-cv-text-secondary">默认音色</span>
               <CvSelect
                 v-model="form.tts.voice"
-                :options="['alloy', 'echo', 'fable', 'nova', 'onyx', 'shimmer']"
+                :options="['Cherry']"
                 class="mt-1.5"
               />
             </label>

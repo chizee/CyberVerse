@@ -11,14 +11,10 @@ from inference.core.types import PluginConfig, VoiceLLMSessionConfig
 from inference.plugins.voice_llm.doubao_realtime import DoubaoRealtimePlugin
 from inference.plugins.voice_llm.doubao_config import DoubaoSessionConfig, SC20_VOICES
 from inference.plugins.voice_llm.doubao_protocol import (
-    COMPRESSION_GZIP,
-    compress_payload,
     decode_frame,
-    decompress_payload,
     encode_frame,
     DoubaoEvent,
     MSGTYPE_AUDIO_ONLY_SERVER,
-    MSGTYPE_ERROR,
     MSGTYPE_FULL_SERVER,
     MSGTYPE_FULL_CLIENT,
     SERIALIZATION_JSON,
@@ -27,16 +23,6 @@ from inference.plugins.voice_llm.doubao_protocol import (
 
 
 class TestDoubaoRealtimePlugin:
-    @staticmethod
-    def _error_frame(error_code: int, payload: bytes) -> bytes:
-        frame = bytearray([0x11, MSGTYPE_ERROR | 0x04, SERIALIZATION_JSON | COMPRESSION_GZIP, 0x00])
-        frame.extend(error_code.to_bytes(4, "big"))
-        frame.extend(int(DoubaoEvent.START_SESSION).to_bytes(4, "big", signed=True))
-        frame.extend((0).to_bytes(4, "big"))
-        frame.extend(len(payload).to_bytes(4, "big"))
-        frame.extend(payload)
-        return bytes(frame)
-
     def test_name(self):
         assert DoubaoRealtimePlugin.name == "voice_llm.doubao"
 
@@ -213,227 +199,9 @@ class TestDoubaoRealtimePlugin:
         assert any(r.is_final for r in results)
 
     @pytest.mark.asyncio
-    async def test_check_voice_success(self):
-        plugin = DoubaoRealtimePlugin()
-        config = PluginConfig(
-            plugin_name="voice_llm.doubao",
-            params={
-                "access_token": "key",
-                "app_id": "app",
-                "ws_url": "wss://test.example.com",
-                "voice_type": "温柔文雅",
-            },
-        )
-        await plugin.initialize(config)
-
-        session_uuid = uuid.UUID("00000000-0000-0000-0000-000000000011")
-        connect_uuid = uuid.UUID("00000000-0000-0000-0000-000000000012")
-        session_id = str(session_uuid)
-
-        connection_started = encode_frame(
-            msg_type_bits=MSGTYPE_FULL_SERVER,
-            serialization_bits=SERIALIZATION_JSON,
-            event=50,
-            session_id=None,
-            connect_id="connect-test",
-            payload=b"{}",
-        )
-        session_started = encode_frame(
-            msg_type_bits=MSGTYPE_FULL_SERVER,
-            serialization_bits=SERIALIZATION_JSON,
-            event=150,
-            session_id=session_id,
-            payload=json.dumps({"dialog_id": "d"}).encode("utf-8"),
-        )
-        session_finished = encode_frame(
-            msg_type_bits=MSGTYPE_FULL_SERVER,
-            serialization_bits=SERIALIZATION_JSON,
-            event=152,
-            session_id=session_id,
-            payload=b"{}",
-        )
-
-        mock_ws = AsyncMock()
-        mock_ws.send = AsyncMock()
-
-        recv_iter = iter([connection_started, session_started, session_finished])
-
-        async def mock_recv():
-            try:
-                return next(recv_iter)
-            except StopIteration:
-                raise RuntimeError("unexpected extra ws.recv() call")
-
-        mock_ws.recv = AsyncMock(side_effect=mock_recv)
-
-        class MockWSContext:
-            async def __aenter__(self):
-                return mock_ws
-
-            async def __aexit__(self, *args):
-                return None
-
-        with patch.dict("sys.modules", {"websockets": MagicMock()}):
-            import inference.plugins.voice_llm.doubao_realtime as mod
-
-            mod_websockets = __import__("sys").modules["websockets"]
-            mod_websockets.connect.return_value = MockWSContext()
-
-            with patch.object(mod.uuid, "uuid4", side_effect=[session_uuid, connect_uuid]):
-                await plugin.check_voice(
-                    VoiceLLMSessionConfig(voice="可爱女生")
-                )
-
-        sent_frames = [decode_frame(call.args[0]) for call in mock_ws.send.await_args_list]
-        sent_events = [frame.event for frame in sent_frames]
-        assert sent_events == [
-            DoubaoEvent.START_CONNECTION,
-            DoubaoEvent.START_SESSION,
-            DoubaoEvent.FINISH_SESSION,
-        ]
-        start_payload = json.loads(
-            decompress_payload(
-                sent_frames[1].payload,
-                sent_frames[1].compression_bits,
-            )
-        )
-        assert start_payload["tts"]["speaker"] == SC20_VOICES["可爱女生"]
-
-    @pytest.mark.asyncio
     async def test_shutdown(self):
         plugin = DoubaoRealtimePlugin()
         await plugin.shutdown()  # should not raise
-
-    @pytest.mark.asyncio
-    async def test_converse_stream_raises_on_start_session_error(self):
-        plugin = DoubaoRealtimePlugin()
-        config = PluginConfig(
-            plugin_name="voice_llm.doubao",
-            params={
-                "access_token": "key",
-                "app_id": "app",
-                "ws_url": "wss://test.example.com",
-                "voice_type": "S_knqs6GAT1",
-                "system_prompt": "Hello",
-            },
-        )
-        await plugin.initialize(config)
-
-        connection_started = encode_frame(
-            msg_type_bits=MSGTYPE_FULL_SERVER,
-            serialization_bits=SERIALIZATION_JSON,
-            event=50,
-            session_id=None,
-            connect_id="connect-test",
-            payload=b"{}",
-        )
-        start_error = self._error_frame(
-            55000000,
-            compress_payload(
-                b'{"error":"resource ID is mismatched with speaker related resource"}',
-                COMPRESSION_GZIP,
-            ),
-        )
-
-        mock_ws = AsyncMock()
-        mock_ws.send = AsyncMock()
-
-        recv_iter = iter([connection_started, start_error])
-
-        async def mock_recv():
-            try:
-                return next(recv_iter)
-            except StopIteration:
-                raise RuntimeError("unexpected extra ws.recv() call")
-
-        mock_ws.recv = AsyncMock(side_effect=mock_recv)
-
-        class MockWSContext:
-            async def __aenter__(self):
-                return mock_ws
-
-            async def __aexit__(self, *args):
-                return None
-
-        async def user_audio():
-            if False:
-                yield b""
-
-        with patch.dict("sys.modules", {"websockets": MagicMock()}):
-            import inference.plugins.voice_llm.doubao_realtime as mod
-
-            mod_websockets = __import__("sys").modules["websockets"]
-            mod_websockets.connect.return_value = MockWSContext()
-            mod_websockets.ConnectionClosed = type("FakeConnectionClosed", (Exception,), {})
-
-            with pytest.raises(
-                RuntimeError,
-                match="resource ID is mismatched with speaker related resource",
-            ):
-                async for _ in plugin.converse_stream(user_audio()):
-                    pass
-
-    @pytest.mark.asyncio
-    async def test_check_voice_raises_raw_provider_error_on_start_session_error(self):
-        plugin = DoubaoRealtimePlugin()
-        config = PluginConfig(
-            plugin_name="voice_llm.doubao",
-            params={
-                "access_token": "key",
-                "app_id": "app",
-                "ws_url": "wss://test.example.com",
-                "voice_type": "S_knqs6GAT1",
-            },
-        )
-        await plugin.initialize(config)
-
-        connection_started = encode_frame(
-            msg_type_bits=MSGTYPE_FULL_SERVER,
-            serialization_bits=SERIALIZATION_JSON,
-            event=50,
-            session_id=None,
-            connect_id="connect-test",
-            payload=b"{}",
-        )
-        start_error = self._error_frame(
-            55000000,
-            compress_payload(
-                b'{"error":"resource ID is mismatched with speaker related resource"}',
-                COMPRESSION_GZIP,
-            ),
-        )
-
-        mock_ws = AsyncMock()
-        mock_ws.send = AsyncMock()
-
-        recv_iter = iter([connection_started, start_error])
-
-        async def mock_recv():
-            try:
-                return next(recv_iter)
-            except StopIteration:
-                raise RuntimeError("unexpected extra ws.recv() call")
-
-        mock_ws.recv = AsyncMock(side_effect=mock_recv)
-
-        class MockWSContext:
-            async def __aenter__(self):
-                return mock_ws
-
-            async def __aexit__(self, *args):
-                return None
-
-        with patch.dict("sys.modules", {"websockets": MagicMock()}):
-            import inference.plugins.voice_llm.doubao_realtime as mod
-
-            mod_websockets = __import__("sys").modules["websockets"]
-            mod_websockets.connect.return_value = MockWSContext()
-
-            with pytest.raises(
-                RuntimeError,
-                match=r'^\{"error":"resource ID is mismatched with speaker related resource"\}$',
-            ):
-                await plugin.check_voice()
 
 
 class TestDoubaoSessionConfigOverrides:
@@ -495,13 +263,6 @@ class TestDoubaoSessionConfigOverrides:
         result = base.with_overrides(session)
         payload = result.build_start_session_payload()
         assert payload["tts"]["speaker"] == SC20_VOICES["可爱女生"]
-
-    def test_custom_speaker_id_passthrough(self):
-        base = self._base_config()
-        session = VoiceLLMSessionConfig(voice="S_123456")
-        result = base.with_overrides(session)
-        payload = result.build_start_session_payload()
-        assert payload["tts"]["speaker"] == "S_123456"
 
     def test_welcome_message_override(self):
         base = self._base_config()

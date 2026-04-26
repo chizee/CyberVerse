@@ -20,10 +20,8 @@ import (
 )
 
 type fakeInferenceService struct {
-	avatarInfo              *pb.AvatarInfo
-	infoErr                 error
-	checkVoiceProviderError string
-	checkVoiceErr           error
+	avatarInfo *pb.AvatarInfo
+	infoErr    error
 }
 
 func (f *fakeInferenceService) HealthCheck(ctx context.Context) error {
@@ -74,13 +72,7 @@ func (f *fakeInferenceService) TranscribeStream(context.Context, <-chan []byte) 
 	close(errCh)
 	return ch, errCh
 }
-func (f *fakeInferenceService) CheckVoice(context.Context, inference.VoiceLLMSessionConfig) (string, error) {
-	if f.checkVoiceErr != nil {
-		return "", f.checkVoiceErr
-	}
-	return f.checkVoiceProviderError, nil
-}
-func (f *fakeInferenceService) ConverseStream(context.Context, <-chan inference.VoiceLLMInputEvent, inference.VoiceLLMSessionConfig) (<-chan *pb.VoiceLLMOutput, <-chan error) {
+func (f *fakeInferenceService) ConverseStream(context.Context, <-chan []byte, inference.VoiceLLMSessionConfig) (<-chan *pb.VoiceLLMOutput, <-chan error) {
 	ch := make(chan *pb.VoiceLLMOutput)
 	errCh := make(chan error)
 	close(ch)
@@ -110,32 +102,23 @@ inference:
       checkpoint_dir: "/tmp/flash"
       wav2vec_dir: "/tmp/wav2vec"
       model_type: "pro"
-      compile_model: true
-      compile_vae: true
-      dist_worker_main_thread: true
-      infer_params:
-        tgt_fps: 25
-        frame_num: 33
     live_act:
       plugin_class: "inference.plugins.avatar.live_act_plugin.LiveActAvatarPlugin"
       ckpt_dir: "/tmp/live_act"
       wav2vec_dir: "/tmp/live_wav2vec"
-      seed: 42
-      t5_cpu: false
-      fp8_kv_cache: false
-      offload_cache: false
-      block_offload: false
-      mean_memory: false
-      compile_wan_model: true
-      compile_vae_decode: true
-      dist_worker_main_thread: true
-      default_prompt: "一个人在说话"
-      infer_params:
-        size: "320*480"
-        fps: 24
-        audio_cfg: 1.0
+      fps: 24
 `
 	if err := os.WriteFile(configPath, []byte(configYAML), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "models", "flash_head", "configs"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(root, "models", "flash_head", "configs", "infer_params.yaml"),
+		[]byte("tgt_fps: 25\nframe_num: 33\n"),
+		0644,
+	); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(filepath.Join(root, "models", "live_act"), 0755); err != nil {
@@ -183,12 +166,12 @@ func TestGetAvatarModelInfoUsesRuntimeModel(t *testing.T) {
 			t.Fatalf("did not expect runtime helper node to appear as an avatar model")
 		}
 	}
-	if !resp.ConfigStatus.HasInferParams {
-		t.Fatalf("expected live_act infer params to be present")
+	if resp.ConfigStatus.HasInferParams {
+		t.Fatalf("expected live_act infer params to be absent")
 	}
 }
 
-func TestGetLaunchConfigKeepsLiveActModelParamsOutOfGPUSection(t *testing.T) {
+func TestGetLaunchConfigUsesSharedAvatarRuntimeGPUSettingsAndSkipsMissingInferParams(t *testing.T) {
 	r, _ := newAvatarModelTestRouter(t, "live_act")
 
 	req := httptest.NewRequest("GET", "/api/v1/config/launch?model=flash_head", nil)
@@ -206,48 +189,13 @@ func TestGetLaunchConfigKeepsLiveActModelParamsOutOfGPUSection(t *testing.T) {
 	if resp.ActiveModel != "live_act" {
 		t.Fatalf("expected active_model live_act, got %q", resp.ActiveModel)
 	}
-	foundAvatarSection := false
-	foundVideoSection := false
-	foundGPUSection := false
 	for _, section := range resp.Sections {
-		if section.Title == "头像模型 (Avatar)" {
-			foundAvatarSection = true
-			paths := map[string]any{}
-			for _, param := range section.Params {
-				paths[param.Path] = param.Value
-			}
-			if got := fmt.Sprint(paths["inference.avatar.live_act.t5_cpu"]); got != "false" {
-				t.Fatalf("expected live_act t5_cpu in avatar section, got %#v", got)
-			}
-			if got := fmt.Sprint(paths["inference.avatar.live_act.compile_wan_model"]); got != "true" {
-				t.Fatalf("expected live_act compile_wan_model in avatar section, got %#v", got)
-			}
-			if got := fmt.Sprint(paths["inference.avatar.live_act.dist_worker_main_thread"]); got != "true" {
-				t.Fatalf("expected live_act dist_worker_main_thread in avatar section, got %#v", got)
-			}
-			if got := fmt.Sprint(paths["inference.avatar.live_act.default_prompt"]); got != "一个人在说话" {
-				t.Fatalf("expected live_act default_prompt in avatar section, got %#v", got)
-			}
-			continue
-		}
 		if section.Title == "视频输出" {
-			foundVideoSection = true
-			paths := map[string]any{}
-			for _, param := range section.Params {
-				paths[param.Path] = param.Value
-			}
-			if got := fmt.Sprint(paths["inference.avatar.live_act.infer_params.size"]); got != "320*480" {
-				t.Fatalf("expected live_act infer_params.size from main config, got %#v", got)
-			}
-			if got := fmt.Sprint(paths["inference.avatar.live_act.infer_params.fps"]); got != "24" {
-				t.Fatalf("expected live_act infer_params.fps from main config, got %#v", got)
-			}
-			continue
+			t.Fatalf("did not expect 视频输出 section when infer_params.yaml is missing")
 		}
 		if section.Title != "GPU 配置" {
 			continue
 		}
-		foundGPUSection = true
 		paths := map[string]bool{}
 		for _, param := range section.Params {
 			paths[param.Path] = true
@@ -258,77 +206,9 @@ func TestGetLaunchConfigKeepsLiveActModelParamsOutOfGPUSection(t *testing.T) {
 		if !paths["inference.avatar.runtime.world_size"] {
 			t.Fatalf("expected shared avatar runtime world_size in GPU section")
 		}
-		if paths["inference.avatar.live_act.compile_wan_model"] {
-			t.Fatalf("did not expect live_act compile_wan_model in GPU section")
+		if paths["inference.avatar.live_act.world_size"] {
+			t.Fatalf("did not expect live_act-specific world_size once shared runtime is present")
 		}
-		if paths["inference.avatar.live_act.t5_cpu"] {
-			t.Fatalf("did not expect live_act t5_cpu in GPU section")
-		}
-	}
-	if !foundAvatarSection {
-		t.Fatalf("expected 头像模型 (Avatar) section for live_act")
-	}
-	if !foundVideoSection {
-		t.Fatalf("expected 视频输出 section for live_act")
-	}
-	if !foundGPUSection {
-		t.Fatalf("expected GPU 配置 section for live_act")
-	}
-}
-
-func TestGetLaunchConfigReadsVideoSectionFromMainConfig(t *testing.T) {
-	r, _ := newAvatarModelTestRouter(t, "flash_head")
-
-	req := httptest.NewRequest("GET", "/api/v1/config/launch", nil)
-	w := httptest.NewRecorder()
-	r.Handler().ServeHTTP(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", w.Code)
-	}
-
-	var resp launchConfigResponse
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-		t.Fatal(err)
-	}
-
-	foundVideoSection := false
-	foundAvatarSection := false
-	for _, section := range resp.Sections {
-		if section.Title == "头像模型 (Avatar)" {
-			foundAvatarSection = true
-			paths := map[string]any{}
-			for _, param := range section.Params {
-				paths[param.Path] = param.Value
-			}
-			if got := fmt.Sprint(paths["inference.avatar.flash_head.compile_model"]); got != "true" {
-				t.Fatalf("expected flash_head compile_model from main config, got %#v", got)
-			}
-			if got := fmt.Sprint(paths["inference.avatar.flash_head.compile_vae"]); got != "true" {
-				t.Fatalf("expected flash_head compile_vae from main config, got %#v", got)
-			}
-			continue
-		}
-		if section.Title != "视频输出" {
-			continue
-		}
-		foundVideoSection = true
-		paths := map[string]any{}
-		for _, param := range section.Params {
-			paths[param.Path] = param.Value
-		}
-		if got := fmt.Sprint(paths["inference.avatar.flash_head.infer_params.tgt_fps"]); got != "25" {
-			t.Fatalf("expected tgt_fps from main config, got %#v", got)
-		}
-		if got := fmt.Sprint(paths["inference.avatar.flash_head.infer_params.frame_num"]); got != "33" {
-			t.Fatalf("expected frame_num from main config, got %#v", got)
-		}
-	}
-	if !foundVideoSection {
-		t.Fatalf("expected 视频输出 section for flash_head")
-	}
-	if !foundAvatarSection {
-		t.Fatalf("expected 头像模型 (Avatar) section for flash_head")
 	}
 }
 
@@ -369,110 +249,6 @@ func TestUpdateLaunchConfigAllowsSharedAvatarRuntimeUpdates(t *testing.T) {
 	}
 	if got := fmt.Sprint(config.NodeValue(node, true)); got != "1" {
 		t.Fatalf("expected shared world_size to be updated to 1, got %#v", got)
-	}
-}
-
-func TestUpdateLaunchConfigWritesInferParamsToMainConfig(t *testing.T) {
-	r, _ := newAvatarModelTestRouter(t, "flash_head")
-
-	body := `{"model":"flash_head","params":[{"path":"inference.avatar.flash_head.infer_params.frame_num","value":29}]}`
-	req := httptest.NewRequest("PUT", "/api/v1/config/launch", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	r.Handler().ServeHTTP(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", w.Code)
-	}
-
-	doc, err := config.ReadYAMLNode(r.configPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	node, err := config.GetNodeAtPath(doc, "inference.avatar.flash_head.infer_params.frame_num")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := fmt.Sprint(config.NodeValue(node, true)); got != "29" {
-		t.Fatalf("expected frame_num to be updated to 29, got %#v", got)
-	}
-}
-
-func TestUpdateLaunchConfigWritesFlashHeadRootParamsToMainConfig(t *testing.T) {
-	r, _ := newAvatarModelTestRouter(t, "flash_head")
-
-	body := `{"model":"flash_head","params":[{"path":"inference.avatar.flash_head.compile_model","value":false}]}`
-	req := httptest.NewRequest("PUT", "/api/v1/config/launch", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	r.Handler().ServeHTTP(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", w.Code)
-	}
-
-	doc, err := config.ReadYAMLNode(r.configPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	node, err := config.GetNodeAtPath(doc, "inference.avatar.flash_head.compile_model")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := fmt.Sprint(config.NodeValue(node, true)); got != "false" {
-		t.Fatalf("expected compile_model to be updated to false, got %#v", got)
-	}
-}
-
-func TestUpdateLaunchConfigWritesLiveActInferParamsToMainConfig(t *testing.T) {
-	r, _ := newAvatarModelTestRouter(t, "live_act")
-
-	body := `{"model":"live_act","params":[{"path":"inference.avatar.live_act.infer_params.fps","value":20}]}`
-	req := httptest.NewRequest("PUT", "/api/v1/config/launch", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	r.Handler().ServeHTTP(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", w.Code)
-	}
-
-	doc, err := config.ReadYAMLNode(r.configPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	node, err := config.GetNodeAtPath(doc, "inference.avatar.live_act.infer_params.fps")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := fmt.Sprint(config.NodeValue(node, true)); got != "20" {
-		t.Fatalf("expected fps to be updated to 20, got %#v", got)
-	}
-}
-
-func TestUpdateLaunchConfigWritesLiveActRootParamsToMainConfig(t *testing.T) {
-	r, _ := newAvatarModelTestRouter(t, "live_act")
-
-	body := `{"model":"live_act","params":[{"path":"inference.avatar.live_act.t5_cpu","value":true}]}`
-	req := httptest.NewRequest("PUT", "/api/v1/config/launch", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	r.Handler().ServeHTTP(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", w.Code)
-	}
-
-	doc, err := config.ReadYAMLNode(r.configPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	node, err := config.GetNodeAtPath(doc, "inference.avatar.live_act.t5_cpu")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := fmt.Sprint(config.NodeValue(node, true)); got != "true" {
-		t.Fatalf("expected t5_cpu to be updated to true, got %#v", got)
 	}
 }
 

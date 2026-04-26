@@ -5,8 +5,6 @@ __pycache__/
 logs/
 artifacts/
 assets/
-!docs/assets/
-!docs/assets/**
 examples/
 sample_results/
 gradio_results/

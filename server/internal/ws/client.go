@@ -72,6 +72,7 @@ func (c *Client) ReadPump(
 			continue
 		}
 
+		log.Printf("ws: session=%s recv type=%s", c.SessionID, msg.Type)
 		onMessage(c.SessionID, msg)
 	}
 }

@@ -1,7 +1,6 @@
 package api
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/cyberverse/server/internal/character"
 )
@@ -19,11 +17,6 @@ type characterResponse struct {
 	*character.Character
 	IdleVideoURL  string   `json:"idle_video_url,omitempty"`
 	IdleVideoURLs []string `json:"idle_video_urls,omitempty"`
-}
-
-type testCharacterVoiceRequest struct {
-	VoiceProvider string `json:"voice_provider"`
-	VoiceType     string `json:"voice_type"`
 }
 
 // idleVideoURLs returns all idle video URLs for a character's active image.
@@ -129,53 +122,6 @@ func (r *Router) handleDeleteCharacter(w http.ResponseWriter, req *http.Request)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
-}
-
-func (r *Router) handleTestCharacterVoice(w http.ResponseWriter, req *http.Request) {
-	var body testCharacterVoiceRequest
-	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
-		writeJSON(w, http.StatusBadRequest, ErrorResponse{Error: "invalid JSON: " + err.Error()})
-		return
-	}
-
-	provider := strings.ToLower(strings.TrimSpace(body.VoiceProvider))
-	voiceType := strings.TrimSpace(body.VoiceType)
-
-	if provider == "" {
-		writeJSON(w, http.StatusBadRequest, ErrorResponse{Error: "voice_provider is required"})
-		return
-	}
-	if voiceType == "" {
-		writeJSON(w, http.StatusBadRequest, ErrorResponse{Error: "voice_type is required"})
-		return
-	}
-	if provider != "doubao" {
-		writeJSON(w, http.StatusBadRequest, ErrorResponse{Error: "unsupported voice_provider: " + provider})
-		return
-	}
-	if r.orch == nil {
-		writeJSON(w, http.StatusServiceUnavailable, ErrorResponse{Error: errInferenceUnavailable.Error()})
-		return
-	}
-
-	ctx, cancel := context.WithTimeout(req.Context(), 5*time.Second)
-	defer cancel()
-
-	providerError, err := r.orch.CheckVoice(ctx, voiceType)
-	if providerError != "" {
-		writeJSON(w, http.StatusBadGateway, ErrorResponse{Error: providerError})
-		return
-	}
-	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
-			writeJSON(w, http.StatusServiceUnavailable, ErrorResponse{Error: "voice check timed out"})
-			return
-		}
-		writeJSON(w, http.StatusServiceUnavailable, ErrorResponse{Error: err.Error()})
-		return
-	}
-
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 // handleUploadAvatar uploads an image to the character's images/ directory.

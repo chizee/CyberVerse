@@ -1,30 +1,20 @@
-<h1 align="center">CyberVerse</h1>
-<p align="center"><em>CyberVerse 是开源的<strong>数字人智能体平台</strong>，支持实时视频通话。你可以创建一个能看、能听、能面对面交流的 AI 智能体，体验与真实视频通话无异。</em></p>
+# CyberVerse
 
-<p align="center">
-  <a href="README.md">English</a> · <a href="README.zh-CN.md"><strong>简体中文</strong></a> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a>
-</p>
-
-<p align="center">
-  <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL%20v3-blue.svg" alt="License: GPL v3"/></a>
-  <a href="https://github.com/dsd2077/CyberVerse/pulls"><img src="https://img.shields.io/badge/PRs-welcome-brightgreen.svg" alt="PRs Welcome"/></a>
-</p>
-
-<p align="center">
-  <a href="docs/assets/logo.png"><img src="docs/assets/logo.png" alt="CyberVerse logo" width="100%"/></a>
-</p>
-
----
+[English](README.md) | **简体中文** | [日本語](README.ja.md) | [한국어](README.ko.md)
 
 ### 一张照片，让数字人真正「活」起来。
 
 > 你是否想过拥有一个属于自己的 J.A.R.V.I.S.——能真正看见你、听见你、陪伴你的 AI？
->
+
 > 想再次见到思念之人，听见 TA 的声音，看见 TA 对你微笑？
->
+
 > 又或者，你一直想把某个角色带到现实世界中？
 >
-> **只需一张照片，CyberVerse 就能让 TA 「活」过来。**
+**只需一张照片，CyberVerse 就能让 TA 「活」过来。**
+
+CyberVerse 是开源的**数字人智能体平台**，支持实时视频通话。你可以创建一个能看、能听、能面对面交流的 AI 智能体，体验与真实视频通话无异。
+
+[![License: GPL v3](https://img.shields.io/badge/License-GPL%20v3-blue.svg)](LICENSE)
 
 ## 功能特性
 
@@ -48,11 +38,11 @@
 
 <div align="center">
 
-| [![](docs/assets/爱丽丝.mov.png)](https://youtu.be/Lk88sew2x4o) | [![](docs/assets/丽娜.mov.png)](https://youtu.be/8jdQ3ThcwgA) |
+| [![](docs/demo/爱丽丝.mov.png)](https://youtu.be/Lk88sew2x4o) | [![](docs/demo/丽娜.mov.png)](https://youtu.be/8jdQ3ThcwgA) |
 |:---:|:---:|
 | [**爱丽丝 — 在 YouTube 观看**](https://youtu.be/Lk88sew2x4o) | [**丽娜 — 在 YouTube 观看**](https://youtu.be/8jdQ3ThcwgA) |
 
-| [![](docs/assets/小龙女.mov.png)](https://youtu.be/WjEHUYZx5Gs) |
+| [![](docs/demo/小龙女.mov.png)](https://youtu.be/WjEHUYZx5Gs) |
 |:---:|
 | [**小龙女 — 在 YouTube 观看**](https://youtu.be/WjEHUYZx5Gs) |
 
@@ -66,9 +56,7 @@
 |-------|---------|-----|-------|------------|-----|------------|
 | FlashHead 1.3B | Pro | RTX 5090 | 2 | 512×512 | 25+ | ✅ 是 |
 | FlashHead 1.3B | Pro | RTX 4090 | 1 | 512×512 | ~10.8 | ❌ 否 |
-| FlashHead 1.3B | Pro | RTX PRO 6000 | 1 | 512×512 | 20 | ✅ 是 |
 | FlashHead 1.3B | Lite | RTX 4090 | 1 | 512×512 | 25+ | ✅ 是 |
-| LiveAct 18B | — | RTX PRO 6000 | 1 | 256×417 | 20 | ✅ 是 |
 | LiveAct 18B | — | RTX PRO 6000 | 2 | 320×480 | 20 | ✅ 是 |
 
 > **Pro** 偏重画质；**Lite** 偏重速度。表中配置体现画质与算力的大致平衡——算力更充裕时可进一步提高画质；算力不足时请降低画质相关选项（分辨率、Pro / Lite 档位等）以保持实时流畅。
@@ -172,32 +160,6 @@ inference:
       checkpoint_dir: "./checkpoints/SoulX-FlashHead-1_3B"  # ← 你的路径
       wav2vec_dir: "./checkpoints/wav2vec2-base-960h"        # ← 你的路径
       model_type: "lite"           # 如需更高画质可设为 "pro"（需要更多 GPU）
-      compile_model: true
-      compile_vae: true
-      dist_worker_main_thread: true
-      infer_params:
-        frame_num: 33
-        motion_frames_latent_num: 2
-        tgt_fps: 20
-        sample_rate: 16000
-        sample_shift: 5
-        color_correction_strength: 1.0
-        cached_audio_duration: 8
-        num_heads: 12
-        height: 512
-        width: 512
-    live_act:
-      ckpt_dir: "./checkpoints/LiveAct"                     # ← 你的路径
-      wav2vec_dir: "./checkpoints/chinese-wav2vec2-base"   # ← 你的路径
-      seed: 42
-      compile_wan_model: false
-      compile_vae_decode: false
-      dist_worker_main_thread: true
-      default_prompt: "一个人在说话"
-      infer_params:
-        size: "320*480"
-        fps: 20
-        audio_cfg: 1.0
 ```
 
 你也可以先跳过这里的路径编辑，稍后再在 Web UI 中调整这些选项。
@@ -271,24 +233,6 @@ make frontend
 curl -s http://localhost:8080/api/v1/health
 ```
 
-### 远程访问时检查 8443/TCP 连通性
-
-当 `streaming_mode: direct` 且使用内嵌 TURN 时，浏览器必须能够访问服务端的 `8443/TCP`。如果页面可以打开，但音视频始终无法建立连接，或者服务端日志中出现 `ICE connection state: failed`、`publish timeout waiting for connection`，请先在本机检查与服务器 `8443` 端口是否连通，例如：
-
-```bash
-nc -vz <server-ip> 8443
-```
-
-如果 `8443` 不可达，通常是云安全组、防火墙或 NAT 限制导致。此时可以通过 SSH 隧道将本机 `8443` 转发到服务器：
-
-```bash
-ssh -L 8443:127.0.0.1:8443 user@host -p port
-```
-
-建立隧道后，浏览器会通过本机 `127.0.0.1:8443` 转发访问远端 TURN 服务。
-
-如果你不是通过 SSH 隧道访问，而是希望浏览器直接连接远端服务器，请将 `cyberverse_config.yaml` 中的 `pipeline.ice_public_ip` 设置为服务器的公网 IP 或域名；如果使用 SSH 隧道，可以保持默认值（`127.0.0.1`）。
-
 在浏览器中打开 http://localhost:5173，即可开始使用。
 
 ## 路线图
@@ -301,12 +245,11 @@ ssh -L 8443:127.0.0.1:8443 user@host -p port
 - [x] 基于 WebRTC 的实时语音和视频能力，支持直连 P2P（内嵌 TURN）或 LiveKit SFU
 - [x] 所有模块以插件化的方式提供（avatar、voice LLM、LLM、TTS、ASR），方便配置不同厂商的key。（目前仅需一个豆包语音key即可运行）
 - [x] 会话管理，按角色将会话历史持久化到磁盘，并在启动对话时加载历史聊天记录
-- [x] 声音克隆：支持豆包语音克隆声音
-- [x] 支持语音和文本混合输入
-- [ ] 支持对话过程中的语音打断与会话中断/恢复
 - [ ] 支持知识、文档及人物生平类素材导入，用于面向角色的 RAG 问答
 - [ ] Face-to-face：支持用户侧视频输入，并理解动作、手势等视觉线索
 - [ ] 面向开发者的网站嵌入（Web 组件或 SDK），便于将自部署实例接入自有站点
+- [ ] 声音克隆：基于少量参考音频生成与角色一致的音色
+- [ ] 支持对话过程中的语音打断与会话中断/恢复
 - [ ] 支持面向直播的音视频推流
 
 ### 2. **数字人智能体**

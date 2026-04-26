@@ -8,7 +8,8 @@ services:
       - "7881:7881"
       - "7882:7882/udp"
     environment:
-      - LIVEKIT_KEYS=${LIVEKIT_API_KEY:-devkey}:${LIVEKIT_API_SECRET:-secret}
+      # LiveKit expects "key: secret" (note the space after ':')
+      LIVEKIT_KEYS: "${LIVEKIT_API_KEY:-devkey}: ${LIVEKIT_API_SECRET:-secret}"
     depends_on:
       - redis
     restart: unless-stopped
@@ -25,11 +26,17 @@ services:
       dockerfile: infra/Dockerfile.server
     ports:
       - "8080:8080"
+      - "8443:8443"  # TURN server TCP (for WebRTC ICE relay)
     environment:
       - LIVEKIT_URL=ws://livekit:7880
       - LIVEKIT_API_KEY=${LIVEKIT_API_KEY:-devkey}
       - LIVEKIT_API_SECRET=${LIVEKIT_API_SECRET:-secret}
       - GRPC_INFERENCE_ADDR=cyberverse-inference:50051
+      - DOUBAO_ACCESS_TOKEN=${DOUBAO_ACCESS_TOKEN:-}
+      - DOUBAO_APP_ID=${DOUBAO_APP_ID:-}
+      - QWEN_API_KEY=${QWEN_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - TURN_PASSWORD=${TURN_PASSWORD:-cyberverse_turn_dev}
     depends_on:
       - livekit
       - cyberverse-inference
@@ -44,9 +51,13 @@ services:
       context: ..
       dockerfile: infra/Dockerfile.inference
     environment:
-      - DOUBAO_API_KEY=${DOUBAO_API_KEY:?DOUBAO_API_KEY is required}
+      - DOUBAO_ACCESS_TOKEN=${DOUBAO_ACCESS_TOKEN:?DOUBAO_ACCESS_TOKEN is required}
       - DOUBAO_APP_ID=${DOUBAO_APP_ID:?DOUBAO_APP_ID is required}
-      - OPENAI_API_KEY=${OPENAI_API_KEY:?OPENAI_API_KEY is required}
+      - QWEN_API_KEY=${QWEN_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      # FlashHead enables torch.compile by default; keep startup predictable.
+      - FLASHHEAD_COMPILE_MODEL=${FLASHHEAD_COMPILE_MODEL:-0}
+      - FLASHHEAD_COMPILE_VAE=${FLASHHEAD_COMPILE_VAE:-0}
     volumes:
       - ../checkpoints:/app/checkpoints
     deploy:

@@ -47,12 +47,6 @@ class VoiceLLMOutputEvent:
 
 
 @dataclass
-class VoiceLLMInputEvent:
-    audio: bytes = b""
-    text: str = ""
-
-
-@dataclass
 class VoiceLLMSessionConfig:
     """Per-session character config passed from Go through gRPC."""
     session_id: str = ""
@@ -61,7 +55,6 @@ class VoiceLLMSessionConfig:
     bot_name: str = ""
     speaking_style: str = ""
     welcome_message: str | None = None
-    input_mode: str = ""
 
 
 @dataclass

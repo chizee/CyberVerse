@@ -1,5 +1,5 @@
 import { ref, computed } from 'vue'
-import { getConversationMessages, sendMessage } from '../services/api'
+import { getConversationMessages } from '../services/api'
 
 export interface ChatMessage {
   id?: string  // Optional ID for deduplication
@@ -12,10 +12,18 @@ export interface ChatMessage {
 
 export type AvatarStatus = 'idle' | 'speaking' | 'processing'
 
-export function useChat(sessionId: () => string) {
+interface UseChatOptions {
+  textInputEnabled?: boolean
+  textInputHint?: string
+}
+
+export function useChat(sessionId: () => string, options: UseChatOptions = {}) {
   const ws = ref<WebSocket | null>(null)
   const messages = ref<ChatMessage[]>([])
   const currentTranscript = ref('')
+  const errorMessage = ref('')
+  const textInputEnabled = ref(options.textInputEnabled ?? true)
+  const textInputHint = ref(options.textInputHint ?? '')
 
   // New state variables for separate pipeline tracking
   const currentVoiceResponse = ref('')      // For transcript events (voice pipeline)
@@ -80,6 +88,7 @@ export function useChat(sessionId: () => string) {
           const role: ChatMessage['role'] = data.speaker === 'assistant' ? 'assistant' : 'user'
 
           if (role === 'assistant') {
+            errorMessage.value = ''
             // Initialize response on first transcript if not already active
             if (!activeResponseId.value) {
               activeResponseId.value = `voice-${Date.now()}`
@@ -128,6 +137,7 @@ export function useChat(sessionId: () => string) {
           break
 
         case 'llm_token':
+          errorMessage.value = ''
           // Set pipeline mode on first token
           if (!pipelineMode.value) {
             pipelineMode.value = 'text'
@@ -186,6 +196,10 @@ export function useChat(sessionId: () => string) {
           }
           break
 
+        case 'error':
+          errorMessage.value = data.message || '聊天服务发生错误'
+          break
+
         case 'webrtc_config':
         case 'webrtc_offer':
         case 'ice_candidate':
@@ -202,45 +216,16 @@ export function useChat(sessionId: () => string) {
   }
 
   function sendText(text: string) {
-    const trimmed = text.trim()
-    if (!trimmed) return
-
-    const sid = sessionId()
-    const payload = JSON.stringify({ type: 'text_input', text: trimmed })
-    let sentViaWS = false
-
-    if (ws.value && ws.value.readyState === WebSocket.OPEN) {
-      try {
-        ws.value.send(payload)
-        sentViaWS = true
-      } catch (err) {
-        console.error('[useChat] WS send failed, fallback to HTTP:', err)
-      }
+    if (!textInputEnabled.value) {
+      errorMessage.value = textInputHint.value || '当前文本输入暂不可用'
+      return
     }
-
-    if (!sentViaWS) {
-      if (!sid) {
-        console.error('[useChat] Cannot send text: missing session id')
-        messages.value.push({
-          role: 'system',
-          content: '发送失败：会话未初始化，请刷新后重试。',
-          timestamp: Date.now(),
-        })
-        return
-      }
-      void sendMessage(sid, trimmed).catch((err) => {
-        console.error('[useChat] HTTP fallback send failed:', err)
-        messages.value.push({
-          role: 'system',
-          content: '发送失败：网络异常，请稍后重试。',
-          timestamp: Date.now(),
-        })
-      })
-    }
-
+    if (!ws.value || ws.value.readyState !== WebSocket.OPEN) return
+    errorMessage.value = ''
+    ws.value.send(JSON.stringify({ type: 'text_input', text }))
     messages.value.push({
       role: 'user',
-      content: trimmed,
+      content: text,
       timestamp: Date.now(),
     })
   }
@@ -294,6 +279,7 @@ export function useChat(sessionId: () => string) {
     voiceResponseFinalized.value = false
     pipelineMode.value = null
     activeResponseId.value = ''
+    errorMessage.value = ''
   }
 
   return {
@@ -304,6 +290,9 @@ export function useChat(sessionId: () => string) {
     idleVideoUrl,
     idleVideoUrls,
     isConnected,
+    errorMessage,
+    textInputEnabled,
+    textInputHint,
     historyLoading,
     historyHasMore,
     connect,

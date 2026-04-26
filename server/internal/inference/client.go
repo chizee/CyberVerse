@@ -3,6 +3,7 @@ package inference
 import (
 	"context"
 	"fmt"
+	"net"
 	"time"
 
 	pb "github.com/cyberverse/server/internal/pb"
@@ -14,6 +15,7 @@ import (
 // Client manages the gRPC connection to the Python inference server
 // and provides typed access to all service clients.
 type Client struct {
+	addr     string
 	conn     *grpc.ClientConn
 	avatar   pb.AvatarServiceClient
 	llm      pb.LLMServiceClient
@@ -46,6 +48,7 @@ func NewClient(addr string) (*Client, error) {
 	}
 
 	return &Client{
+		addr:     addr,
 		conn:     conn,
 		avatar:   pb.NewAvatarServiceClient(conn),
 		llm:      pb.NewLLMServiceClient(conn),
@@ -67,8 +70,13 @@ func (c *Client) Close() error {
 func (c *Client) HealthCheck(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	_, err := c.AvatarInfo(ctx)
-	return err
+	d := net.Dialer{}
+	conn, err := d.DialContext(ctx, "tcp", c.addr)
+	if err != nil {
+		return err
+	}
+	_ = conn.Close()
+	return nil
 }
 
 func (c *Client) AvatarInfo(ctx context.Context) (*pb.AvatarInfo, error) {

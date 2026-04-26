@@ -9,7 +9,6 @@ from inference.plugins.base import CyberVersePlugin
 # --- import_plugin_class tests ---
 
 def test_import_valid_plugin_class():
-    pytest.importorskip("torch")
     cls = import_plugin_class(
         "inference.plugins.avatar.flash_head_plugin.FlashHeadAvatarPlugin"
     )
@@ -23,6 +22,19 @@ def test_import_llm_plugin_class():
     )
     assert issubclass(cls, CyberVersePlugin)
     assert cls.name == "llm.openai"
+
+
+def test_import_qwen_plugin_classes():
+    llm_cls = import_plugin_class(
+        "inference.plugins.llm.qwen_plugin.QwenLLMPlugin"
+    )
+    tts_cls = import_plugin_class(
+        "inference.plugins.tts.qwen_tts_plugin.QwenTTSPlugin"
+    )
+    assert issubclass(llm_cls, CyberVersePlugin)
+    assert issubclass(tts_cls, CyberVersePlugin)
+    assert llm_cls.name == "llm.qwen"
+    assert tts_cls.name == "tts.qwen"
 
 
 def test_import_invalid_module_raises():
@@ -49,7 +61,6 @@ def test_import_no_module_path_raises():
 
 def test_config_driven_registration():
     """Simulate server._register_plugins logic with config dict."""
-    pytest.importorskip("torch")
     config = {
         "inference": {
             "avatar": {
@@ -57,9 +68,6 @@ def test_config_driven_registration():
                 "flash_head": {
                     "plugin_class": "inference.plugins.avatar.flash_head_plugin.FlashHeadAvatarPlugin",
                     "checkpoint_dir": "/tmp/test",
-                    "infer_params": {
-                        "frame_num": 33,
-                    },
                 },
             },
             "llm": {
@@ -145,9 +153,6 @@ def test_plugin_class_stripped_from_params():
         "plugin_class": "inference.plugins.avatar.flash_head_plugin.FlashHeadAvatarPlugin",
         "checkpoint_dir": "/tmp/test",
         "model_type": "lite",
-        "infer_params": {
-            "frame_num": 33,
-        },
     }
     params = {k: v for k, v in conf.items() if k != "plugin_class"}
     plugin_config = PluginConfig(plugin_name="avatar.flash_head", params=params)
@@ -155,4 +160,3 @@ def test_plugin_class_stripped_from_params():
     assert "plugin_class" not in plugin_config.params
     assert plugin_config.params["checkpoint_dir"] == "/tmp/test"
     assert plugin_config.params["model_type"] == "lite"
-    assert plugin_config.params["infer_params"]["frame_num"] == 33

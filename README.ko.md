@@ -1,30 +1,18 @@
-<h1 align="center">CyberVerse</h1>
-<p align="center"><em>CyberVerse는 실시간 영상 통화가 가능한 오픈소스 <strong>디지털 휴먼 에이전트 플랫폼</strong>입니다. 영상 통화하듯 얼굴을 보며 대화할 수 있는 AI 에이전트를 만들 수 있습니다.</em></p>
+# CyberVerse
 
-<p align="center">
-  <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md"><strong>한국어</strong></a>
-</p>
-
-<p align="center">
-  <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL%20v3-blue.svg" alt="License: GPL v3"/></a>
-  <a href="https://github.com/dsd2077/CyberVerse/pulls"><img src="https://img.shields.io/badge/PRs-welcome-brightgreen.svg" alt="PRs Welcome"/></a>
-</p>
-
-<p align="center">
-  <a href="docs/assets/logo.png"><img src="docs/assets/logo.png" alt="CyberVerse logo" width="100%"/></a>
-</p>
-
----
+[English](README.md) | [简体中文](README.zh-CN.md) | [日本語](README.ja.md) | **한국어**
 
 ### 사진 한 장으로 살아 움직이는 디지털 휴먼.
 
 > 당신을 진짜로 보고, 듣고, 실시간으로 말을 건네는 나만의 J.A.R.V.I.S. 같은 AI를 꿈꿔본 적이 있나요?
->
 > 그리운 사람을 다시 보고, 그 목소리를 듣고, 미소 짓는 모습을 볼 수 있다면 어떨까요?
->
 > 혹은 늘 현실로 불러오고 싶었던 캐릭터가 있을지도 모릅니다.
 >
 > **사진 한 장이면 됩니다. CyberVerse가 그 존재를 살아 움직이게 합니다.**
+
+CyberVerse는 실시간 영상 통화가 가능한 오픈소스 **디지털 휴먼 에이전트 플랫폼**입니다. 영상 통화하듯 얼굴을 보며 대화할 수 있는 AI 에이전트를 만들 수 있습니다.
+
+[![License: GPL v3](https://img.shields.io/badge/License-GPL%20v3-blue.svg)](LICENSE)
 
 ## 주요 기능
 
@@ -48,11 +36,11 @@
 
 <div align="center">
 
-| [![](docs/assets/爱丽丝.mov.png)](https://youtu.be/Lk88sew2x4o) | [![](docs/assets/丽娜.mov.png)](https://youtu.be/8jdQ3ThcwgA) |
+| [![](docs/demo/爱丽丝.mov.png)](https://youtu.be/Lk88sew2x4o) | [![](docs/demo/丽娜.mov.png)](https://youtu.be/8jdQ3ThcwgA) |
 |:---:|:---:|
 | [**Alice — YouTube에서 보기**](https://youtu.be/Lk88sew2x4o) | [**Lina — YouTube에서 보기**](https://youtu.be/8jdQ3ThcwgA) |
 
-| [![](docs/assets/小龙女.mov.png)](https://youtu.be/WjEHUYZx5Gs) |
+| [![](docs/demo/小龙女.mov.png)](https://youtu.be/WjEHUYZx5Gs) |
 |:---:|
 | [**Xiaolongnü — YouTube에서 보기**](https://youtu.be/WjEHUYZx5Gs) |
 
@@ -66,10 +54,8 @@
 |-------|---------|-----|-------|------------|-----|------------|
 | FlashHead 1.3B | Pro | RTX 5090 | 2 | 512×512 | 25+ | ✅ 예 |
 | FlashHead 1.3B | Pro | RTX 4090 | 1 | 512×512 | ~10.8 | ❌ 아니오 |
-| FlashHead 1.3B | Pro | RTX PRO 6000 | 1 | 512×512 | 20 | ✅ 예 |
 | FlashHead 1.3B | Lite | RTX 4090 | 1 | 512×512 | 25+ | ✅ 예 |
 | LiveAct 18B | — | RTX PRO 6000 | 2 | 320×480 | 20 | ✅ 예 |
-| LiveAct 18B | — | RTX PRO 6000 | 1 | 256×417 | 20 | ✅ 예 |
 
 > **Pro**는 화질을, **Lite**는 속도를 우선합니다. 표의 구성은 일반적인 **화질–연산** 균형 예시입니다. 여유 연산이 있으면 화질을 더 올릴 수 있고, 부족하면 해상도·**Pro**/**Lite** 선택 등 화질 설정을 낮춰 실시간 동작을 유지하세요.
 
@@ -172,32 +158,6 @@ inference:
       checkpoint_dir: "./checkpoints/SoulX-FlashHead-1_3B"  # ← 로컬 경로
       wav2vec_dir: "./checkpoints/wav2vec2-base-960h"        # ← 로컬 경로
       model_type: "lite"           # 더 높은 품질이 필요하면 "pro"(GPU 더 필요)
-      compile_model: true
-      compile_vae: true
-      dist_worker_main_thread: true
-      infer_params:
-        frame_num: 33
-        motion_frames_latent_num: 2
-        tgt_fps: 20
-        sample_rate: 16000
-        sample_shift: 5
-        color_correction_strength: 1.0
-        cached_audio_duration: 8
-        num_heads: 12
-        height: 512
-        width: 512
-    live_act:
-      ckpt_dir: "./checkpoints/LiveAct"                     # ← 로컬 경로
-      wav2vec_dir: "./checkpoints/chinese-wav2vec2-base"   # ← 로컬 경로
-      seed: 42
-      compile_wan_model: false
-      compile_vae_decode: false
-      dist_worker_main_thread: true
-      default_prompt: "一个人在说话"
-      infer_params:
-        size: "320*480"
-        fps: 20
-        audio_cfg: 1.0
 ```
 
 이 단계의 경로 수정은 잠시 건너뛰고, 나중에 Web UI에서 조정해도 됩니다.
@@ -271,24 +231,6 @@ make frontend
 curl -s http://localhost:8080/api/v1/health
 ```
 
-### 원격 접속 시 8443/TCP 연결 여부 확인
-
-`streaming_mode: direct` 에서 내장 TURN 서버를 사용하는 경우, 브라우저가 서버의 `8443/TCP` 에 접속할 수 있어야 합니다. 페이지는 열리지만 오디오/비디오 연결이 끝내 성립하지 않거나, 서버 로그에 `ICE connection state: failed` 또는 `publish timeout waiting for connection` 이 보이면 먼저 로컬 머신에서 서버 `8443` 포트에 연결 가능한지 확인하세요.
-
-```bash
-nc -vz <server-ip> 8443
-```
-
-`8443` 에 연결되지 않는다면 보통 클라우드 보안 그룹, 방화벽, 또는 NAT 제한이 원인입니다. 이 경우 SSH 터널로 로컬 `8443` 을 서버로 포워딩할 수 있습니다.
-
-```bash
-ssh -L 8443:127.0.0.1:8443 user@host -p port
-```
-
-터널이 만들어지면 브라우저는 로컬 `127.0.0.1:8443` 을 통해 원격 TURN 서비스에 접속합니다.
-
-SSH 터널이 아니라 브라우저가 원격 서버에 직접 연결되게 하려면 `cyberverse_config.yaml` 의 `pipeline.ice_public_ip` 를 서버의 공인 IP 또는 도메인으로 설정하세요. SSH 터널을 사용할 경우에는 기본값(`127.0.0.1`)을 그대로 사용하면 됩니다.
-
 브라우저에서 http://localhost:5173 를 열면 바로 사용할 수 있습니다.
 
 ## 로드맵
@@ -301,12 +243,11 @@ SSH 터널이 아니라 브라우저가 원격 서버에 직접 연결되게 하
 - [x] WebRTC 기반 실시간 음성·영상. 직접 P2P(내장 TURN) 또는 LiveKit SFU
 - [x] avatar, voice LLM, LLM, TTS, ASR을 플러그인으로 제공하며 YAML로 벤더별 API 키 설정(현재는 도우바오 음성 키 하나로 실행 가능)
 - [x] 세션 관리: 캐릭터별 대화 기록을 디스크에 영속화하고 대화 시작 시 로드
-- [x] 음성 클로닝: 도우바오 음성 클로닝 지원
-- [x] 음성과 텍스트 혼합 입력 지원
-- [ ] 모델 발화 중 음성 끊기 및 세션 중단/재개
 - [ ] 지식·문서·인물 생애 등 자료를 가져와 캐릭터에 맞춘 RAG 기반 답변
 - [ ] Face-to-face: 사용자 측 카메라·영상 입력 및 동작·제스처 등 시각 단서 이해
 - [ ] 개발자용 웹사이트 임베드(Web 컴포넌트 또는 SDK), 자체 배포 인스턴스를 자체 사이트에 연결
+- [ ] 음성 클로닝: 적은 참조 오디오로 캐릭터와 일치하는 음색
+- [ ] 모델 발화 중 음성 끊기 및 세션 중단/재개
 - [ ] 라이브 방송용 음성·영상 스트리밍
 
 ### 2. **디지털 휴먼 에이전트**

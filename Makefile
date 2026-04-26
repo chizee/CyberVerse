@@ -2,7 +2,7 @@
 
 # Proto generation (Python + Go)
 proto:
-	./scripts/generate_proto.sh
+	python ./scripts/generate_proto.py
 
 # First-time setup (install Python deps before proto so grpc_tools is available)
 setup:

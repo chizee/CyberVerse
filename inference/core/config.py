@@ -17,7 +17,9 @@ def load_config(config_path: str | Path) -> dict:
     if not config_path.exists():
         raise FileNotFoundError(f"Config file not found: {config_path}")
 
-    with open(config_path) as f:
+    # Always read as UTF-8 so Windows default encodings (e.g. GBK) don't break
+    # on non-ASCII config/comments.
+    with open(config_path, encoding="utf-8") as f:
         raw = f.read()
 
     def _replace_env(match: re.Match) -> str:

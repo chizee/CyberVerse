@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import AppHeader from '../components/AppHeader.vue'
 import AvatarUpload from '../components/AvatarUpload.vue'
@@ -7,8 +7,7 @@ import CvSelect from '../components/CvSelect.vue'
 import { useCharacterStore } from '../stores/characters'
 import type { CharacterForm, ImageInfo } from '../types'
 import { VOICE_OPTIONS } from '../types'
-import { uploadAvatar, getCharacterImages, deleteCharacterImage, activateCharacterImage, testCharacterVoice } from '../services/api'
-import { DEFAULT_OFFICIAL_VOICE, isOfficialVoiceType } from '../utils/voice'
+import { uploadAvatar, getCharacterImages, deleteCharacterImage, activateCharacterImage } from '../services/api'
 
 const router = useRouter()
 const route = useRoute()
@@ -36,85 +35,9 @@ const saving = ref(false)
 const pendingFiles = ref<File[]>([])
 const images = ref<ImageInfo[]>([])
 const deletedImageFilenames = ref<Set<string>>(new Set())
-const voiceMode = ref<'official' | 'custom'>('official')
-const customVoiceType = ref('')
-const voiceError = ref('')
-const testingVoice = ref(false)
-const voiceTestStatus = ref<'success' | 'error' | null>(null)
-const voiceTestMessage = ref('')
-const OFFICIAL_VOICE_PREVIEW_URL = 'https://console.volcengine.com/speech/new/experience/call'
-const CUSTOM_VOICE_CLONE_URL = 'https://console.volcengine.com/speech/new/experience/clone'
 
 const visibleImages = computed(() =>
   images.value.filter(img => !deletedImageFilenames.value.has(img.filename))
-)
-
-const trimmedCustomVoiceType = computed(() => customVoiceType.value.trim())
-const canSave = computed(() =>
-  !!form.value.name.trim() && (voiceMode.value === 'official' || !!trimmedCustomVoiceType.value)
-)
-const canCheckVoice = computed(() =>
-  voiceMode.value === 'official' || !!trimmedCustomVoiceType.value
-)
-const voiceCheckSucceeded = computed(() => voiceTestStatus.value === 'success')
-
-function clearVoiceTestResult() {
-  voiceTestStatus.value = null
-  voiceTestMessage.value = ''
-}
-
-function syncVoiceInputs(voiceType: string) {
-  const normalized = voiceType.trim()
-  if (normalized && !isOfficialVoiceType(normalized)) {
-    voiceMode.value = 'custom'
-    customVoiceType.value = normalized
-    form.value.voice_type = normalized
-    return
-  }
-
-  voiceMode.value = 'official'
-  customVoiceType.value = ''
-  form.value.voice_type = normalized || DEFAULT_OFFICIAL_VOICE
-}
-
-function setVoiceMode(mode: 'official' | 'custom') {
-  voiceMode.value = mode
-  voiceError.value = ''
-
-  if (mode === 'official') {
-    if (!isOfficialVoiceType(form.value.voice_type)) {
-      form.value.voice_type = DEFAULT_OFFICIAL_VOICE
-    }
-    return
-  }
-
-  if (!isOfficialVoiceType(form.value.voice_type)) {
-    customVoiceType.value = form.value.voice_type.trim()
-  }
-}
-
-function resolveVoiceType() {
-  if (voiceMode.value === 'custom') {
-    if (!trimmedCustomVoiceType.value) {
-      voiceError.value = '请输入已注册的 SC2.0 自定义 speaker_id'
-      return null
-    }
-    return trimmedCustomVoiceType.value
-  }
-
-  return form.value.voice_type.trim() || DEFAULT_OFFICIAL_VOICE
-}
-
-watch(
-  [
-    () => form.value.voice_provider,
-    () => form.value.voice_type,
-    () => voiceMode.value,
-    () => customVoiceType.value,
-  ],
-  () => {
-    clearVoiceTestResult()
-  }
 )
 
 onMounted(async () => {
@@ -136,11 +59,8 @@ onMounted(async () => {
         system_prompt: c.system_prompt,
         tags: [...c.tags],
       }
-      syncVoiceInputs(c.voice_type)
       await loadImages()
     }
-  } else {
-    syncVoiceInputs(form.value.voice_type)
   }
 })
 
@@ -195,44 +115,14 @@ function handleDeleteImage(filename: string) {
   deletedImageFilenames.value = new Set([...deletedImageFilenames.value, filename])
 }
 
-async function handleCheckVoice() {
-  voiceError.value = ''
-  clearVoiceTestResult()
-
-  const voiceType = resolveVoiceType()
-  if (!voiceType) return
-
-  testingVoice.value = true
-  try {
-    await testCharacterVoice({
-      voice_provider: form.value.voice_provider.trim(),
-      voice_type: voiceType,
-    })
-    voiceTestStatus.value = 'success'
-    voiceTestMessage.value = ''
-  } catch (e) {
-    voiceTestStatus.value = 'error'
-    voiceTestMessage.value = e instanceof Error ? e.message : String(e)
-  } finally {
-    testingVoice.value = false
-  }
-}
-
 async function save() {
   if (!form.value.name.trim()) return
-  voiceError.value = ''
   saving.value = true
   try {
     const payload = { ...form.value }
     if (payload.avatar_image.startsWith('blob:')) {
       payload.avatar_image = ''
     }
-
-    const voiceType = resolveVoiceType()
-    if (!voiceType) {
-      return
-    }
-    payload.voice_type = voiceType
 
     let id: string
     if (isEdit.value) {
@@ -343,113 +233,24 @@ const breadcrumb = computed(() =>
           <h2 class="text-base font-semibold text-cv-text mb-1">语音配置</h2>
           <p class="text-[13px] text-cv-text-muted mb-5">为此角色设置交互时使用的语音供应商和声线。</p>
 
-          <div class="grid gap-4 md:grid-cols-2">
+          <div class="grid grid-cols-2 gap-4">
             <label class="block">
-              <span class="text-[13px] font-medium text-cv-text-secondary">语音 / 供应商</span>
+              <span class="text-[11px] font-medium text-cv-text-muted uppercase tracking-wide">语音 / 供应商</span>
               <CvSelect
                 v-model="form.voice_provider"
                 :options="[{ label: '豆包语音', value: 'doubao' }]"
                 class="mt-1.5"
               />
             </label>
-            <div class="block">
-              <span class="text-[13px] font-medium text-cv-text-secondary">语音 / 声线类型</span>
-              <div class="mt-1.5 grid h-[42px] grid-cols-2 rounded-cv-md border border-cv-border bg-cv-elevated p-1">
-                <button
-                  type="button"
-                  @click="setVoiceMode('official')"
-                  class="rounded-cv-sm px-3 text-sm transition-colors cursor-pointer"
-                  :class="voiceMode === 'official'
-                    ? 'bg-cv-accent text-white'
-                    : 'text-cv-text-secondary hover:bg-cv-hover hover:text-cv-text'"
-                >
-                  官方音色
-                </button>
-                <button
-                  type="button"
-                  @click="setVoiceMode('custom')"
-                  class="rounded-cv-sm px-3 text-sm transition-colors cursor-pointer"
-                  :class="voiceMode === 'custom'
-                    ? 'bg-cv-accent text-white'
-                    : 'text-cv-text-secondary hover:bg-cv-hover hover:text-cv-text'"
-                >
-                  克隆音色
-                </button>
-              </div>
-            </div>
-          </div>
-
-          <label class="block mt-4">
-            <span class="text-[13px] font-medium text-cv-text-secondary">语音 / 声线</span>
-            <div class="mt-1.5 flex items-start gap-3">
+            <label class="block">
+              <span class="text-[11px] font-medium text-cv-text-muted uppercase tracking-wide">语音 / 声线</span>
               <CvSelect
-                v-if="voiceMode === 'official'"
                 v-model="form.voice_type"
                 :options="VOICE_OPTIONS"
-                :success="voiceCheckSucceeded"
-                class="min-w-0 flex-1"
+                class="mt-1.5"
               />
-              <div v-else class="relative min-w-0 flex-1">
-                <input
-                  v-model="customVoiceType"
-                  type="text"
-                  placeholder="输入已注册成功的 speaker_id，例如 S_123456"
-                  class="h-[42px] w-full bg-cv-elevated border border-cv-border rounded-cv-md px-4 text-sm text-cv-text placeholder:text-cv-text-muted focus:outline-none transition-all"
-                  :class="voiceCheckSucceeded
-                    ? 'pr-11 border-cv-success focus:border-cv-success focus:shadow-[0_0_0_2px_rgba(34,197,94,0.15)]'
-                    : 'focus:border-cv-accent focus:shadow-[0_0_0_2px_rgba(59,130,246,0.15)]'"
-                />
-                <span
-                  v-if="voiceCheckSucceeded"
-                  class="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-cv-success"
-                >
-                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
-                    <path d="M3.5 8.5l3 3 6-6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
-                  </svg>
-                </span>
-              </div>
-              <button
-                type="button"
-                @click="handleCheckVoice"
-                :disabled="testingVoice || !canCheckVoice"
-                :class="{ 'opacity-40 cursor-not-allowed': testingVoice || !canCheckVoice }"
-                class="inline-flex h-[42px] shrink-0 items-center rounded-cv-md border border-cv-border px-4 text-sm text-cv-text-secondary transition-all hover:bg-cv-hover hover:text-cv-text cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                check
-              </button>
-            </div>
-            <p v-if="voiceMode === 'official'" class="mt-2 text-[11px] leading-5 text-cv-text-muted">
-              可到
-              <a
-                :href="OFFICIAL_VOICE_PREVIEW_URL"
-                target="_blank"
-                rel="noopener noreferrer"
-                class="underline underline-offset-2 transition-colors hover:text-cv-text"
-              >
-                火山引擎语音克隆控制台
-              </a>
-              试听音色
-            </p>
-            <p v-if="voiceMode === 'custom'" class="mt-2 text-[11px] leading-5 text-cv-text-muted">
-              请先前往
-              <a
-                :href="CUSTOM_VOICE_CLONE_URL"
-                target="_blank"
-                rel="noopener noreferrer"
-                class="underline underline-offset-2 transition-colors hover:text-cv-text"
-              >
-                火山引擎语音克隆控制台
-              </a>
-              生成 SC2.0 克隆音色
-            </p>
-            <p v-if="voiceError" class="mt-2 text-[11px] text-cv-danger">{{ voiceError }}</p>
-            <p
-              v-if="voiceTestStatus === 'error' && voiceTestMessage"
-              class="mt-2 text-[11px] leading-5 text-cv-danger whitespace-pre-wrap break-all"
-            >
-              {{ voiceTestMessage }}
-            </p>
-          </label>
+            </label>
+          </div>
         </section>
 
         <!-- Section 3: 人设与风格 -->
@@ -503,8 +304,8 @@ const breadcrumb = computed(() =>
                   class="px-5 py-2.5 border border-cv-border text-cv-text-secondary text-sm rounded-cv-md hover:bg-cv-hover hover:text-cv-text transition-all cursor-pointer">
             取消
           </button>
-          <button @click="save" :disabled="saving || !canSave"
-                  :class="{ 'opacity-40 cursor-not-allowed': saving || !canSave }"
+          <button @click="save" :disabled="saving || !form.name.trim()"
+                  :class="{ 'opacity-40 cursor-not-allowed': saving || !form.name.trim() }"
                   class="px-6 py-2.5 bg-cv-accent text-white text-sm font-medium rounded-cv-md hover:bg-cv-accent-hover transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed">
             {{ saving ? '保存中...' : '保存角色' }}
           </button>

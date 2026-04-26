@@ -1,30 +1,21 @@
-<h1 align="center">CyberVerse</h1>
-<p align="center"><em>CyberVerse is an open-source <strong>digital human agent platform</strong> with real-time video calling. Create an AI agent you can see and talk to, face to face, just like a video call.</em></p>
+# CyberVerse
 
-<p align="center">
-  <a href="README.md"><strong>English</strong></a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a>
-</p>
-
-<p align="center">
-  <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL%20v3-blue.svg" alt="License: GPL v3"/></a>
-  <a href="https://github.com/dsd2077/CyberVerse/pulls"><img src="https://img.shields.io/badge/PRs-welcome-brightgreen.svg" alt="PRs Welcome"/></a>
-</p>
-
-<p align="center">
-  <a href="docs/assets/logo.png"><img src="docs/assets/logo.png" alt="CyberVerse logo" width="100%"/></a>
-</p>
-
----
+**English** | [简体中文](README.zh-CN.md) | [日本語](README.ja.md) | [한국어](README.ko.md)
 
 ### One Photo. A Living Digital Human.
 
 > Ever dreamed of having your own J.A.R.V.I.S. — an AI that truly sees you, hears you, and talks back in real time?
->
+
 > Want to see someone you've lost again, hear their voice, watch them smile at you?
->
+
 > Or maybe there's a character you've always wished you could bring to life?
+
 >
-> **Just one photo. CyberVerse makes them alive.**
+ **Just one photo. CyberVerse makes them alive.**
+
+CyberVerse is an open-source **digital human agent platform** with real-time video calling. Create an AI agent you can see and talk to, face to face, just like a video call.
+
+[![License: GPL v3](https://img.shields.io/badge/License-GPL%20v3-blue.svg)](LICENSE)
 
 ## Features
 
@@ -48,11 +39,11 @@ Brain, face, voice, ears — every component is a swappable plugin. Mix and matc
 
 <div align="center">
 
-| [![](docs/assets/爱丽丝.mov.png)](https://youtu.be/Lk88sew2x4o) | [![](docs/assets/丽娜.mov.png)](https://youtu.be/8jdQ3ThcwgA) |
+| [![](docs/demo/爱丽丝.mov.png)](https://youtu.be/Lk88sew2x4o) | [![](docs/demo/丽娜.mov.png)](https://youtu.be/8jdQ3ThcwgA) |
 |:---:|:---:|
 | [**Alice — watch on YouTube**](https://youtu.be/Lk88sew2x4o) | [**Lina — watch on YouTube**](https://youtu.be/8jdQ3ThcwgA) |
 
-| [![](docs/assets/小龙女.mov.png)](https://youtu.be/WjEHUYZx5Gs) |
+| [![](docs/demo/小龙女.mov.png)](https://youtu.be/WjEHUYZx5Gs) |
 |:---:|
 | [**Xiaolongnü — watch on YouTube**](https://youtu.be/WjEHUYZx5Gs) |
 
@@ -65,11 +56,9 @@ Real-time video conversation requires GPU acceleration. Below are benchmarks for
 | Model | Quality | GPU | Count | Resolution | FPS | Real-time? |
 |-------|---------|-----|-------|------------|-----|------------|
 | FlashHead 1.3B | Pro | RTX 5090 | 2 | 512×512 | 25+ | ✅ Yes |
-| FlashHead 1.3B | Pro | RTX PRO 6000 | 1 | 512×512 | 20 | ✅ Yes |
 | FlashHead 1.3B | Pro | RTX 4090 | 1 | 512×512 | ~10.8 | ❌ No |
 | FlashHead 1.3B | Lite | RTX 4090 | 1 | 512×512 | 25+ | ✅ Yes |
 | LiveAct 18B | — | RTX PRO 6000 | 2 | 320×480 | 20 | ✅ Yes |
-| LiveAct 18B | — | RTX PRO 6000 | 1 | 256×417 | 20 | ✅ Yes |
 
 > **Pro** favors visual quality; **Lite** favors speed. The table reflects typical **quality–compute** balances — more GPU headroom lets you push higher quality; tighter hardware calls for lower settings (resolution, **Pro** vs **Lite**, etc.) to stay real-time.
 
@@ -172,32 +161,6 @@ inference:
       checkpoint_dir: "./checkpoints/SoulX-FlashHead-1_3B"  # ← your path
       wav2vec_dir: "./checkpoints/wav2vec2-base-960h"        # ← your path
       model_type: "lite"           # "pro" for higher quality (needs more GPU)
-      compile_model: true
-      compile_vae: true
-      dist_worker_main_thread: true
-      infer_params:
-        frame_num: 33
-        motion_frames_latent_num: 2
-        tgt_fps: 20
-        sample_rate: 16000
-        sample_shift: 5
-        color_correction_strength: 1.0
-        cached_audio_duration: 8
-        num_heads: 12
-        height: 512
-        width: 512
-    live_act:
-      ckpt_dir: "./checkpoints/LiveAct"                     # ← your path
-      wav2vec_dir: "./checkpoints/chinese-wav2vec2-base"   # ← your path
-      seed: 42
-      compile_wan_model: false
-      compile_vae_decode: false
-      dist_worker_main_thread: true
-      default_prompt: "一个人在说话"
-      infer_params:
-        size: "320*480"
-        fps: 20
-        audio_cfg: 1.0
 ```
 
 You can skip editing paths here for now and adjust these options later in the web UI.
@@ -270,24 +233,6 @@ make frontend
 curl -s http://localhost:8080/api/v1/health
 ```
 
-### Check 8443/TCP Connectivity for Remote Access
-
-When `streaming_mode: direct` uses the embedded TURN server, the browser must be able to reach the server's `8443/TCP`. If the page loads but audio/video never connects, or the server logs show `ICE connection state: failed` or `publish timeout waiting for connection`, first check whether your machine can reach port `8443` on the server:
-
-```bash
-nc -vz <server-ip> 8443
-```
-
-If `8443` is not reachable, the usual cause is a cloud security group, firewall, or NAT restriction. In that case, you can forward your local `8443` to the server through an SSH tunnel:
-
-```bash
-ssh -L 8443:127.0.0.1:8443 user@host -p port
-```
-
-After the tunnel is established, the browser will access the remote TURN service through local `127.0.0.1:8443`.
-
-If you want the browser to connect to the remote server directly instead of through an SSH tunnel, set `pipeline.ice_public_ip` in `cyberverse_config.yaml` to the server's public IP or domain. If you are using an SSH tunnel, you can keep the default value (`127.0.0.1`).
-
 Open http://localhost:5173 in your browser — you're ready to go.
 
 ## Roadmap
@@ -300,12 +245,11 @@ Configure characters, inference, and launch real-time digital-human sessions.
 - [x] Real-time voice and video over WebRTC — direct P2P (embedded TURN) or LiveKit SFU
 - [x] Pluggable modules (avatar, voice LLM, LLM, TTS, ASR); configure different vendors’ API keys via YAML (a single Doubao Voice API key is enough to run today)
 - [x] Session management: per-character chat history persisted to disk and loaded when a conversation starts
-- [x] Voice cloning: supports Doubao voice cloning
-- [x] Hybrid input: supports both voice and text in the same conversation
-- [ ] Voice interruption while the model is speaking, plus session pause and resume
 - [ ] Import knowledge, documents, and biographical material for character-grounded RAG Q&A
 - [ ] Face-to-face: user-side camera/video input with understanding of motion, gestures, and other visual cues
 - [ ] Embeddable for developers (Web component or SDK) to integrate self-hosted instances into their own sites
+- [ ] Voice cloning: match a character’s voice from a small amount of reference audio
+- [ ] Voice interruption while the model is speaking, plus session pause and resume
 - [ ] Live streaming: audio/video output for broadcast-style use cases
 
 ### 2. **Digital Humans as Agents**  
