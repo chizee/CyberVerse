@@ -1,3 +1,4 @@
+import argparse
 import gradio as gr
 import os
 import sys
@@ -16,7 +17,36 @@ _models_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _models_dir not in sys.path:
     sys.path.insert(0, _models_dir)
 
-from flash_head.inference import get_pipeline, get_base_data, get_infer_params, get_audio_embedding, run_pipeline
+from flash_head.inference import (
+    get_pipeline,
+    get_base_data,
+    get_infer_params,
+    get_audio_embedding,
+    load_flash_head_runtime_config,
+    resolve_config_path,
+    run_pipeline,
+)
+
+
+def _load_app_defaults():
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument(
+        "--config",
+        type=str,
+        default=None,
+        help="Path to cyberverse_config.yaml.",
+    )
+    args, _ = parser.parse_known_args()
+    config_path = resolve_config_path(args.config)
+    section = load_flash_head_runtime_config(config_path)
+    return str(config_path), section
+
+
+_CONFIG_PATH, _FLASH_HEAD_CONFIG = _load_app_defaults()
+_GENERATE_VIDEO_SCRIPT = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "generate_video.py",
+)
 
 # Global variable to store the loaded pipeline
 pipeline = None
@@ -61,7 +91,8 @@ def run_multi_gpu_inference(
     cmd = [
         "torchrun",
         f"--nproc_per_node={num_gpus}",
-        "generate_video.py",
+        _GENERATE_VIDEO_SCRIPT,
+        "--config", _CONFIG_PATH,
         "--ckpt_dir", ckpt_dir,
         "--wav2vec_dir", wav2vec_dir,
         "--model_type", model_type,
@@ -327,10 +358,11 @@ with gr.Blocks(title="SoulX-FlashHead Video Generator", theme=gr.themes.Soft()) 
                             label="FlashHead Model Type", 
                             choices=[
                                 ("Pro Version (Multi-GPU Support)", "pro"),
-                                ("Lite Version (Single GPU Only)", "lite")
+                                ("Lite Version (Single GPU Only)", "lite"),
+                                ("Pretrained Version", "pretrained"),
                             ],
-                            value="pro",
-                            info="Select the model variant. 'pro' supports both single and multi-GPU, 'lite' is single GPU only."
+                            value=_FLASH_HEAD_CONFIG.get("model_type", "pro"),
+                            info="Select the model variant. 'pro' and 'pretrained' support both single and multi-GPU; 'lite' is single GPU only."
                         )
                         mode_input = gr.Radio(
                             choices=["Single GPU", "Multi-GPU"],
@@ -349,12 +381,12 @@ with gr.Blocks(title="SoulX-FlashHead Video Generator", theme=gr.themes.Soft()) 
                     with gr.TabItem("Model Paths"):
                         ckpt_dir_input = gr.Textbox(
                             label="FlashHead Checkpoint Directory", 
-                            value="models/SoulX-FlashHead-1_3B",
+                            value=_FLASH_HEAD_CONFIG.get("checkpoint_dir", "models/SoulX-FlashHead-1_3B"),
                             info="Path to the FlashHead model checkpoint."
                         )
                         wav2vec_dir_input = gr.Textbox(
                             label="Wav2Vec Directory", 
-                            value="models/wav2vec2-base-960h",
+                            value=_FLASH_HEAD_CONFIG.get("wav2vec_dir", "models/wav2vec2-base-960h"),
                             info="Path to the Wav2Vec model checkpoint."
                         )
 
@@ -372,7 +404,7 @@ with gr.Blocks(title="SoulX-FlashHead Video Generator", theme=gr.themes.Soft()) 
                         )
                         seed_input = gr.Number(
                             label="Random Seed", 
-                            value=9999, 
+                            value=_FLASH_HEAD_CONFIG.get("seed", 9999), 
                             precision=0
                         )
 

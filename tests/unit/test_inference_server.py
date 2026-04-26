@@ -32,6 +32,21 @@ def test_build_plugin_config_passes_root_warmup_to_avatar_plugins():
         {
             "plugin_class": "pkg.Plugin",
             "device": "cuda:0",
+            "compile_model": True,
+            "compile_vae": True,
+            "dist_worker_main_thread": True,
+            "infer_params": {
+                "frame_num": 33,
+                "motion_frames_latent_num": 2,
+                "tgt_fps": 25,
+                "sample_rate": 16000,
+                "sample_shift": 5,
+                "color_correction_strength": 1.0,
+                "cached_audio_duration": 8,
+                "num_heads": 12,
+                "height": 512,
+                "width": 512,
+            },
         },
     )
 
@@ -40,6 +55,21 @@ def test_build_plugin_config_passes_root_warmup_to_avatar_plugins():
         "cuda_visible_devices": "0,1",
         "world_size": 2,
         "device": "cuda:0",
+        "compile_model": True,
+        "compile_vae": True,
+        "dist_worker_main_thread": True,
+        "infer_params": {
+            "frame_num": 33,
+            "motion_frames_latent_num": 2,
+            "tgt_fps": 25,
+            "sample_rate": 16000,
+            "sample_shift": 5,
+            "color_correction_strength": 1.0,
+            "cached_audio_duration": 8,
+            "num_heads": 12,
+            "height": 512,
+            "width": 512,
+        },
     }
     assert plugin_config.shared["warmup"] == config["warmup"]
 
@@ -63,12 +93,28 @@ def test_build_plugin_config_model_values_override_avatar_runtime_defaults():
         {
             "plugin_class": "pkg.Plugin",
             "world_size": 1,
+            "compile_wan_model": False,
+            "compile_vae_decode": False,
+            "dist_worker_main_thread": True,
+            "infer_params": {
+                "size": "320*480",
+                "fps": 20,
+                "audio_cfg": 1.0,
+            },
         },
     )
 
     assert plugin_config.params == {
         "cuda_visible_devices": "0,1",
         "world_size": 1,
+        "compile_wan_model": False,
+        "compile_vae_decode": False,
+        "dist_worker_main_thread": True,
+        "infer_params": {
+            "size": "320*480",
+            "fps": 20,
+            "audio_cfg": 1.0,
+        },
     }
 
 

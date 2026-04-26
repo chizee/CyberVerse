@@ -160,6 +160,32 @@ inference:
       checkpoint_dir: "./checkpoints/SoulX-FlashHead-1_3B"  # ← 로컬 경로
       wav2vec_dir: "./checkpoints/wav2vec2-base-960h"        # ← 로컬 경로
       model_type: "lite"           # 더 높은 품질이 필요하면 "pro"(GPU 더 필요)
+      compile_model: true
+      compile_vae: true
+      dist_worker_main_thread: true
+      infer_params:
+        frame_num: 33
+        motion_frames_latent_num: 2
+        tgt_fps: 20
+        sample_rate: 16000
+        sample_shift: 5
+        color_correction_strength: 1.0
+        cached_audio_duration: 8
+        num_heads: 12
+        height: 512
+        width: 512
+    live_act:
+      ckpt_dir: "./checkpoints/LiveAct"                     # ← 로컬 경로
+      wav2vec_dir: "./checkpoints/chinese-wav2vec2-base"   # ← 로컬 경로
+      seed: 42
+      compile_wan_model: false
+      compile_vae_decode: false
+      dist_worker_main_thread: true
+      default_prompt: "一个人在说话"
+      infer_params:
+        size: "320*480"
+        fps: 20
+        audio_cfg: 1.0
 ```
 
 이 단계의 경로 수정은 잠시 건너뛰고, 나중에 Web UI에서 조정해도 됩니다.

@@ -11,6 +11,19 @@ torch = pytest.importorskip("torch")
 from inference.core.types import AudioChunk, PluginConfig, VideoChunk
 from inference.plugins.avatar.flash_head_plugin import FlashHeadAvatarPlugin
 
+FLASH_HEAD_INFER_PARAMS = {
+    "frame_num": 33,
+    "motion_frames_latent_num": 2,
+    "tgt_fps": 25,
+    "sample_rate": 16000,
+    "sample_shift": 5,
+    "color_correction_strength": 1.0,
+    "cached_audio_duration": 8,
+    "num_heads": 12,
+    "height": 512,
+    "width": 512,
+}
+
 
 @pytest.fixture
 def plugin():
@@ -58,6 +71,8 @@ def test_audio_deque_sliding_window(plugin):
 def _fake_flash_head_inference_module():
     package = types.ModuleType("flash_head")
     module = types.ModuleType("flash_head.inference")
+    module.configure_infer_params = MagicMock()
+    module.configure_runtime_options = MagicMock()
     module.get_pipeline = MagicMock(return_value=MagicMock(device="cpu"))
     module.get_infer_params = MagicMock(return_value={
         "sample_rate": 16000,
@@ -137,6 +152,10 @@ def test_init_sync_runs_warmup_when_enabled():
             "checkpoint_dir": "/tmp/ckpt",
             "wav2vec_dir": "/tmp/wav2vec",
             "model_type": "lite",
+            "compile_model": True,
+            "compile_vae": True,
+            "dist_worker_main_thread": True,
+            "infer_params": FLASH_HEAD_INFER_PARAMS,
         },
         shared={
             "warmup": {
@@ -159,7 +178,10 @@ def test_init_sync_runs_warmup_when_enabled():
             with patch.object(plugin, "_warmup") as warmup:
                 plugin._init_sync(config)
 
+    fake_module.configure_runtime_options.assert_called_once_with(config.params)
+    fake_module.configure_infer_params.assert_called_once_with(FLASH_HEAD_INFER_PARAMS)
     warmup.assert_called_once_with()
+    assert plugin._dist_worker_main_thread is True
 
 
 def test_init_sync_skips_warmup_when_disabled():
@@ -172,6 +194,10 @@ def test_init_sync_skips_warmup_when_disabled():
             "checkpoint_dir": "/tmp/ckpt",
             "wav2vec_dir": "/tmp/wav2vec",
             "model_type": "lite",
+            "compile_model": True,
+            "compile_vae": True,
+            "dist_worker_main_thread": True,
+            "infer_params": FLASH_HEAD_INFER_PARAMS,
         },
         shared={
             "warmup": {
@@ -194,7 +220,10 @@ def test_init_sync_skips_warmup_when_disabled():
             with patch.object(plugin, "_warmup") as warmup:
                 plugin._init_sync(config)
 
+    fake_module.configure_runtime_options.assert_called_once_with(config.params)
+    fake_module.configure_infer_params.assert_called_once_with(FLASH_HEAD_INFER_PARAMS)
     warmup.assert_not_called()
+    assert plugin._dist_worker_main_thread is True
 
 
 def test_warmup_uses_pipeline_path_and_resets_transient_state(plugin):
@@ -249,3 +278,8 @@ def test_config_loading():
     assert fh["model_type"] in {"lite", "pro", "pretrained"}
     assert fh["models_dir"] == "models"
     assert "checkpoint_dir" in fh
+    assert fh["compile_model"] is True
+    assert fh["compile_vae"] is True
+    assert fh["dist_worker_main_thread"] is True
+    assert fh["infer_params"]["frame_num"] == 33
+    assert fh["infer_params"]["num_heads"] == 12

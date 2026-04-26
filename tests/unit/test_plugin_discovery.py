@@ -9,6 +9,7 @@ from inference.plugins.base import CyberVersePlugin
 # --- import_plugin_class tests ---
 
 def test_import_valid_plugin_class():
+    pytest.importorskip("torch")
     cls = import_plugin_class(
         "inference.plugins.avatar.flash_head_plugin.FlashHeadAvatarPlugin"
     )
@@ -48,6 +49,7 @@ def test_import_no_module_path_raises():
 
 def test_config_driven_registration():
     """Simulate server._register_plugins logic with config dict."""
+    pytest.importorskip("torch")
     config = {
         "inference": {
             "avatar": {
@@ -55,6 +57,9 @@ def test_config_driven_registration():
                 "flash_head": {
                     "plugin_class": "inference.plugins.avatar.flash_head_plugin.FlashHeadAvatarPlugin",
                     "checkpoint_dir": "/tmp/test",
+                    "infer_params": {
+                        "frame_num": 33,
+                    },
                 },
             },
             "llm": {
@@ -140,6 +145,9 @@ def test_plugin_class_stripped_from_params():
         "plugin_class": "inference.plugins.avatar.flash_head_plugin.FlashHeadAvatarPlugin",
         "checkpoint_dir": "/tmp/test",
         "model_type": "lite",
+        "infer_params": {
+            "frame_num": 33,
+        },
     }
     params = {k: v for k, v in conf.items() if k != "plugin_class"}
     plugin_config = PluginConfig(plugin_name="avatar.flash_head", params=params)
@@ -147,3 +155,4 @@ def test_plugin_class_stripped_from_params():
     assert "plugin_class" not in plugin_config.params
     assert plugin_config.params["checkpoint_dir"] == "/tmp/test"
     assert plugin_config.params["model_type"] == "lite"
+    assert plugin_config.params["infer_params"]["frame_num"] == 33

@@ -1,6 +1,7 @@
 """
 Gradio 流式视频生成：视频生成&视频保存异步进行，确保实时性
 """
+import argparse
 import gradio as gr
 import os
 import torch
@@ -21,8 +22,27 @@ from flash_head.inference import (
     get_base_data,
     get_infer_params,
     get_audio_embedding,
+    load_flash_head_runtime_config,
+    resolve_config_path,
     run_pipeline,
 )
+
+
+def _load_app_defaults():
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument(
+        "--config",
+        type=str,
+        default=None,
+        help="Path to cyberverse_config.yaml.",
+    )
+    args, _ = parser.parse_known_args()
+    config_path = resolve_config_path(args.config)
+    section = load_flash_head_runtime_config(config_path)
+    return str(config_path), section
+
+
+_CONFIG_PATH, _FLASH_HEAD_CONFIG = _load_app_defaults()
 
 # gr.Video 的 streaming=True 要求视频片段大于1s，实际需要接近3s才能不卡顿。
 # 为了适配，每 3 个 chunk 合并为一段视频
@@ -298,19 +318,19 @@ with gr.Blocks(title="SoulX-FlashHead 流式视频生成", theme=gr.themes.Soft(
             with gr.Accordion("⚙️ 高级设置", open=False):
                 ckpt_dir_input = gr.Textbox(
                     label="FlashHead Checkpoint Directory",
-                    value="models/SoulX-FlashHead-1_3B",
+                    value=_FLASH_HEAD_CONFIG.get("checkpoint_dir", "models/SoulX-FlashHead-1_3B"),
                 )
                 wav2vec_dir_input = gr.Textbox(
                     label="Wav2Vec Directory",
-                    value="models/wav2vec2-base-960h",
+                    value=_FLASH_HEAD_CONFIG.get("wav2vec_dir", "models/wav2vec2-base-960h"),
                 )
                 model_type_input = gr.Dropdown(
                     label="Model Type",
-                    choices=["pro", "lite"],
-                    value="lite",
+                    choices=["pro", "lite", "pretrained"],
+                    value=_FLASH_HEAD_CONFIG.get("model_type", "lite"),
                 )
                 use_face_crop_input = gr.Checkbox(label="Use Face Crop", value=False)
-                seed_input = gr.Number(label="Random Seed", value=9999, precision=0)
+                seed_input = gr.Number(label="Random Seed", value=_FLASH_HEAD_CONFIG.get("seed", 9999), precision=0)
         with gr.Column(scale=1):
             gr.Markdown("### 📺 输出视频（流式更新）")
             video_output = gr.Video(

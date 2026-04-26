@@ -16,6 +16,31 @@ def test_load_config_basic():
         "world_size",
     }
     assert set(config["warmup"].keys()) == {"enabled", "distributed"}
+    flash_head = config["inference"]["avatar"]["flash_head"]
+    assert flash_head["compile_model"] is True
+    assert flash_head["compile_vae"] is True
+    assert flash_head["dist_worker_main_thread"] is True
+    infer_params = config["inference"]["avatar"]["flash_head"]["infer_params"]
+    assert set(infer_params.keys()) == {
+        "frame_num",
+        "motion_frames_latent_num",
+        "tgt_fps",
+        "sample_rate",
+        "sample_shift",
+        "color_correction_strength",
+        "cached_audio_duration",
+        "num_heads",
+        "height",
+        "width",
+    }
+    live_act_infer_params = config["inference"]["avatar"]["live_act"]["infer_params"]
+    live_act = config["inference"]["avatar"]["live_act"]
+    assert live_act["dist_worker_main_thread"] is True
+    assert set(live_act_infer_params.keys()) == {
+        "size",
+        "fps",
+        "audio_cfg",
+    }
 
 
 def test_env_var_substitution():

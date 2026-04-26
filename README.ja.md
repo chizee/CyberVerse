@@ -160,6 +160,32 @@ inference:
       checkpoint_dir: "./checkpoints/SoulX-FlashHead-1_3B"  # ← ローカルのパス
       wav2vec_dir: "./checkpoints/wav2vec2-base-960h"        # ← ローカルのパス
       model_type: "lite"           # 高画質が必要なら "pro"（より多くの GPU が必要）
+      compile_model: true
+      compile_vae: true
+      dist_worker_main_thread: true
+      infer_params:
+        frame_num: 33
+        motion_frames_latent_num: 2
+        tgt_fps: 20
+        sample_rate: 16000
+        sample_shift: 5
+        color_correction_strength: 1.0
+        cached_audio_duration: 8
+        num_heads: 12
+        height: 512
+        width: 512
+    live_act:
+      ckpt_dir: "./checkpoints/LiveAct"                     # ← ローカルのパス
+      wav2vec_dir: "./checkpoints/chinese-wav2vec2-base"   # ← ローカルのパス
+      seed: 42
+      compile_wan_model: false
+      compile_vae_decode: false
+      dist_worker_main_thread: true
+      default_prompt: "一个人在说话"
+      infer_params:
+        size: "320*480"
+        fps: 20
+        audio_cfg: 1.0
 ```
 
 ここでのパス編集はひとまずスキップして、あとで Web UI から調整しても構いません。

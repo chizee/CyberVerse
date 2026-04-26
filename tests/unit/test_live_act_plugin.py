@@ -13,18 +13,21 @@ def _config(*, warmup_enabled: bool) -> PluginConfig:
         plugin_name="avatar.live_act",
         params={
             "world_size": 1,
-            "size": "320*480",
-            "fps": 20,
             "seed": 42,
-            "audio_cfg": 1.0,
             "t5_cpu": True,
             "fp8_kv_cache": False,
             "offload_cache": False,
             "block_offload": False,
             "mean_memory": False,
+            "dist_worker_main_thread": True,
             "default_prompt": "一个人在说话",
             "ckpt_dir": "/tmp/liveact",
             "wav2vec_dir": "/tmp/wav2vec",
+            "infer_params": {
+                "size": "320*480",
+                "fps": 20,
+                "audio_cfg": 1.0,
+            },
         },
         shared={
             "warmup": {
@@ -63,6 +66,10 @@ def test_init_sync_runs_warmup_after_avatar_setup():
 
     warmup.assert_called_once_with()
     assert order == ["avatar", "warmup"]
+    assert plugin._width == 320
+    assert plugin._height == 480
+    assert plugin._fps == 20
+    assert plugin._audio_cfg == 1.0
 
 
 def test_init_sync_skips_warmup_when_disabled():

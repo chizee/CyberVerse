@@ -20,6 +20,24 @@ from inference.plugins.avatar.warmup import resolve_avatar_warmup_policy
 logger = logging.getLogger(__name__)
 
 _sys_path_lock = threading.Lock()
+_TRUE_VALUES = {"1", "true", "yes", "on"}
+_FALSE_VALUES = {"0", "false", "no", "off", ""}
+
+
+def _parse_bool(value: object, *, default: bool) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+
+    normalized = str(value).strip().lower()
+    if normalized in _TRUE_VALUES:
+        return True
+    if normalized in _FALSE_VALUES:
+        return False
+    raise ValueError(f"Invalid boolean value: {value!r}")
 
 
 def _audio_bytes_to_float32_mono(data: bytes, format_hint: str) -> np.ndarray:
@@ -176,6 +194,8 @@ class FlashHeadAvatarPlugin(AvatarPlugin):
 
         # Import once and cache all functions
         from flash_head.inference import (
+            configure_infer_params,
+            configure_runtime_options,
             get_pipeline,
             get_infer_params,
             get_base_data,
@@ -183,6 +203,8 @@ class FlashHeadAvatarPlugin(AvatarPlugin):
             run_pipeline,
         )
 
+        configure_runtime_options(config.params)
+        configure_infer_params(config.params.get("infer_params"))
         self._fn_get_base_data = get_base_data
         self._fn_get_audio_embedding = get_audio_embedding
         self._fn_run_pipeline = run_pipeline
@@ -200,7 +222,13 @@ class FlashHeadAvatarPlugin(AvatarPlugin):
         # executed from Python background threads. Allow running the
         # distributed worker loop on the main thread for non-rank0.
         self._dist_worker_main_thread = (
-            os.environ.get("FLASHHEAD_DIST_WORKER_MAIN_THREAD", "0") == "1"
+            _parse_bool(
+                os.environ.get(
+                    "FLASHHEAD_DIST_WORKER_MAIN_THREAD",
+                    config.params.get("dist_worker_main_thread"),
+                ),
+                default=False,
+            )
         )
 
         # Use a gray placeholder avatar for initialization and warmup.

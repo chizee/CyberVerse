@@ -111,6 +111,9 @@ pip install "huggingface_hub[cli]"
 huggingface-cli download Soul-AILab/SoulX-FlashHead-1_3B --local-dir ./models/SoulX-FlashHead-1_3B
 huggingface-cli download facebook/wav2vec2-base-960h --local-dir ./models/wav2vec2-base-960h
 ```
+
+> Runtime video parameters are read from the repo-root `cyberverse_config.yaml` under `inference.avatar.flash_head.infer_params`. FlashHead runtime toggles such as `compile_model`, `compile_vae`, and `dist_worker_main_thread` live under `inference.avatar.flash_head`. Use `--config /path/to/cyberverse_config.yaml` with `generate_video.py`, `gradio_app.py`, or `gradio_app_streaming.py` to override the default config path.
+
 ### 🚀 Inference
 ```bash
 # Infer with [Pro-Model] on single GPU
@@ -132,10 +135,10 @@ bash models/flash_head/inference_script_single_gpu_lite.sh
 # Gradio support needs gradio==5.50.0, and Chrome recommonded.
 
 # common gradio demo
-python models/flash_head/gradio_app.py
+python models/flash_head/gradio_app.py --config ./cyberverse_config.yaml
 
 # streaming gradio demo (Only support single GPU)
-python models/flash_head/gradio_app_streaming.py
+python models/flash_head/gradio_app_streaming.py --config ./cyberverse_config.yaml
 ```
 
 ### 🤗 Streaming online demo
