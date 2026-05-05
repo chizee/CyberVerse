@@ -148,7 +148,7 @@ export async function testCharacterVoice(data: { voice_provider: string; voice_t
   })
 }
 
-export async function uploadAvatar(id: string, file: File): Promise<{ path: string }> {
+export async function uploadAvatar(id: string, file: File): Promise<{ path: string; filename?: string }> {
   const formData = new FormData()
   formData.append('avatar', file)
   const res = await fetch(`${API_BASE}/characters/${id}/avatar`, {

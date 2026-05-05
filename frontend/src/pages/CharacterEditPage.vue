@@ -337,12 +337,18 @@ async function loadImages() {
   }
 }
 
-async function handleFileSelected(file: File) {
+async function handleFileSelected(file: File, options?: { activate?: boolean }) {
   if (isEdit.value) {
     // Edit mode: upload immediately
     try {
-      await uploadAvatar(characterId.value, file)
+      const existingFilenames = new Set(images.value.map(img => img.filename))
+      const uploaded = await uploadAvatar(characterId.value, file)
       await loadImages()
+      const uploadedFilename = uploaded.filename || images.value.find(img => !existingFilenames.has(img.filename))?.filename
+      if (options?.activate && uploadedFilename) {
+        await activateCharacterImage(characterId.value, uploadedFilename)
+        await loadImages()
+      }
       await store.fetchOne(characterId.value)
       if (store.current) {
         form.value.avatar_image = store.current.avatar_image
@@ -354,6 +360,10 @@ async function handleFileSelected(file: File) {
     // Create mode: queue for upload after save
     pendingFiles.value = [...pendingFiles.value, file]
   }
+}
+
+function handleReplacePending(index: number, file: File) {
+  pendingFiles.value = pendingFiles.value.map((pendingFile, i) => i === index ? file : pendingFile)
 }
 
 function handleDeletePending(index: number) {
@@ -484,6 +494,7 @@ const breadcrumb = computed(() =>
           :image-mode="form.image_mode"
           @update:use-face-crop="v => form.use_face_crop = v"
           @file-selected="handleFileSelected"
+          @replace-pending="handleReplacePending"
           @delete-image="handleDeleteImage"
           @delete-pending="handleDeletePending"
           @activate-image="handleActivateImage"

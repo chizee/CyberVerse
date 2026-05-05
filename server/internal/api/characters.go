@@ -284,7 +284,10 @@ func (r *Router) handleUploadAvatar(w http.ResponseWriter, req *http.Request) {
 	}
 
 	c, _ := r.charStore.Get(id)
-	writeJSON(w, http.StatusOK, map[string]string{"path": c.AvatarImage})
+	writeJSON(w, http.StatusOK, map[string]string{
+		"path":     c.AvatarImage,
+		"filename": filename,
+	})
 }
 
 // handleListImages returns all images for a character.
