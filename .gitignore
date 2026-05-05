@@ -32,6 +32,7 @@ server/cyberverse-server
 inference/generated/*_pb2*.py
 
 # Local configuration files
+cyberverse_config.yaml
 *.local.md
 
 

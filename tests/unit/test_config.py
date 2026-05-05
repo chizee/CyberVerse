@@ -8,7 +8,7 @@ from inference.core.config import load_config
 
 
 def test_load_config_basic():
-    config = load_config("cyberverse_config.yaml")
+    config = load_config("cyberverse_config.example.yaml")
     assert config["server"]["http_port"] == 8080
     assert config["inference"]["avatar"]["default"] in {"flash_head", "live_act"}
     assert set(config["inference"]["avatar"]["runtime"].keys()) == {
@@ -43,6 +43,8 @@ def test_load_config_basic():
     }
     assert "ws_url" not in config["inference"]["voice_llm"]["doubao"]
     assert "base_url" not in config["inference"]["llm"]["qwen"]
+    assert "system_prompt" not in config["inference"]["llm"]["qwen"]
+    assert "system_prompt" not in config["inference"]["llm"]["openai"]
     assert "ws_url" not in config["inference"]["tts"]["qwen"]
     assert "ws_url" not in config["inference"]["asr"]["qwen"]
 

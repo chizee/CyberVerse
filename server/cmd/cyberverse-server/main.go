@@ -33,6 +33,10 @@ func main() {
 		log.Printf("Warning: failed to load .env: %v", err)
 	}
 
+	if _, err := os.Stat(*configPath); os.IsNotExist(err) {
+		log.Fatalf("Config file %s not found. Copy cyberverse_config.example.yaml to cyberverse_config.yaml first.", *configPath)
+	}
+
 	cfg, err := config.Load(*configPath)
 	if err != nil {
 		log.Fatalf("Failed to load config: %v", err)
