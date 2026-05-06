@@ -34,7 +34,7 @@ func main() {
 	}
 
 	if _, err := os.Stat(*configPath); os.IsNotExist(err) {
-		log.Fatalf("Config file %s not found. Copy cyberverse_config.example.yaml to cyberverse_config.yaml first.", *configPath)
+		log.Fatalf("Config file %s not found. Copy infra/cyberverse_config.example.yaml to cyberverse_config.yaml first.", *configPath)
 	}
 
 	cfg, err := config.Load(*configPath)

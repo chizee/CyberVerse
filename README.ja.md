@@ -186,7 +186,7 @@ huggingface-cli download TencentGameMate/chinese-wav2vec2-base \
 ### ステップ 5: ローカル設定を作成して更新する
 
 ```bash
-cp cyberverse_config.example.yaml cyberverse_config.yaml
+cp infra/cyberverse_config.example.yaml cyberverse_config.yaml
 ```
 
 ローカルの `cyberverse_config.yaml` を編集し、モデルパスをローカルの checkpoint パスに合わせて更新します。このファイルは git で無視されるため、ローカルパスやデプロイ設定が上流の更新と衝突しません。

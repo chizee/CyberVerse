@@ -1,6 +1,6 @@
 # CyberVerse example configuration.
 # Copy this file to cyberverse_config.yaml and edit the local copy:
-#   cp cyberverse_config.example.yaml cyberverse_config.yaml
+#   cp infra/cyberverse_config.example.yaml cyberverse_config.yaml
 #
 # Keep secrets in .env. Values such as ${DASHSCOPE_API_KEY} are expanded from
 # environment variables after .env is loaded.

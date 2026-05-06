@@ -187,7 +187,7 @@ huggingface-cli download TencentGameMate/chinese-wav2vec2-base \
 ### Step 5: Create and update local config
 
 ```bash
-cp cyberverse_config.example.yaml cyberverse_config.yaml
+cp infra/cyberverse_config.example.yaml cyberverse_config.yaml
 ```
 
 Edit the local `cyberverse_config.yaml`, update the model paths to match your local checkpoints. This file is ignored by git so local paths and deployment settings do not conflict with upstream changes.

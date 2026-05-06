@@ -186,7 +186,7 @@ huggingface-cli download TencentGameMate/chinese-wav2vec2-base \
 ### 5단계: 로컬 설정 생성 및 업데이트
 
 ```bash
-cp cyberverse_config.example.yaml cyberverse_config.yaml
+cp infra/cyberverse_config.example.yaml cyberverse_config.yaml
 ```
 
 로컬 `cyberverse_config.yaml`을 열고 모델 경로를 로컬 checkpoint 경로에 맞게 수정합니다. 이 파일은 git에서 무시되므로 로컬 경로와 배포 설정이 upstream 변경과 충돌하지 않습니다.

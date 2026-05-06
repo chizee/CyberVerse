@@ -8,7 +8,7 @@ CONFIG="${1:-cyberverse_config.yaml}"
 
 if [[ ! -f "${CONFIG}" ]]; then
   echo "Config file not found: ${CONFIG}" >&2
-  echo "Copy cyberverse_config.example.yaml to cyberverse_config.yaml first." >&2
+  echo "Copy infra/cyberverse_config.example.yaml to cyberverse_config.yaml first." >&2
   exit 1
 fi
 

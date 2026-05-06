@@ -188,7 +188,7 @@ huggingface-cli download TencentGameMate/chinese-wav2vec2-base \
 ### 第 5 步：创建并更新本地配置
 
 ```bash
-cp cyberverse_config.example.yaml cyberverse_config.yaml
+cp infra/cyberverse_config.example.yaml cyberverse_config.yaml
 ```
 
 编辑本地 `cyberverse_config.yaml`，将模型路径更新为你的本地 checkpoint 路径。这个文件会被 git 忽略，避免本地路径和部署配置与上游更新冲突。
