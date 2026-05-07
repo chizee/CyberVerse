@@ -39,7 +39,7 @@ def main():
         f"[silence-sim] wait_s={wait_s} silence_s={silence_s} pcm_amplitude={pcm_amplitude} waveform={waveform}"
     )
 
-    resp = http_post_json(BASE_HTTP + "/api/v1/sessions", {"mode": "voice_llm"})
+    resp = http_post_json(BASE_HTTP + "/api/v1/sessions", {"mode": "omni"})
     session_id = resp.get("session_id")
     livekit_url = resp.get("livekit_url")
     livekit_token = resp.get("livekit_token")
@@ -158,4 +158,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

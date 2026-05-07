@@ -28,7 +28,7 @@ func TestStandardSystemPromptUsesGlobalWithoutCharacter(t *testing.T) {
 	}
 }
 
-func TestBuildVoiceLLMSessionConfigUsesOnlyVoiceLLMRolePrompt(t *testing.T) {
+func TestBuildVoiceLLMSessionConfigUsesOnlyOmniRolePrompt(t *testing.T) {
 	store, err := character.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -47,7 +47,7 @@ func TestBuildVoiceLLMSessionConfigUsesOnlyVoiceLLMRolePrompt(t *testing.T) {
 	}
 
 	orch := New(nil, nil, nil, nil, store)
-	session := NewSession("s1", ModeVoiceLLM, char.ID)
+	session := NewSession("s1", ModeOmni, char.ID)
 
 	got := orch.buildVoiceLLMSessionConfig(session, "s1")
 	if got.Provider != "qwen_omni" {
@@ -57,11 +57,11 @@ func TestBuildVoiceLLMSessionConfigUsesOnlyVoiceLLMRolePrompt(t *testing.T) {
 		t.Fatalf("expected voice-specific fields to stay separate, got %+v", got)
 	}
 	if got.SystemPrompt != "你和用户像熟悉的朋友。" {
-		t.Fatalf("expected VoiceLLM to keep only the character prompt, got %q", got.SystemPrompt)
+		t.Fatalf("expected omni mode to keep only the character prompt, got %q", got.SystemPrompt)
 	}
 	for _, unexpected := range []string{"【全局输出规范】", "默认简短", "角色描述：", "角色性格：", "说话风格："} {
 		if strings.Contains(got.SystemPrompt, unexpected) {
-			t.Fatalf("VoiceLLM prompt should not contain %q: %q", unexpected, got.SystemPrompt)
+			t.Fatalf("omni prompt should not contain %q: %q", unexpected, got.SystemPrompt)
 		}
 	}
 }

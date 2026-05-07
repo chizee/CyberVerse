@@ -47,7 +47,7 @@ async def test_initialize_sets_qwen_omni_defaults():
 
     await plugin.initialize(
         PluginConfig(
-            plugin_name="voice_llm.qwen_omni",
+            plugin_name="omni.qwen_omni",
             params={
                 "api_key": "dashscope-key",
                 "model": "qwen3.5-omni-flash-realtime",
@@ -68,7 +68,7 @@ async def test_check_voice_configures_session_with_voice_override():
     plugin = QwenOmniRealtimePlugin()
     await plugin.initialize(
         PluginConfig(
-            plugin_name="voice_llm.qwen_omni",
+            plugin_name="omni.qwen_omni",
             params={"api_key": "dashscope-key"},
         )
     )
@@ -95,7 +95,7 @@ async def test_initialize_keeps_qwen_omni_system_prompt_when_configured():
 
     await plugin.initialize(
         PluginConfig(
-            plugin_name="voice_llm.qwen_omni",
+            plugin_name="omni.qwen_omni",
             params={
                 "api_key": "dashscope-key",
                 "system_prompt": "角色背景",
@@ -111,7 +111,7 @@ async def test_converse_stream_emits_audio_transcripts_and_final():
     plugin = QwenOmniRealtimePlugin()
     await plugin.initialize(
         PluginConfig(
-            plugin_name="voice_llm.qwen_omni",
+            plugin_name="omni.qwen_omni",
             params={"api_key": "dashscope-key"},
         )
     )

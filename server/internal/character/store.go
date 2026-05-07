@@ -58,6 +58,20 @@ func DefaultComponents() Components {
 	return Components{LLM: "qwen", ASR: "qwen", TTS: "qwen"}
 }
 
+func normalizeMode(mode string, fallback string) string {
+	switch strings.TrimSpace(mode) {
+	case "omni", "voice_llm":
+		return "omni"
+	case "standard":
+		return "standard"
+	default:
+		if fallback != "" {
+			return fallback
+		}
+		return "standard"
+	}
+}
+
 func NormalizeComponents(components Components, defaults Components) Components {
 	if defaults.LLM == "" {
 		defaults.LLM = "qwen"
@@ -145,9 +159,7 @@ func (s *Store) Create(c *Character) (*Character, error) {
 	if c.Images == nil {
 		c.Images = []ImageInfo{}
 	}
-	if c.Mode == "" {
-		c.Mode = "standard"
-	}
+	c.Mode = normalizeMode(c.Mode, "standard")
 	c.Components = NormalizeComponents(c.Components, DefaultComponents())
 	if c.VoiceProvider == "" {
 		c.VoiceProvider = c.Components.TTS
@@ -206,12 +218,7 @@ func (s *Store) Update(id string, c *Character) (*Character, error) {
 	if c.ImageMode == "" {
 		c.ImageMode = existing.ImageMode
 	}
-	if c.Mode == "" {
-		c.Mode = existing.Mode
-	}
-	if c.Mode == "" {
-		c.Mode = "standard"
-	}
+	c.Mode = normalizeMode(c.Mode, normalizeMode(existing.Mode, "standard"))
 	c.Components = NormalizeComponents(c.Components, existing.Components)
 	if c.VoiceProvider == "" {
 		c.VoiceProvider = c.Components.TTS
@@ -595,10 +602,8 @@ func (s *Store) load() error {
 		if c.ImageMode == "" {
 			c.ImageMode = "fixed"
 		}
-		// Legacy character.json files had no mode field; default to voice_llm (prior behavior).
-		if c.Mode == "" {
-			c.Mode = "voice_llm"
-		}
+		// Legacy character.json files had no mode field; default to omni (prior voice_llm behavior).
+		c.Mode = normalizeMode(c.Mode, "omni")
 		c.Components = NormalizeComponents(c.Components, DefaultComponents())
 		if c.VoiceProvider == "" {
 			c.VoiceProvider = c.Components.TTS

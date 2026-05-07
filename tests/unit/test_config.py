@@ -41,7 +41,7 @@ def test_load_config_basic():
         "fps",
         "audio_cfg",
     }
-    assert "ws_url" not in config["inference"]["voice_llm"]["doubao"]
+    assert "ws_url" not in config["inference"]["omni"]["doubao"]
     assert "base_url" not in config["inference"]["llm"]["qwen"]
     assert "system_prompt" not in config["inference"]["llm"]["qwen"]
     assert "system_prompt" not in config["inference"]["llm"]["openai"]

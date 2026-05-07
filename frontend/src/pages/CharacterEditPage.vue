@@ -65,17 +65,17 @@ const visibleImages = computed(() =>
 
 const trimmedCustomVoiceType = computed(() => customVoiceType.value.trim())
 const selectedTTS = computed(() => form.value.components?.tts || DEFAULT_COMPONENTS.tts)
-const selectedVoiceLLMProvider = computed(() => form.value.voice_provider || 'doubao')
+const selectedOmniProvider = computed(() => form.value.voice_provider || 'doubao')
 const usesDoubaoVoice = computed(() =>
-  form.value.mode === 'voice_llm'
-    ? selectedVoiceLLMProvider.value === 'doubao'
+  form.value.mode === 'omni'
+    ? selectedOmniProvider.value === 'doubao'
     : selectedTTS.value === 'doubao'
 )
 const usesQwenOmniVoice = computed(() =>
-  form.value.mode === 'voice_llm' && selectedVoiceLLMProvider.value === 'qwen_omni'
+  form.value.mode === 'omni' && selectedOmniProvider.value === 'qwen_omni'
 )
 const isOpenAIVoice = computed(() => !usesDoubaoVoice.value && selectedTTS.value === 'openai')
-const voiceLLMProviderOptions = computed(() => [
+const omniProviderOptions = computed(() => [
   { label: t('settings.doubaoVoice'), value: 'doubao' },
   { label: 'Qwen Omni', value: 'qwen_omni' },
 ])
@@ -141,16 +141,20 @@ function defaultVoiceForTTS(tts: string) {
   return DEFAULT_QWEN_TTS_VOICE
 }
 
-function defaultVoiceForVoiceLLM(provider: string) {
+function defaultVoiceForOmni(provider: string) {
   return provider === 'qwen_omni' ? DEFAULT_QWEN_OMNI_VOICE : DEFAULT_OFFICIAL_VOICE
 }
 
-function normalizeVoiceLLMProvider(provider: string) {
+function normalizeOmniProvider(provider: string) {
   return provider === 'qwen_omni' ? 'qwen_omni' : 'doubao'
 }
 
+function normalizeMode(mode?: string): CharacterForm['mode'] {
+  return mode === 'omni' || mode === 'voice_llm' ? 'omni' : 'standard'
+}
+
 function applyTTSVoiceDefault(tts: string, force = false) {
-  if (form.value.mode === 'voice_llm') {
+  if (form.value.mode === 'omni') {
     return
   }
   form.value.voice_provider = tts
@@ -171,12 +175,12 @@ function applyTTSVoiceDefault(tts: string, force = false) {
 }
 
 function applyModeVoiceDefault(force = false) {
-  if (form.value.mode !== 'voice_llm') {
+  if (form.value.mode !== 'omni') {
     applyTTSVoiceDefault(form.value.components.tts, force)
     return
   }
 
-  form.value.voice_provider = normalizeVoiceLLMProvider(form.value.voice_provider)
+  form.value.voice_provider = normalizeOmniProvider(form.value.voice_provider)
   const current = form.value.voice_type.trim()
   const provider = form.value.voice_provider
   if (provider === 'qwen_omni') {
@@ -190,13 +194,13 @@ function applyModeVoiceDefault(force = false) {
 
   const looksLikeStandardVoice = isQwenTTSVoiceType(current) || isOpenAIVoiceType(current) || isQwenOmniVoiceType(current)
   if (force || !current || looksLikeStandardVoice) {
-    form.value.voice_type = defaultVoiceForVoiceLLM(provider)
+    form.value.voice_type = defaultVoiceForOmni(provider)
   }
   syncVoiceInputs(form.value.voice_type)
 }
 
 function toggleMode() {
-  form.value.mode = form.value.mode === 'standard' ? 'voice_llm' : 'standard'
+  form.value.mode = form.value.mode === 'standard' ? 'omni' : 'standard'
   showModeHelp.value = false
 }
 
@@ -292,7 +296,7 @@ watch(
 watch(
   () => form.value.voice_provider,
   () => {
-    if (form.value.mode === 'voice_llm') {
+    if (form.value.mode === 'omni') {
       voiceError.value = ''
       applyModeVoiceDefault()
     }
@@ -316,7 +320,7 @@ onMounted(async () => {
         avatar_image: c.avatar_image,
         use_face_crop: c.use_face_crop,
         image_mode: c.image_mode || 'fixed',
-        mode: c.mode || 'standard',
+        mode: normalizeMode(c.mode),
         voice_provider: c.voice_provider,
         voice_type: c.voice_type,
         components: normalizeComponents(c.components),
@@ -435,8 +439,8 @@ async function save() {
     }
     payload.voice_type = voiceType
     payload.components = normalizeComponents(payload.components)
-    payload.voice_provider = payload.mode === 'voice_llm'
-      ? normalizeVoiceLLMProvider(payload.voice_provider)
+    payload.voice_provider = payload.mode === 'omni'
+      ? normalizeOmniProvider(payload.voice_provider)
       : payload.components.tts
 
     let id: string
@@ -567,11 +571,11 @@ const breadcrumb = computed(() =>
                 </span>
                 <span
                   class="flex items-center justify-center rounded-cv-sm transition-colors"
-                  :class="form.mode === 'voice_llm'
+                  :class="form.mode === 'omni'
                     ? 'bg-cv-accent text-white'
                     : 'text-cv-text-secondary'"
                 >
-                  voice_llm
+                  {{ t('characterEdit.omniMode') }}
                 </span>
               </button>
               <button
@@ -594,9 +598,9 @@ const breadcrumb = computed(() =>
                   </p>
                 </div>
                 <div>
-                  <div class="text-[13px] font-semibold text-cv-text">voice_llm</div>
+                  <div class="text-[13px] font-semibold text-cv-text">{{ t('characterEdit.omniMode') }}</div>
                   <p class="mt-1 text-[12px] leading-5 text-cv-text-secondary">
-                    {{ t('characterEdit.voiceLLMHelp') }}
+                    {{ t('characterEdit.omniHelp') }}
                   </p>
                 </div>
               </div>
@@ -766,12 +770,12 @@ const breadcrumb = computed(() =>
 
           <div v-else class="flex flex-col gap-4">
             <div class="grid gap-3 md:grid-cols-[90px_minmax(0,1fr)_minmax(0,1fr)] md:items-end">
-              <span class="text-[13px] font-medium text-cv-text-secondary md:pb-3">VoiceLLM</span>
+              <span class="text-[13px] font-medium text-cv-text-secondary md:pb-3">{{ t('characterEdit.omniModel') }}</span>
               <label class="block">
                 <span class="text-[12px] font-medium text-cv-text-muted">Provider</span>
                 <CvSelect
                   v-model="form.voice_provider"
-                  :options="voiceLLMProviderOptions"
+                  :options="omniProviderOptions"
                   class="mt-1.5"
                 />
               </label>

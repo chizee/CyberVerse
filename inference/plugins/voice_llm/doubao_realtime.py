@@ -31,9 +31,9 @@ _MAX_OUTPUT_QUEUE = 64
 
 
 class DoubaoRealtimePlugin(VoiceLLMPlugin):
-    """Doubao realtime voice LLM plugin (WebSocket binary protocol)."""
+    """Doubao realtime omni model plugin (WebSocket binary protocol)."""
 
-    name = "voice_llm.doubao"
+    name = "omni.doubao"
 
     def __init__(self) -> None:
         self._config: DoubaoSessionConfig | None = None

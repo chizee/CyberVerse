@@ -1,4 +1,6 @@
 // Character image info
+export type PipelineMode = 'standard' | 'omni'
+
 export interface ImageInfo {
   filename: string
   orig_name: string
@@ -15,7 +17,7 @@ export interface Character {
   idle_video_url?: string
   idle_video_urls?: string[]
   use_face_crop: boolean
-  mode: 'standard' | 'voice_llm'
+  mode: PipelineMode
   voice_provider: string
   voice_type: string
   components: CharacterComponents

@@ -42,13 +42,13 @@ class TestDoubaoRealtimePlugin:
         return bytes(frame)
 
     def test_name(self):
-        assert DoubaoRealtimePlugin.name == "voice_llm.doubao"
+        assert DoubaoRealtimePlugin.name == "omni.doubao"
 
     @pytest.mark.asyncio
     async def test_initialize(self):
         plugin = DoubaoRealtimePlugin()
         config = PluginConfig(
-            plugin_name="voice_llm.doubao",
+            plugin_name="omni.doubao",
             params={
                 "access_token": "test_key",
                 "app_id": "test_app",
@@ -67,7 +67,7 @@ class TestDoubaoRealtimePlugin:
     async def test_initialize_missing_api_key(self):
         plugin = DoubaoRealtimePlugin()
         config = PluginConfig(
-            plugin_name="voice_llm.doubao",
+            plugin_name="omni.doubao",
             params={"ws_url": "wss://test.example.com"},
         )
         with pytest.raises(ValueError, match="access_token"):
@@ -77,7 +77,7 @@ class TestDoubaoRealtimePlugin:
     async def test_initialize_missing_ws_url_uses_default(self):
         plugin = DoubaoRealtimePlugin()
         config = PluginConfig(
-            plugin_name="voice_llm.doubao",
+            plugin_name="omni.doubao",
             params={"access_token": "test_key"},
         )
         await plugin.initialize(config)
@@ -87,7 +87,7 @@ class TestDoubaoRealtimePlugin:
     async def test_initialize_empty_ws_url_raises(self):
         plugin = DoubaoRealtimePlugin()
         config = PluginConfig(
-            plugin_name="voice_llm.doubao",
+            plugin_name="omni.doubao",
             params={"access_token": "test_key", "ws_url": ""},
         )
         with pytest.raises(ValueError, match="ws_url"):
@@ -113,7 +113,7 @@ class TestDoubaoRealtimePlugin:
     async def test_converse_stream_with_mock_ws(self):
         plugin = DoubaoRealtimePlugin()
         config = PluginConfig(
-            plugin_name="voice_llm.doubao",
+            plugin_name="omni.doubao",
             params={
                 "access_token": "key",
                 "app_id": "app",
@@ -220,7 +220,7 @@ class TestDoubaoRealtimePlugin:
     async def test_converse_stream_emits_barge_in_and_ids(self):
         plugin = DoubaoRealtimePlugin()
         config = PluginConfig(
-            plugin_name="voice_llm.doubao",
+            plugin_name="omni.doubao",
             params={
                 "access_token": "key",
                 "app_id": "app",
@@ -340,7 +340,7 @@ class TestDoubaoRealtimePlugin:
     async def test_asr_start_finalizes_previous_reply_before_barge_in(self):
         plugin = DoubaoRealtimePlugin()
         config = PluginConfig(
-            plugin_name="voice_llm.doubao",
+            plugin_name="omni.doubao",
             params={
                 "access_token": "key",
                 "app_id": "app",
@@ -458,7 +458,7 @@ class TestDoubaoRealtimePlugin:
     async def test_check_voice_success(self):
         plugin = DoubaoRealtimePlugin()
         config = PluginConfig(
-            plugin_name="voice_llm.doubao",
+            plugin_name="omni.doubao",
             params={
                 "access_token": "key",
                 "app_id": "app",
@@ -550,7 +550,7 @@ class TestDoubaoRealtimePlugin:
     async def test_converse_stream_raises_on_start_session_error(self):
         plugin = DoubaoRealtimePlugin()
         config = PluginConfig(
-            plugin_name="voice_llm.doubao",
+            plugin_name="omni.doubao",
             params={
                 "access_token": "key",
                 "app_id": "app",
@@ -619,7 +619,7 @@ class TestDoubaoRealtimePlugin:
     async def test_check_voice_raises_raw_provider_error_on_start_session_error(self):
         plugin = DoubaoRealtimePlugin()
         config = PluginConfig(
-            plugin_name="voice_llm.doubao",
+            plugin_name="omni.doubao",
             params={
                 "access_token": "key",
                 "app_id": "app",
@@ -796,7 +796,7 @@ class TestDoubaoSessionConfigOverrides:
 
     def test_plugin_config_defaults_to_no_welcome_message(self):
         config = PluginConfig(
-            plugin_name="voice_llm.doubao",
+            plugin_name="omni.doubao",
             params={
                 "access_token": "tok",
                 "app_id": "app",

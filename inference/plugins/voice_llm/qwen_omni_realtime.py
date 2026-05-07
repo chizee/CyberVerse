@@ -21,9 +21,9 @@ _MAX_IMAGE_BYTES = 500 * 1024
 
 
 class QwenOmniRealtimePlugin(VoiceLLMPlugin):
-    """DashScope Qwen Omni realtime VoiceLLM plugin."""
+    """DashScope Qwen Omni realtime omni model plugin."""
 
-    name = "voice_llm.qwen_omni"
+    name = "omni.qwen_omni"
 
     def __init__(self) -> None:
         self.api_key = ""

@@ -6,15 +6,15 @@ import (
 )
 
 func TestNewSession(t *testing.T) {
-	s := NewSession("test-1", ModeVoiceLLM, "")
+	s := NewSession("test-1", ModeOmni, "")
 	if s.ID != "test-1" {
 		t.Errorf("expected ID test-1, got %s", s.ID)
 	}
 	if s.GetState() != StateInit {
 		t.Errorf("expected state Init, got %v", s.GetState())
 	}
-	if s.Mode != ModeVoiceLLM {
-		t.Errorf("expected mode VoiceLLM, got %v", s.Mode)
+	if s.Mode != ModeOmni {
+		t.Errorf("expected mode Omni, got %v", s.Mode)
 	}
 }
 
@@ -41,7 +41,7 @@ func TestSessionAddMessage(t *testing.T) {
 }
 
 func TestSessionAddMessageInsertsAssistantAfterMatchingTurn(t *testing.T) {
-	s := NewSession("test-1", ModeVoiceLLM, "")
+	s := NewSession("test-1", ModeOmni, "")
 	s.AddMessage(ChatMessage{Role: "user", Content: "first", TurnSeq: 1})
 	s.AddMessage(ChatMessage{Role: "user", Content: "second", TurnSeq: 2})
 	s.AddMessage(ChatMessage{Role: "assistant", Content: "first answer", TurnSeq: 1})
@@ -60,7 +60,7 @@ func TestSessionAddMessageInsertsAssistantAfterMatchingTurn(t *testing.T) {
 }
 
 func TestSessionDialogContextSnapshot(t *testing.T) {
-	s := NewSession("test-1", ModeVoiceLLM, "")
+	s := NewSession("test-1", ModeOmni, "")
 	s.SetDialogContext([]DialogContextItem{
 		{Role: "user", Text: "hello", Timestamp: 1000},
 	})
@@ -206,7 +206,7 @@ func TestSessionStateString(t *testing.T) {
 func TestSessionManagerCreate(t *testing.T) {
 	mgr := NewSessionManager(2)
 	defer mgr.Stop()
-	s1, err := mgr.Create("s1", ModeVoiceLLM, "")
+	s1, err := mgr.Create("s1", ModeOmni, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -221,11 +221,11 @@ func TestSessionManagerCreate(t *testing.T) {
 func TestSessionManagerMaxConcurrent(t *testing.T) {
 	mgr := NewSessionManager(1)
 	defer mgr.Stop()
-	_, err := mgr.Create("s1", ModeVoiceLLM, "")
+	_, err := mgr.Create("s1", ModeOmni, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	_, err = mgr.Create("s2", ModeVoiceLLM, "")
+	_, err = mgr.Create("s2", ModeOmni, "")
 	if err != ErrMaxSessions {
 		t.Errorf("expected ErrMaxSessions, got %v", err)
 	}
@@ -234,8 +234,8 @@ func TestSessionManagerMaxConcurrent(t *testing.T) {
 func TestSessionManagerDuplicate(t *testing.T) {
 	mgr := NewSessionManager(10)
 	defer mgr.Stop()
-	mgr.Create("s1", ModeVoiceLLM, "")
-	_, err := mgr.Create("s1", ModeVoiceLLM, "")
+	mgr.Create("s1", ModeOmni, "")
+	_, err := mgr.Create("s1", ModeOmni, "")
 	if err != ErrSessionExists {
 		t.Errorf("expected ErrSessionExists, got %v", err)
 	}
@@ -253,7 +253,7 @@ func TestSessionManagerGetNotFound(t *testing.T) {
 func TestSessionManagerDelete(t *testing.T) {
 	mgr := NewSessionManager(10)
 	defer mgr.Stop()
-	mgr.Create("s1", ModeVoiceLLM, "")
+	mgr.Create("s1", ModeOmni, "")
 	mgr.Delete("s1")
 	if mgr.Count() != 0 {
 		t.Errorf("expected count 0, got %d", mgr.Count())
@@ -263,7 +263,7 @@ func TestSessionManagerDelete(t *testing.T) {
 func TestSessionManagerList(t *testing.T) {
 	mgr := NewSessionManager(10)
 	defer mgr.Stop()
-	mgr.Create("s1", ModeVoiceLLM, "")
+	mgr.Create("s1", ModeOmni, "")
 	mgr.Create("s2", ModeStandard, "")
 	list := mgr.List()
 	if len(list) != 2 {
@@ -274,7 +274,7 @@ func TestSessionManagerList(t *testing.T) {
 func TestSessionManagerIdleEviction(t *testing.T) {
 	mgr := NewSessionManagerWithTimeout(10, 50*time.Millisecond)
 	defer mgr.Stop()
-	mgr.Create("s1", ModeVoiceLLM, "")
+	mgr.Create("s1", ModeOmni, "")
 
 	// Wait for idle timeout + cleanup interval
 	time.Sleep(200 * time.Millisecond)
@@ -288,7 +288,7 @@ func TestSessionManagerIdleEviction(t *testing.T) {
 func TestSessionManagerTouchKeepsSessionAlive(t *testing.T) {
 	mgr := NewSessionManagerWithTimeout(10, 50*time.Millisecond)
 	defer mgr.Stop()
-	mgr.Create("s1", ModeVoiceLLM, "")
+	mgr.Create("s1", ModeOmni, "")
 
 	time.Sleep(30 * time.Millisecond)
 	if err := mgr.Touch("s1"); err != nil {
@@ -306,7 +306,7 @@ func TestSessionManagerTouchKeepsSessionAlive(t *testing.T) {
 func TestSessionManagerDeleteSetsStateClosed(t *testing.T) {
 	mgr := NewSessionManager(10)
 	defer mgr.Stop()
-	s, _ := mgr.Create("s1", ModeVoiceLLM, "")
+	s, _ := mgr.Create("s1", ModeOmni, "")
 	mgr.Delete("s1")
 	if s.GetState() != StateClosed {
 		t.Errorf("expected StateClosed after delete, got %v", s.GetState())

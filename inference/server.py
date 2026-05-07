@@ -35,8 +35,8 @@ warnings.filterwarnings(
     category=UserWarning,
 )
 
-_PLUGIN_CATEGORIES = ("avatar", "llm", "tts", "asr", "voice_llm")
-_INITIALIZE_ALL_CATEGORIES = {"llm", "tts", "asr", "voice_llm"}
+_PLUGIN_CATEGORIES = ("avatar", "llm", "tts", "asr", "omni", "voice_llm")
+_INITIALIZE_ALL_CATEGORIES = {"llm", "tts", "asr", "omni", "voice_llm"}
 
 
 def _configure_process_logging() -> None:
@@ -111,7 +111,7 @@ class InferenceServer:
     async def _initialize_configured_plugins(self) -> None:
         """Initialize configured plugins.
 
-        LLM/ASR/TTS/VoiceLLM are lightweight component plugins and can be
+        LLM/ASR/TTS/omni model plugins are lightweight components and can be
         selected per request, so initialize every configured entry. Avatar
         stays default-only to avoid extra model/GPU cost.
         """

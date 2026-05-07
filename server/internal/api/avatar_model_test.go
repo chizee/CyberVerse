@@ -530,7 +530,7 @@ func TestCreateSessionWithCharacterUsesActiveRuntimeModelOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	body := `{"mode":"voice_llm","character_id":"` + char.ID + `"}`
+	body := `{"mode":"omni","character_id":"` + char.ID + `"}`
 	req := httptest.NewRequest("POST", "/api/v1/sessions", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -581,7 +581,7 @@ func TestCreateSessionReturnsAvatarWarningWhenImageExceedsGRPCLimit(t *testing.T
 	orch := orchestrator.New(inf, nil, mgr, nil, charStore)
 	r := NewRouter(mgr, orch, nil, nil, nil, charStore, "", "")
 
-	body := `{"mode":"voice_llm","character_id":"` + char.ID + `"}`
+	body := `{"mode":"omni","character_id":"` + char.ID + `"}`
 	req := httptest.NewRequest("POST", "/api/v1/sessions", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -631,7 +631,7 @@ func TestCreateSessionRejectsWhenActiveRuntimeModelUnavailable(t *testing.T) {
 	}, nil, mgr, nil, charStore)
 	r := NewRouter(mgr, orch, nil, nil, nil, charStore, "", "")
 
-	body := `{"mode":"voice_llm","character_id":"` + char.ID + `"}`
+	body := `{"mode":"omni","character_id":"` + char.ID + `"}`
 	req := httptest.NewRequest("POST", "/api/v1/sessions", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()

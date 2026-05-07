@@ -28,8 +28,8 @@ def main():
     # Allow the wait time to be controlled by env vars so video chunks can be observed.
     duration_s = int(__import__("os").environ.get("VOICE_TEST_DURATION_S", "180"))
 
-    # Create voice_llm session
-    resp = http_post_json(BASE_HTTP + "/api/v1/sessions", {"mode": "voice_llm"})
+    # Create omni session
+    resp = http_post_json(BASE_HTTP + "/api/v1/sessions", {"mode": "omni"})
     session_id = resp.get("session_id")
     if not session_id:
         raise RuntimeError(f"missing session_id: {resp}")

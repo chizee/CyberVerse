@@ -126,7 +126,7 @@ async def test_converse_without_voice_llm_plugin_raises():
             audio=common_pb2.AudioChunk(data=b"x", sample_rate=16000)
         )
 
-    with pytest.raises(RuntimeError, match="No VoiceLLM"):
+    with pytest.raises(RuntimeError, match="No omni model"):
         async for _ in svc.Converse(requests(), MagicMock()):
             pass
 
@@ -204,7 +204,7 @@ async def test_check_voice_uses_provider_specific_plugin():
     resp = await svc.CheckVoice(req, ctx)
 
     assert resp.ok is True
-    reg.get.assert_called_once_with("voice_llm.qwen_omni")
+    reg.get.assert_called_once_with("omni.qwen_omni")
     reg.get_by_category.assert_not_called()
     passed_config = voice.check_voice.await_args.kwargs["session_config"]
     assert passed_config.provider == "qwen_omni"

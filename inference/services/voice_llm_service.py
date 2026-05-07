@@ -59,14 +59,19 @@ class VoiceLLMGRPCService(voice_llm_pb2_grpc.VoiceLLMServiceServicer):
         provider = provider.strip()
         if provider:
             try:
-                plugin = self.registry.get(f"voice_llm.{provider}")
+                plugin = self.registry.get(f"omni.{provider}")
             except KeyError:
-                plugin = None
+                try:
+                    plugin = self.registry.get(f"voice_llm.{provider}")
+                except KeyError:
+                    plugin = None
         else:
-            plugin = self.registry.get_by_category("voice_llm")
+            plugin = self.registry.get_by_category("omni")
+            if plugin is None:
+                plugin = self.registry.get_by_category("voice_llm")
         if plugin is None:
             suffix = f" for provider {provider!r}" if provider else ""
-            raise RuntimeError(f"No VoiceLLM plugin initialized{suffix}")
+            raise RuntimeError(f"No omni model plugin initialized{suffix}")
         return plugin
 
     @staticmethod
@@ -91,10 +96,10 @@ class VoiceLLMGRPCService(voice_llm_pb2_grpc.VoiceLLMServiceServicer):
         return None
 
     async def Converse(self, request_iterator, context):
-        """Stream user audio/text to VoiceLLM (e.g. Doubao); yield audio + transcripts only.
+        """Stream user audio/text to an omni model (e.g. Doubao); yield audio + transcripts only.
 
         Avatar video is produced by AvatarService.GenerateStream; the Go orchestrator
-        composes VoiceLLM output with that stream.
+        composes omni model output with that stream.
         """
         # Phase 1: read the config message and first input event.
         session_config: VoiceLLMSessionConfig | None = None
@@ -104,7 +109,7 @@ class VoiceLLMGRPCService(voice_llm_pb2_grpc.VoiceLLMServiceServicer):
             if which == "config":
                 session_config = _session_config_from_pb(msg.config)
                 logger.debug(
-                    "VoiceLLM session config: voice=%r bot_name=%r system_prompt=%r welcome=%r",
+                    "Omni session config: voice=%r bot_name=%r system_prompt=%r welcome=%r",
                     session_config.voice,
                     session_config.bot_name,
                     session_config.system_prompt[:50] if session_config.system_prompt else "",
@@ -177,7 +182,10 @@ class VoiceLLMGRPCService(voice_llm_pb2_grpc.VoiceLLMServiceServicer):
             return voice_llm_pb2.CheckVoiceResponse(ok=False)
 
     async def Interrupt(self, request, context):
-        plugins = self.registry.get_all_by_category("voice_llm")
+        plugins = [
+            *self.registry.get_all_by_category("omni"),
+            *self.registry.get_all_by_category("voice_llm"),
+        ]
         if not plugins:
             plugin = self._get_plugin()
             plugins = [plugin]

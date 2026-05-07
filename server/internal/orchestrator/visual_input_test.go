@@ -24,7 +24,7 @@ func newVisualInputTestOrchestratorWithConfig(t *testing.T, mode PipelineMode, p
 		}
 		char, err := charStore.Create(&character.Character{
 			Name:          "Visual",
-			Mode:          "voice_llm",
+			Mode:          "omni",
 			VoiceProvider: provider,
 			VoiceType:     "Tina",
 		})
@@ -67,7 +67,7 @@ func newVisualInputTestOrchestrator(t *testing.T, mode PipelineMode) (*Orchestra
 func newVisualInputTestVoiceOrchestrator(t *testing.T, provider string) (*Orchestrator, *Session) {
 	t.Helper()
 	enabled := true
-	return newVisualInputTestOrchestratorWithConfig(t, ModeVoiceLLM, provider, config.VisualInputConfig{
+	return newVisualInputTestOrchestratorWithConfig(t, ModeOmni, provider, config.VisualInputConfig{
 		Enabled:         &enabled,
 		FrameIntervalMS: 1000,
 		MaxWidth:        1280,
@@ -106,7 +106,7 @@ func TestHandleVisualFrameStoresLatestForStandardSession(t *testing.T) {
 	}
 }
 
-func TestHandleVisualFrameStoresLatestForQwenOmniVoiceLLMSession(t *testing.T) {
+func TestHandleVisualFrameStoresLatestForQwenOmniSession(t *testing.T) {
 	orch, session := newVisualInputTestVoiceOrchestrator(t, "qwen_omni")
 
 	if err := orch.HandleVisualInputStart(session.ID, "camera"); err != nil {
@@ -134,7 +134,7 @@ func TestHandleVisualFrameStoresLatestForQwenOmniVoiceLLMSession(t *testing.T) {
 	}
 }
 
-func TestHandleVisualFrameRejectsDoubaoVoiceLLMSession(t *testing.T) {
+func TestHandleVisualFrameRejectsDoubaoOmniSession(t *testing.T) {
 	orch, session := newVisualInputTestVoiceOrchestrator(t, "doubao")
 
 	err := orch.HandleVisualFrame(session.ID, ws.WSMessage{
@@ -151,7 +151,7 @@ func TestHandleVisualFrameRejectsDoubaoVoiceLLMSession(t *testing.T) {
 
 func TestQwenOmniVisualInputConfigIsClamped(t *testing.T) {
 	enabled := true
-	orch, session := newVisualInputTestOrchestratorWithConfig(t, ModeVoiceLLM, "qwen_omni", config.VisualInputConfig{
+	orch, session := newVisualInputTestOrchestratorWithConfig(t, ModeOmni, "qwen_omni", config.VisualInputConfig{
 		Enabled:         &enabled,
 		FrameIntervalMS: 250,
 		MaxWidth:        1280,

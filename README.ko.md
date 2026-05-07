@@ -265,7 +265,7 @@ make setup
 pip install -e ".[all]"
 
 # 또는 필요한 것만 선택. 예:
-pip install -e ".[voice_llm,flash_head]"
+pip install -e ".[omni,flash_head]"
 pip install -e ".[live_act]"
 ```
 
@@ -332,7 +332,7 @@ SSH 터널이 아니라 브라우저가 원격 서버에 직접 연결되게 하
 - [x] 여러 참조 이미지, 활성 이미지, 고정/랜덤 표시 모드, 선택적 얼굴 크롭, 태그, 음성 필드, 성격, 환영 메시지, 시스템 프롬프트를 포함한 캐릭터 CRUD
 - [x] 참조 이미지를 기반으로 구성 가능한 Avatar 플러그인(FlashHead, LiveAct 등)으로 실시간 아바타 영상 구동
 - [x] WebRTC 기반 실시간 음성·영상. 직접 P2P(내장 TURN) 또는 LiveKit SFU
-- [x] avatar, voice LLM, LLM, TTS, ASR을 플러그인으로 제공하며 YAML로 벤더별 API 키 설정(현재는 도우바오 음성 키 하나로 실행 가능)
+- [x] avatar, omni model, LLM, TTS, ASR을 플러그인으로 제공하며 YAML로 벤더별 API 키 설정(현재는 도우바오 음성 키 하나로 실행 가능)
 - [x] 세션 관리: 캐릭터별 대화 기록을 디스크에 영속화하고 대화 시작 시 로드
 - [x] 음성 클로닝: 도우바오 음성 클로닝 지원
 - [x] 음성과 텍스트 혼합 입력 지원

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -17,7 +18,7 @@ import (
 )
 
 type CreateSessionRequest struct {
-	Mode        string `json:"mode"`         // "voice_llm" or "standard"
+	Mode        string `json:"mode"`         // "omni" or "standard" ("voice_llm" accepted as a legacy alias)
 	CharacterID string `json:"character_id"` // which character this session is for
 }
 
@@ -57,7 +58,18 @@ func modeString(mode orchestrator.PipelineMode) string {
 	if mode == orchestrator.ModeStandard {
 		return "standard"
 	}
-	return "voice_llm"
+	return "omni"
+}
+
+func parsePipelineMode(modeName string) orchestrator.PipelineMode {
+	switch strings.TrimSpace(modeName) {
+	case "omni", "voice_llm":
+		return orchestrator.ModeOmni
+	case "standard":
+		return orchestrator.ModeStandard
+	default:
+		return orchestrator.ModeStandard
+	}
 }
 
 func normalizedVisualInputResponse(cfg config.VisualInputConfig) VisualInputResponse {
@@ -155,12 +167,7 @@ func (r *Router) handleCreateSession(w http.ResponseWriter, req *http.Request) {
 	if modeName == "" && r.cfg != nil {
 		modeName = r.cfg.Pipeline.DefaultMode
 	}
-	mode := orchestrator.ModeStandard
-	if modeName == "voice_llm" {
-		mode = orchestrator.ModeVoiceLLM
-	} else if modeName == "standard" {
-		mode = orchestrator.ModeStandard
-	}
+	mode := parsePipelineMode(modeName)
 
 	if r.orch != nil && r.charStore != nil && body.CharacterID != "" {
 		if _, err := r.activeAvatarModel(req.Context()); err != nil {
@@ -283,7 +290,7 @@ func (r *Router) handleCreateSession(w http.ResponseWriter, req *http.Request) {
 		if err != nil {
 			log.Printf("Failed to setup session %s: %v", sessionID, err)
 		} else {
-			// Both VoiceLLM and standard sessions consume mic audio. The
+			// Both omni and standard sessions consume mic audio. The
 			// orchestrator dispatches to the correct pipeline by session mode.
 			go func() {
 				if err := r.orch.HandleAudioStream(context.Background(), sessionID, peer.SubscribeUserAudio()); err != nil {

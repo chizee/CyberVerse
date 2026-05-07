@@ -1,4 +1,4 @@
-import type { AvatarModelInfo, Character, CharacterForm, ComponentsResponse, ImageInfo, Settings, LaunchConfig, LaunchConfigUpdate } from '../types'
+import type { AvatarModelInfo, Character, CharacterForm, ComponentsResponse, ImageInfo, Settings, LaunchConfig, LaunchConfigUpdate, PipelineMode } from '../types'
 
 const API_BASE = import.meta.env.VITE_API_BASE || '/api/v1'
 
@@ -32,7 +32,7 @@ async function request<T>(path: string, opts?: RequestInit): Promise<T> {
 
 export interface CreateSessionResponse {
   session_id: string
-  mode: 'voice_llm' | 'standard'
+  mode: PipelineMode
   streaming_mode: string  // "direct" or "livekit"
   livekit_url?: string
   livekit_token?: string
@@ -64,7 +64,7 @@ export interface HealthResponse {
   error?: string
 }
 
-export async function createSession(characterId: string, mode: string = 'standard'): Promise<CreateSessionResponse> {
+export async function createSession(characterId: string, mode: PipelineMode = 'standard'): Promise<CreateSessionResponse> {
   return request('/sessions', {
     method: 'POST',
     body: JSON.stringify({ character_id: characterId, mode }),

@@ -39,8 +39,10 @@ func (s SessionState) String() string {
 type PipelineMode int
 
 const (
-	ModeVoiceLLM PipelineMode = iota
+	ModeOmni PipelineMode = iota
 	ModeStandard
+	// ModeVoiceLLM is kept as a compatibility alias for older callers.
+	ModeVoiceLLM = ModeOmni
 )
 
 type ChatMessage struct {
@@ -90,7 +92,7 @@ type Session struct {
 	PipelineSeq uint64 `json:"-"`
 	// TurnSeq increments each time a new conversational turn preempts playback.
 	TurnSeq uint64 `json:"-"`
-	// VoiceWelcomeSent prevents replaying the greeting when VoiceLLM pipelines restart.
+	// VoiceWelcomeSent prevents replaying the greeting when omni pipelines restart.
 	VoiceWelcomeSent bool `json:"-"`
 	// RecordingDir is the absolute path where recordings for this session are saved.
 	// Set by the orchestrator when the first recording turn begins.

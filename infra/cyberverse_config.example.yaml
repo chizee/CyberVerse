@@ -72,8 +72,8 @@ inference:
                 fps: 20
                 audio_cfg: 1.0
 
-    voice_llm:
-        # voice_llm mode uses one real-time voice model for ASR + LLM + TTS.
+    omni:
+        # omni mode uses one real-time omni model for ASR + LLM + TTS.
         default: "doubao"
         doubao:
             plugin_class: "inference.plugins.voice_llm.doubao_realtime.DoubaoRealtimePlugin"
@@ -149,7 +149,7 @@ session:
     max_duration_s: 3600
 
 pipeline:
-    default_mode: "voice_llm"
+    default_mode: "omni"
     streaming_mode: "direct" # "direct" = P2P WebRTC, "livekit" = LiveKit SFU.
     visual_input:
         enabled: true

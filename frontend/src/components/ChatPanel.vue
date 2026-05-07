@@ -252,11 +252,18 @@ onUnmounted(() => {
 }
 
 .message {
+  box-sizing: border-box;
+  width: max-content;
   max-width: 80%;
   padding: 8px 12px;
   border-radius: 8px;
   font-size: 14px;
   line-height: 1.4;
+}
+.message-content {
+  max-width: 100%;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
 }
 .message.user {
   align-self: flex-end;

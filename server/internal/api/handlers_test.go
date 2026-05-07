@@ -76,7 +76,7 @@ func TestHealthEndpoint(t *testing.T) {
 
 func TestCreateSession(t *testing.T) {
 	r := newTestRouter()
-	body := `{"mode": "voice_llm"}`
+	body := `{"mode": "omni"}`
 	req := httptest.NewRequest("POST", "/api/v1/sessions", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -91,6 +91,27 @@ func TestCreateSession(t *testing.T) {
 	if resp.SessionID == "" {
 		t.Error("expected non-empty session_id")
 	}
+	if resp.Mode != "omni" {
+		t.Fatalf("expected canonical mode omni, got %q", resp.Mode)
+	}
+}
+
+func TestCreateSessionAcceptsLegacyVoiceLLMMode(t *testing.T) {
+	r := newTestRouter()
+	req := httptest.NewRequest("POST", "/api/v1/sessions", strings.NewReader(`{"mode": "voice_llm"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.Handler().ServeHTTP(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d", w.Code)
+	}
+
+	var resp CreateSessionResponse
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp.Mode != "omni" {
+		t.Fatalf("expected legacy voice_llm to normalize to omni, got %q", resp.Mode)
+	}
 }
 
 func TestCreateSessionVisualInputReturnedForStandardAndQwenOmniOnly(t *testing.T) {
@@ -98,7 +119,7 @@ func TestCreateSessionVisualInputReturnedForStandardAndQwenOmniOnly(t *testing.T
 
 	qwenChar, err := r.charStore.Create(&character.Character{
 		Name:          "Qwen Visual",
-		Mode:          "voice_llm",
+		Mode:          "omni",
 		VoiceProvider: "qwen_omni",
 		VoiceType:     "Tina",
 	})
@@ -107,7 +128,7 @@ func TestCreateSessionVisualInputReturnedForStandardAndQwenOmniOnly(t *testing.T
 	}
 	doubaoChar, err := r.charStore.Create(&character.Character{
 		Name:          "Doubao Voice",
-		Mode:          "voice_llm",
+		Mode:          "omni",
 		VoiceProvider: "doubao",
 		VoiceType:     "zh_female_default",
 	})
@@ -126,13 +147,13 @@ func TestCreateSessionVisualInputReturnedForStandardAndQwenOmniOnly(t *testing.T
 			wantVisual: true,
 		},
 		{
-			name:       "qwen_omni voice_llm",
-			body:       `{"mode":"voice_llm","character_id":"` + qwenChar.ID + `"}`,
+			name:       "qwen_omni omni",
+			body:       `{"mode":"omni","character_id":"` + qwenChar.ID + `"}`,
 			wantVisual: true,
 		},
 		{
-			name:       "doubao voice_llm",
-			body:       `{"mode":"voice_llm","character_id":"` + doubaoChar.ID + `"}`,
+			name:       "doubao omni",
+			body:       `{"mode":"omni","character_id":"` + doubaoChar.ID + `"}`,
 			wantVisual: false,
 		},
 	}
@@ -187,7 +208,7 @@ func TestCreateSessionLoadsVoiceDialogContext(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	body := `{"mode":"voice_llm","character_id":"` + char.ID + `"}`
+	body := `{"mode":"omni","character_id":"` + char.ID + `"}`
 	req := httptest.NewRequest("POST", "/api/v1/sessions", strings.NewReader(body))
 	w := httptest.NewRecorder()
 	r.Handler().ServeHTTP(w, req)
@@ -207,7 +228,7 @@ func TestCreateSessionLoadsVoiceDialogContext(t *testing.T) {
 			t.Fatalf("unexpected second dialog context item: %+v", config.DialogContext[1])
 		}
 	case <-time.After(time.Second):
-		t.Fatal("timed out waiting for voice LLM config")
+		t.Fatal("timed out waiting for omni config")
 	}
 }
 
@@ -245,7 +266,7 @@ func TestCreateSessionMaxConcurrent(t *testing.T) {
 func TestDeleteSession(t *testing.T) {
 	r := newTestRouter()
 
-	req := httptest.NewRequest("POST", "/api/v1/sessions", strings.NewReader(`{"mode":"voice_llm"}`))
+	req := httptest.NewRequest("POST", "/api/v1/sessions", strings.NewReader(`{"mode":"omni"}`))
 	w := httptest.NewRecorder()
 	r.Handler().ServeHTTP(w, req)
 
@@ -275,7 +296,7 @@ func TestDeleteSessionNotFound(t *testing.T) {
 func TestSendMessage(t *testing.T) {
 	r := newTestRouter()
 
-	req := httptest.NewRequest("POST", "/api/v1/sessions", strings.NewReader(`{"mode":"voice_llm"}`))
+	req := httptest.NewRequest("POST", "/api/v1/sessions", strings.NewReader(`{"mode":"omni"}`))
 	w := httptest.NewRecorder()
 	r.Handler().ServeHTTP(w, req)
 	var resp CreateSessionResponse
@@ -294,7 +315,7 @@ func TestSendMessage(t *testing.T) {
 func TestSendMessageEmptyText(t *testing.T) {
 	r := newTestRouter()
 
-	req := httptest.NewRequest("POST", "/api/v1/sessions", strings.NewReader(`{"mode":"voice_llm"}`))
+	req := httptest.NewRequest("POST", "/api/v1/sessions", strings.NewReader(`{"mode":"omni"}`))
 	w := httptest.NewRecorder()
 	r.Handler().ServeHTTP(w, req)
 	var resp CreateSessionResponse
@@ -312,7 +333,7 @@ func TestSendMessageEmptyText(t *testing.T) {
 func TestSendMessageInvalidJSON(t *testing.T) {
 	r := newTestRouter()
 
-	req := httptest.NewRequest("POST", "/api/v1/sessions", strings.NewReader(`{"mode":"voice_llm"}`))
+	req := httptest.NewRequest("POST", "/api/v1/sessions", strings.NewReader(`{"mode":"omni"}`))
 	w := httptest.NewRecorder()
 	r.Handler().ServeHTTP(w, req)
 	var resp CreateSessionResponse
@@ -331,7 +352,7 @@ func TestListSessions(t *testing.T) {
 	r := newTestRouter()
 
 	for i := 0; i < 2; i++ {
-		req := httptest.NewRequest("POST", "/api/v1/sessions", strings.NewReader(`{"mode":"voice_llm"}`))
+		req := httptest.NewRequest("POST", "/api/v1/sessions", strings.NewReader(`{"mode":"omni"}`))
 		w := httptest.NewRecorder()
 		r.Handler().ServeHTTP(w, req)
 	}

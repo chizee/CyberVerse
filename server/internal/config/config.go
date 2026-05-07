@@ -127,6 +127,9 @@ func Load(path string) (*Config, error) {
 	if cfg.Pipeline.DefaultMode == "" {
 		cfg.Pipeline.DefaultMode = "standard"
 	}
+	if cfg.Pipeline.DefaultMode == "voice_llm" {
+		cfg.Pipeline.DefaultMode = "omni"
+	}
 	if cfg.Pipeline.StreamingMode == "" {
 		cfg.Pipeline.StreamingMode = "direct"
 	}

@@ -73,7 +73,7 @@ def test_config_driven_registration():
     }
 
     registry = PluginRegistry()
-    for category in ("avatar", "llm", "tts", "asr", "voice_llm"):
+    for category in ("avatar", "llm", "tts", "asr", "omni"):
         section = config.get("inference", {}).get(category, {})
         for name, conf in section.items():
             if name == "default" or not isinstance(conf, dict):

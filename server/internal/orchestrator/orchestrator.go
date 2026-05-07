@@ -652,7 +652,7 @@ func qwenOmniVisualInputConfig(cfg config.VisualInputConfig) config.VisualInputC
 }
 
 func (o *Orchestrator) voiceLLMProviderForSession(session *Session) string {
-	if session == nil || session.Mode != ModeVoiceLLM {
+	if session == nil || session.Mode != ModeOmni {
 		return ""
 	}
 	if session.CharacterID == "" || o == nil || o.charStore == nil {
@@ -673,7 +673,7 @@ func (o *Orchestrator) sessionSupportsVisualInput(session *Session) bool {
 	if session.Mode == ModeStandard {
 		return true
 	}
-	return session.Mode == ModeVoiceLLM && o.voiceLLMProviderForSession(session) == "qwen_omni"
+	return session.Mode == ModeOmni && o.voiceLLMProviderForSession(session) == "qwen_omni"
 }
 
 func (o *Orchestrator) VisualInputConfigForSession(session *Session) (config.VisualInputConfig, bool) {
@@ -681,7 +681,7 @@ func (o *Orchestrator) VisualInputConfigForSession(session *Session) (config.Vis
 		return config.VisualInputConfig{}, false
 	}
 	cfg := o.visualInputConfig()
-	if session.Mode == ModeVoiceLLM {
+	if session.Mode == ModeOmni {
 		cfg = qwenOmniVisualInputConfig(cfg)
 	}
 	return cfg, true
@@ -1300,9 +1300,9 @@ func (o *Orchestrator) SetupSession(ctx context.Context, session *Session, roomM
 }
 
 func (o *Orchestrator) stopPipelineAndWait(session *Session, sessionID string, interruptVoice bool) {
-	if interruptVoice && session.Mode == ModeVoiceLLM && o.inference != nil {
+	if interruptVoice && session.Mode == ModeOmni && o.inference != nil {
 		if err := o.inference.Interrupt(context.Background(), sessionID); err != nil {
-			log.Printf("Failed to interrupt VoiceLLM for session %s: %v", sessionID, err)
+			log.Printf("Failed to interrupt omni model for session %s: %v", sessionID, err)
 		}
 	}
 	o.cancelPipeline(session)
@@ -1313,7 +1313,7 @@ func (o *Orchestrator) HydrateVoiceDialogContext(session *Session) error {
 	if o == nil || o.charStore == nil || session == nil {
 		return nil
 	}
-	if session.Mode != ModeVoiceLLM || session.CharacterID == "" {
+	if session.Mode != ModeOmni || session.CharacterID == "" {
 		return nil
 	}
 	messages, _, _, err := o.charStore.LoadRecentMessages(session.CharacterID, "", doubaoDialogContextLoadLimit)
@@ -1526,7 +1526,7 @@ func (o *Orchestrator) resumeVoiceAudioStream(sessionID string) error {
 	if err != nil {
 		return err
 	}
-	if session.Mode != ModeVoiceLLM {
+	if session.Mode != ModeOmni {
 		return nil
 	}
 
@@ -1563,7 +1563,7 @@ func (o *Orchestrator) handleVoiceLLMTextInput(ctx context.Context, session *Ses
 	o.advancePlaybackEpoch(sessionID, turnSeq)
 	if o.inference != nil {
 		if err := o.inference.Interrupt(context.Background(), sessionID); err != nil {
-			log.Printf("Failed to interrupt VoiceLLM for session %s: %v", sessionID, err)
+			log.Printf("Failed to interrupt omni model for session %s: %v", sessionID, err)
 		}
 	}
 	o.cancelPipeline(session)
@@ -1585,7 +1585,7 @@ func (o *Orchestrator) handleVoiceLLMTextInput(ctx context.Context, session *Ses
 			return
 		}
 		if err := o.resumeVoiceAudioStream(sessionID); err != nil {
-			log.Printf("Failed to resume VoiceLLM audio stream for session %s: %v", sessionID, err)
+			log.Printf("Failed to resume omni audio stream for session %s: %v", sessionID, err)
 		}
 	}(pipelineSeq)
 
@@ -1593,7 +1593,7 @@ func (o *Orchestrator) handleVoiceLLMTextInput(ctx context.Context, session *Ses
 }
 
 // HandleTextInput processes a text message through either the standard
-// LLM→TTS→Avatar pipeline or the VoiceLLM text-query path.
+// LLM→TTS→Avatar pipeline or the omni text-query path.
 func (o *Orchestrator) HandleTextInput(ctx context.Context, sessionID string, text string) error {
 	session, err := o.sessionMgr.Get(sessionID)
 	if err != nil {
@@ -1604,7 +1604,7 @@ func (o *Orchestrator) HandleTextInput(ctx context.Context, sessionID string, te
 		return nil
 	}
 
-	if session.Mode == ModeVoiceLLM {
+	if session.Mode == ModeOmni {
 		return o.handleVoiceLLMTextInput(ctx, session, sessionID, text)
 	}
 	return o.handleStandardTextInput(ctx, session, sessionID, text)
@@ -2120,7 +2120,7 @@ func (o *Orchestrator) runStandardASRLoop(ctx context.Context, session *Session,
 	}
 }
 
-// runVoiceLLMPipeline executes a VoiceLLM turn source -> VoiceLLM -> Avatar (video).
+// runVoiceLLMPipeline executes an omni turn source -> omni model -> Avatar (video).
 func (o *Orchestrator) runVoiceLLMPipeline(ctx context.Context, session *Session, sessionID string, inputCh <-chan inference.VoiceLLMInputEvent, pipelineSeq uint64, initialTurnSeq uint64) {
 	sessionDir := ""
 	if o.recorder != nil {
@@ -2569,7 +2569,7 @@ func (o *Orchestrator) runVoiceLLMPipeline(ctx context.Context, session *Session
 			currentTurn = nil
 			currentTurnDone = nil
 			if result.err != nil && !turn.aborted {
-				log.Printf("Avatar stream error for session %s (voice_llm): %v", sessionID, result.err)
+				log.Printf("Avatar stream error for session %s (omni): %v", sessionID, result.err)
 				if session.IsCurrentPipeline(pipelineSeq) {
 					o.broadcastError(sessionID, "Avatar generation failed")
 				}
@@ -2801,7 +2801,7 @@ func (o *Orchestrator) runVoiceLLMPipeline(ctx context.Context, session *Session
 	}
 
 	if streamErr != nil {
-		log.Printf("VoiceLLM stream error for session %s: %v", sessionID, streamErr)
+		log.Printf("Omni stream error for session %s: %v", sessionID, streamErr)
 		if session.IsCurrentPipeline(pipelineSeq) {
 			o.broadcastError(sessionID, "Voice conversation failed")
 		}
@@ -2819,8 +2819,8 @@ func (o *Orchestrator) Interrupt(sessionID string) error {
 	o.advancePlaybackEpoch(sessionID, turnSeq)
 	o.cancelPipeline(session)
 
-	// Also interrupt VoiceLLM on the inference side
-	if session.Mode == ModeVoiceLLM {
+	// Also interrupt the omni model on the inference side
+	if session.Mode == ModeOmni {
 		_ = o.inference.Interrupt(context.Background(), sessionID)
 	}
 

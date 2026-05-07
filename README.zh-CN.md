@@ -267,7 +267,7 @@ make setup
 pip install -e ".[all]"
 
 # 或按需选择，例如：
-pip install -e ".[voice_llm,flash_head]"
+pip install -e ".[omni,flash_head]"
 pip install -e ".[live_act]"
 ```
 
@@ -334,7 +334,7 @@ ssh -L 8443:127.0.0.1:8443 user@host -p port
 - [x] 支持角色 CRUD，包含多张参考图、激活图、固定/随机展示模式、可选人脸裁剪、标签、声音字段、人格设定、欢迎语和系统提示词
 - [x] 基于参考图，通过可配置 Avatar 插件（例如 FlashHead、LiveAct）驱动实时头像视频
 - [x] 基于 WebRTC 的实时语音和视频能力，支持直连 P2P（内嵌 TURN）或 LiveKit SFU
-- [x] 所有模块以插件化的方式提供（avatar、voice LLM、LLM、TTS、ASR），方便配置不同厂商的key。（目前仅需一个豆包语音key即可运行）
+- [x] 所有模块以插件化的方式提供（avatar、全模态模型、LLM、TTS、ASR），方便配置不同厂商的 key。（目前仅需一个豆包语音 key 即可运行）
 - [x] 会话管理，按角色将会话历史持久化到磁盘，并在启动对话时加载历史聊天记录
 - [x] 声音克隆：支持豆包语音克隆声音
 - [x] 支持语音和文本混合输入

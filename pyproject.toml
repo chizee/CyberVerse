@@ -20,6 +20,7 @@ inference = [
 ]
 llm = ["openai>=1.0"]
 tts = ["openai>=1.0", "scipy>=1.10"]
+omni = ["websockets>=12.0"]
 voice_llm = ["websockets>=12.0"]
 qwen = ["openai>=1.0", "websockets>=12.0", "scipy>=1.10"]
 flash_head = [
@@ -68,7 +69,7 @@ dev = [
     "pytest-asyncio>=0.21",
 ]
 all = [
-    "cyberverse[inference,llm,tts,voice_llm,asr,flash_head,live_act]",
+    "cyberverse[inference,llm,tts,omni,asr,flash_head,live_act]",
 ]
 
 [tool.pytest.ini_options]

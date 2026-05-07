@@ -120,7 +120,7 @@ func newVoiceRecordingHarness(t *testing.T) (*Orchestrator, *Session, *character
 
 	sessionMgr := NewSessionManager(4)
 	t.Cleanup(sessionMgr.Stop)
-	session, err := sessionMgr.Create("session-recording", ModeVoiceLLM, char.ID)
+	session, err := sessionMgr.Create("session-recording", ModeOmni, char.ID)
 	if err != nil {
 		t.Fatal(err)
 	}

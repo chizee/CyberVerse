@@ -134,7 +134,7 @@ cp infra/.env.example .env
 Edit `.env`, fill in your API keys:
 
 ```
-DOUBAO_ACCESS_TOKEN=your_doubao_access_token   # ByteDance Doubao voice LLM
+DOUBAO_ACCESS_TOKEN=your_doubao_access_token   # ByteDance Doubao omni model
 DOUBAO_APP_ID=your_doubao_app_id
 ```
 
@@ -265,7 +265,7 @@ This installs the base editable package (`[dev,inference]`), generates gRPC stub
 pip install -e ".[all]"
 
 # or pick what you need, e.g.:
-pip install -e ".[voice_llm,flash_head]"
+pip install -e ".[omni,flash_head]"
 pip install -e ".[live_act]"
 ```
 
@@ -332,7 +332,7 @@ Configure characters, inference, and launch real-time digital-human sessions.
 - [x] Character CRUD with multiple reference images, active image, fixed/random display mode, optional face crop, tags, voice fields, personality, welcome message, and system prompt
 - [x] Real-time avatar video driven from reference images via configurable avatar plugins (e.g. FlashHead, LiveAct)
 - [x] Real-time voice and video over WebRTC — direct P2P (embedded TURN) or LiveKit SFU
-- [x] Pluggable modules (avatar, voice LLM, LLM, TTS, ASR); configure different vendors’ API keys via YAML (a single Doubao Voice API key is enough to run today)
+- [x] Pluggable modules (avatar, omni model, LLM, TTS, ASR); configure different vendors’ API keys via YAML (a single Doubao Voice API key is enough to run today)
 - [x] Session management: per-character chat history persisted to disk and loaded when a conversation starts
 - [x] Voice cloning: supports Doubao voice cloning
 - [x] Hybrid input: supports both voice and text in the same conversation
