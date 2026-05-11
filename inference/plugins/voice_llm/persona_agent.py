@@ -620,6 +620,11 @@ class PersonaAgentPlugin(VoiceLLMPlugin):
                 self._log_model_event(session_config.session_id, event)
                 if event.user_transcript:
                     turn_transcripts.append(event.user_transcript)
+                    yield VoiceLLMOutputEvent(
+                        user_transcript=event.user_transcript,
+                        question_id=event.question_id,
+                        reply_id=event.reply_id,
+                    )
                     event = replace(event, user_transcript="")
                     if not event.tool_calls and not event.barge_in and not self._has_assistant_output(event):
                         continue
@@ -656,12 +661,6 @@ class PersonaAgentPlugin(VoiceLLMPlugin):
                             args["user_request"] = final_user_text
                             args["kind"] = str(args.get("kind") or "research").strip() or "research"
                             effective_call = ToolCall(id=call.id, name=call.name, arguments=args)
-                        if final_user_text:
-                            yield VoiceLLMOutputEvent(
-                                user_transcript=final_user_text,
-                                question_id=event.question_id,
-                                reply_id=event.reply_id,
-                            )
                         pending_partials.clear()
                         turn_transcripts.clear()
 
@@ -692,13 +691,6 @@ class PersonaAgentPlugin(VoiceLLMPlugin):
                     continue
 
                 if self._has_assistant_output(event) and (pending_partials or turn_transcripts):
-                    final_user_text = self._merge_text_segments([*pending_partials, *turn_transcripts])
-                    if final_user_text:
-                        yield VoiceLLMOutputEvent(
-                            user_transcript=final_user_text,
-                            question_id=event.question_id,
-                            reply_id=event.reply_id,
-                        )
                     pending_partials.clear()
                     turn_transcripts.clear()
                 yield event

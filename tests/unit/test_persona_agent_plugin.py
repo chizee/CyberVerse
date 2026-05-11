@@ -328,7 +328,8 @@ async def test_persona_agent_wait_tool_suppresses_output(tmp_path):
     finally:
         await plugin.shutdown()
 
-    assert outputs == []
+    assert len(outputs) == 1
+    assert outputs[0].user_transcript == "我觉得..."
     assert plugin.task_client.calls == []
 
 
@@ -374,8 +375,9 @@ async def test_persona_agent_merges_waited_partial_into_create_task(tmp_path):
     finally:
         await plugin.shutdown()
 
-    assert outputs[0].user_transcript == "我想让你帮我查一下今天知乎有哪些热门信息"
-    assert outputs[1].transcript == "好的，请稍等。"
+    assert outputs[0].user_transcript == "我想让你帮我查一下"
+    assert outputs[1].user_transcript == "今天知乎有哪些热门信息"
+    assert outputs[2].transcript == "好的，请稍等。"
     assert outputs[-1].transcript == "查好了，资料已经整理好。"
     assert plugin.task_client.calls[0] == (
         "create_task",
