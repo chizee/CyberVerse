@@ -36,6 +36,26 @@ class SupervisorToolResult:
     pending_task: PendingSubAgentTask | None = None
 
 
+def _task_description_from_args(args: dict[str, Any]) -> str:
+    return str(
+        args.get("description")
+        or args.get("user_request")
+        or args.get("request")
+        or args.get("text")
+        or ""
+    ).strip()
+
+
+def _normalize_create_task_args(args: dict[str, Any]) -> dict[str, Any]:
+    description = _task_description_from_args(args)
+    normalized = dict(args)
+    normalized["description"] = description
+    normalized["user_request"] = description
+    normalized.pop("kind", None)
+    normalized.pop("title", None)
+    return normalized
+
+
 class PersonaSupervisor:
     """Top-level PersonaAgent supervisor graph.
 
@@ -82,9 +102,7 @@ class PersonaSupervisor:
             name = call.name.strip()
             args = dict(call.arguments or {})
             if name == "create_task":
-                user_request = str(args.get("user_request") or args.get("request") or "").strip()
-                args["user_request"] = user_request
-                args["kind"] = str(args.get("kind") or "research").strip() or "research"
+                args = _normalize_create_task_args(args)
             return {"route": name, "normalized_args": args}
 
         async def execute_route(state: SupervisorState) -> SupervisorState:
@@ -102,7 +120,7 @@ class PersonaSupervisor:
             if route == "create_task":
                 user_request = str(args.get("user_request") or "").strip()
                 if not user_request:
-                    raise ValueError("create_task requires user_request")
+                    raise ValueError("create_task requires description")
                 task = await self.runtime.create_task(session_id, args)
                 return {
                     "result": self._accepted_task_result(task),
@@ -179,11 +197,10 @@ class PersonaSupervisor:
                 }
             }
         if name == "create_task":
-            user_request = str(args.get("user_request") or args.get("request") or "").strip()
+            args = _normalize_create_task_args(args)
+            user_request = str(args.get("user_request") or "").strip()
             if not user_request:
-                raise ValueError("create_task requires user_request")
-            args["user_request"] = user_request
-            args["kind"] = str(args.get("kind") or "research").strip() or "research"
+                raise ValueError("create_task requires description")
             task = await self.runtime.create_task(session_id, args)
             return {
                 "result": self._accepted_task_result(task),

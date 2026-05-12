@@ -10,11 +10,11 @@ import pytest
 from inference.core.types import (
     ImageFrame,
     PluginConfig,
-    ToolDefinition,
     ToolResult,
     VoiceLLMInputEvent,
     VoiceLLMSessionConfig,
 )
+from inference.plugins.voice_llm.persona_agent import PERSONA_TOOL_DEFINITIONS
 from inference.plugins.voice_llm.qwen_omni_realtime import QwenOmniRealtimePlugin
 
 
@@ -243,22 +243,18 @@ def test_session_payload_includes_hidden_tools():
 
     payload = plugin._session_payload(
         VoiceLLMSessionConfig(
-            tools=[
-                ToolDefinition(
-                    name="create_task",
-                    description="Create task",
-                    parameters={"type": "object", "properties": {"user_request": {"type": "string"}}},
-                )
-            ]
+            tools=PERSONA_TOOL_DEFINITIONS,
         )
     )
 
     assert "tool_choice" not in payload
     assert "enable_search" not in payload
     assert "search_options" not in payload
-    assert payload["tools"][0]["type"] == "function"
-    assert payload["tools"][0]["function"]["name"] == "create_task"
-    assert payload["tools"][0]["function"]["parameters"]["properties"]["user_request"]["type"] == "string"
+    create_task_tool = next(tool for tool in payload["tools"] if tool["function"]["name"] == "create_task")
+    assert create_task_tool["type"] == "function"
+    assert create_task_tool["function"]["parameters"]["required"] == ["description"]
+    assert set(create_task_tool["function"]["parameters"]["properties"]) == {"description"}
+    assert create_task_tool["function"]["parameters"]["properties"]["description"]["type"] == "string"
 
 
 def test_session_payload_keeps_search_when_tools_absent():

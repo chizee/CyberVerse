@@ -11,7 +11,9 @@ from inference.core.types import (
     VoiceLLMSessionConfig,
 )
 from inference.plugins.voice_llm.base import VoiceLLMPlugin
+from inference.plugins.voice_llm.persona.runtime import LocalTaskRuntime
 from inference.plugins.voice_llm.persona_agent import PERSONA_AGENT_INSTRUCTIONS, PersonaAgentPlugin
+from langchain.messages import AIMessage
 
 
 class FakeOmniPlugin(VoiceLLMPlugin):
@@ -95,7 +97,7 @@ class FakeOmniPlugin(VoiceLLMPlugin):
                     ToolCall(
                         id="call-1",
                         name="create_task",
-                        arguments={"user_request": "今天知乎有哪些热门信息", "title": "知乎热点"},
+                        arguments={"description": "今天知乎有哪些热门信息"},
                     )
                 ]
             )
@@ -120,23 +122,38 @@ class FakeOmniPlugin(VoiceLLMPlugin):
         tool_name = self.scenario
         transcript_by_tool = {
             "create_task": "今天知乎有哪些热门信息",
+            "create_task_search_kind": "查一下今天知乎有什么热门新闻。",
+            "legacy_create_task": "今天知乎有哪些热门信息",
             "get_task_status": "现在查得怎么样了",
             "cancel_task": "算了不用查了",
         }
         if tool_name in transcript_by_tool:
             yield VoiceLLMOutputEvent(user_transcript=transcript_by_tool[tool_name])
+        emitted_tool_name = "create_task" if tool_name in {"create_task_search_kind", "legacy_create_task"} else tool_name
+        if tool_name == "create_task":
+            tool_arguments = {"description": "今天知乎有哪些热门信息"}
+            expected_request = "今天知乎有哪些热门信息"
+        elif tool_name == "create_task_search_kind":
+            tool_arguments = {"description": "查询今天知乎上的热门新闻", "kind": "search"}
+            expected_request = "查询今天知乎上的热门新闻"
+        elif tool_name == "legacy_create_task":
+            tool_arguments = {"user_request": "今天知乎有哪些热门信息", "title": "知乎热点", "kind": "search"}
+            expected_request = "今天知乎有哪些热门信息"
+        else:
+            tool_arguments = {"user_request": "今天知乎有哪些热门信息", "title": "知乎热点"}
+            expected_request = "今天知乎有哪些热门信息"
         yield VoiceLLMOutputEvent(
             tool_calls=[
                 ToolCall(
                     id="call-1",
-                    name=tool_name,
-                    arguments={"user_request": "今天知乎有哪些热门信息", "title": "知乎热点"},
+                    name=emitted_tool_name,
+                    arguments=tool_arguments,
                 )
             ]
         )
         tool_result = await self._next_tool_result(input_stream)
-        assert tool_result.name == tool_name
-        if tool_name == "create_task":
+        assert tool_result.name == emitted_tool_name
+        if emitted_tool_name == "create_task":
             assert tool_result.result["accepted"] is True
             yield VoiceLLMOutputEvent(
                 transcript="好的，请稍等。",
@@ -144,7 +161,7 @@ class FakeOmniPlugin(VoiceLLMPlugin):
                 is_final=True,
             )
             final_prompt = await self._next_text(input_stream)
-            assert "用户原始请求：今天知乎有哪些热门信息" in final_prompt
+            assert f"用户原始请求：{expected_request}" in final_prompt
             assert "任务状态：completed" in final_prompt
             yield VoiceLLMOutputEvent(
                 transcript="查好了，资料已经整理好。",
@@ -153,7 +170,7 @@ class FakeOmniPlugin(VoiceLLMPlugin):
             )
             return
         yield VoiceLLMOutputEvent(
-            transcript=f"{tool_name} ok",
+            transcript=f"{emitted_tool_name} ok",
             audio=AudioChunk(data=b"ok", sample_rate=16000, is_final=True),
             is_final=True,
         )
@@ -203,6 +220,39 @@ class FakeTaskClient:
 
     async def shutdown(self):
         pass
+
+
+class FakeRuntimeLLM:
+    provider = "fake"
+    model = "fake-runtime-llm"
+
+    def bind_tools(self, tools):
+        self.bound_tools = [tool.name for tool in tools]
+        return self
+
+    async def ainvoke(self, messages):
+        return AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "id": "report-1",
+                    "name": "create_html_report",
+                    "args": {
+                        "title": "知乎热点",
+                        "summary": "已整理好资料。",
+                        "sections": [{"heading": "摘要", "paragraphs": ["已完成整理。"]}],
+                        "sources": [{"title": "测试来源"}],
+                    },
+                }
+            ]
+        )
+
+
+class FakeRuntimeToolExecutor:
+    client = None
+
+    async def execute(self, name, arguments):
+        return {"ok": True, "tool": name}
 
 
 async def make_persona(scenario, checkpoint_db_path):
@@ -310,12 +360,83 @@ async def test_persona_agent_create_task_acks_then_runs_async_task(tmp_path):
         "create_task",
         "session-1",
         {
+            "description": "今天知乎有哪些热门信息",
             "user_request": "今天知乎有哪些热门信息",
-            "title": "知乎热点",
-            "kind": "research",
         },
     )
     assert any(call[0] == "get_task_events" for call in plugin.task_runtime.calls)
+
+
+@pytest.mark.asyncio
+async def test_persona_agent_ignores_legacy_task_kind(tmp_path):
+    plugin = await make_persona("create_task_search_kind", tmp_path / "search_kind.db")
+
+    try:
+        outputs = [
+            event
+            async for event in plugin.converse_stream(
+                one_input(),
+                VoiceLLMSessionConfig(session_id="session-1"),
+            )
+        ]
+    finally:
+        await plugin.shutdown()
+
+    assert outputs[0].user_transcript == "查一下今天知乎有什么热门新闻。"
+    assert outputs[-1].transcript == "查好了，资料已经整理好。"
+    assert plugin.task_runtime.calls[0] == (
+        "create_task",
+        "session-1",
+        {
+            "description": "查询今天知乎上的热门新闻",
+            "user_request": "查询今天知乎上的热门新闻",
+        },
+    )
+
+
+@pytest.mark.asyncio
+async def test_persona_agent_accepts_legacy_create_task_args(tmp_path):
+    plugin = await make_persona("legacy_create_task", tmp_path / "legacy.db")
+
+    try:
+        outputs = [
+            event
+            async for event in plugin.converse_stream(
+                one_input(),
+                VoiceLLMSessionConfig(session_id="session-1"),
+            )
+        ]
+    finally:
+        await plugin.shutdown()
+
+    assert outputs[-1].transcript == "查好了，资料已经整理好。"
+    assert plugin.task_runtime.calls[0] == (
+        "create_task",
+        "session-1",
+        {
+            "description": "今天知乎有哪些热门信息",
+            "user_request": "今天知乎有哪些热门信息",
+        },
+    )
+
+
+@pytest.mark.asyncio
+async def test_local_task_runtime_ignores_legacy_kind():
+    runtime = LocalTaskRuntime(llm=FakeRuntimeLLM(), tool_executor=FakeRuntimeToolExecutor())
+
+    try:
+        task = await runtime.create_task(
+            "session-1",
+            {
+                "description": "查询今天知乎上的热门新闻",
+                "kind": "search",
+            },
+        )
+    finally:
+        await runtime.shutdown()
+
+    assert "kind" not in task
+    assert task["user_request"] == "查询今天知乎上的热门新闻"
 
 
 @pytest.mark.asyncio
@@ -388,8 +509,7 @@ async def test_persona_agent_merges_waited_partial_into_create_task(tmp_path):
         "create_task",
         "session-1",
         {
+            "description": "我想让你帮我查一下今天知乎有哪些热门信息",
             "user_request": "我想让你帮我查一下今天知乎有哪些热门信息",
-            "title": "知乎热点",
-            "kind": "research",
         },
     )

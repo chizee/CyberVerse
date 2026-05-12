@@ -1,0 +1,82 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Python: Inference Server",
+      "type": "python",
+      "request": "launch",
+      "preLaunchTask": "inference: generate proto",
+      "module": "inference.server",
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "args": [
+        "--config",
+        "cyberverse_config.yaml"
+      ],
+      "envFile": "${workspaceFolder}/.env",
+      "justMyCode": false
+    },
+    {
+      "name": "Go: CyberVerse Server",
+      "type": "go",
+      "request": "launch",
+      "mode": "auto",
+      "program": "${workspaceFolder}/server/cmd/cyberverse-server",
+      "cwd": "${workspaceFolder}/server",
+      "args": [
+        "--config",
+        "${workspaceFolder}/cyberverse_config.yaml"
+      ],
+      "envFile": "${workspaceFolder}/.env",
+      "env": {
+        "PKG_CONFIG_PATH": "${env:HOME}/miniconda3/envs/cyberverse/lib/pkgconfig:${env:PKG_CONFIG_PATH}",
+        "LD_LIBRARY_PATH": "${env:HOME}/miniconda3/envs/cyberverse/lib:${env:LD_LIBRARY_PATH}"
+      },
+      "buildFlags": "-tags=livekit"
+    },
+    {
+      "name": "Node: Frontend Vite",
+      "type": "node",
+      "request": "launch",
+      "cwd": "${workspaceFolder}/frontend",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "run",
+        "dev",
+        "--",
+        "--host",
+        "0.0.0.0"
+      ],
+      "console": "integratedTerminal",
+      "serverReadyAction": {
+        "pattern": "Local:\\s+(https?://\\S+)",
+        "uriFormat": "%s",
+        "action": "openExternally"
+      }
+    },
+    {
+      "name": "Python: Current Test File",
+      "type": "python",
+      "request": "launch",
+      "module": "pytest",
+      "cwd": "${workspaceFolder}",
+      "args": [
+        "-q",
+        "${file}"
+      ],
+      "envFile": "${workspaceFolder}/.env",
+      "justMyCode": false
+    }
+  ],
+  "compounds": [
+    {
+      "name": "CyberVerse: Full Stack",
+      "configurations": [
+        "Python: Inference Server",
+        "Go: CyberVerse Server",
+        "Node: Frontend Vite"
+      ],
+      "stopAll": true
+    }
+  ]
+}

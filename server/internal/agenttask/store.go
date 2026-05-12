@@ -437,6 +437,9 @@ func (s *Store) CreateArtifact(ctx context.Context, taskID string, in CreateArti
 	if strings.Contains(mimeType, "markdown") || typ == "markdown" {
 		ext = ".md"
 	}
+	if strings.Contains(mimeType, "html") || typ == "html" {
+		ext = ".html"
+	}
 	contentPath := filepath.Join(taskDir, id+ext)
 	if err := os.WriteFile(contentPath, []byte(in.Content), 0644); err != nil {
 		return nil, err

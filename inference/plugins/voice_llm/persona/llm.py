@@ -1,42 +1,17 @@
 from __future__ import annotations
 
-import json
 import os
 import re
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import Any
 
-from inference.plugins.voice_llm.persona.i18n import Localizer
-from inference.plugins.voice_llm.persona.schemas import Task
+from langchain.chat_models import init_chat_model
+from langchain_core.language_models.chat_models import BaseChatModel
+
+AgentLLM = BaseChatModel
 
 
 _ENV_PLACEHOLDER_RE = re.compile(r"^\$\{[A-Za-z_][A-Za-z0-9_]*\}$")
-
-
-@dataclass
-class DraftResult:
-    title: str
-    content_markdown: str
-    summary: str
-
-
-class AgentLLM(Protocol):
-    provider: str
-    model: str
-
-    async def classify_task(self, task: Task, localizer: Localizer) -> dict[str, Any]:
-        ...
-
-    async def plan_task(self, task: Task, localizer: Localizer) -> list[str]:
-        ...
-
-    async def draft_artifact(
-        self,
-        task: Task,
-        results: list[dict[str, str]],
-        localizer: Localizer,
-    ) -> DraftResult:
-        ...
 
 
 @dataclass
@@ -141,159 +116,31 @@ def agent_llm_config_from_cyberverse_config(config: dict[str, Any] | None) -> Ag
     )
 
 
-class OpenAICompatibleAgentLLM:
-    def __init__(self, config: AgentLLMConfig) -> None:
-        self.provider = config.provider
-        self.model = config.model
-        self.api_key = config.api_key
-        self.base_url = config.base_url
-        self.temperature = config.temperature
-        self.extra_body = config.extra_body
-        self._client: Any | None = None
-
-    def _get_client(self) -> Any:
-        if self._client is not None:
-            return self._client
-        if not self.api_key:
-            raise RuntimeError(f"agent LLM api_key is not configured for provider {self.provider!r}")
-        from openai import AsyncOpenAI
-
-        kwargs: dict[str, Any] = {"api_key": self.api_key}
-        if self.base_url:
-            kwargs["base_url"] = self.base_url
-        self._client = AsyncOpenAI(**kwargs)
-        return self._client
-
-    async def _complete(self, messages: list[dict[str, str]], temperature: float | None = None) -> str:
-        kwargs: dict[str, Any] = {
-            "model": self.model,
-            "messages": messages,
-            "temperature": self.temperature if temperature is None else temperature,
-        }
-        if self.extra_body:
-            kwargs["extra_body"] = self.extra_body
-        response = await self._get_client().chat.completions.create(**kwargs)
-        if not response.choices:
-            return ""
-        return str(response.choices[0].message.content or "").strip()
-
-    @staticmethod
-    def _json_from_text(text: str) -> dict[str, Any]:
-        candidate = text.strip()
-        if candidate.startswith("```"):
-            candidate = re.sub(r"^```(?:json)?\s*", "", candidate)
-            candidate = re.sub(r"\s*```$", "", candidate)
-        if not candidate.startswith("{"):
-            start = candidate.find("{")
-            end = candidate.rfind("}")
-            if start >= 0 and end > start:
-                candidate = candidate[start : end + 1]
-        parsed = json.loads(candidate)
-        if not isinstance(parsed, dict):
-            raise ValueError("agent LLM response is not a JSON object")
-        return parsed
-
-    async def _complete_json(self, messages: list[dict[str, str]]) -> dict[str, Any]:
-        return self._json_from_text(await self._complete(messages, temperature=0.1))
-
-    async def classify_task(self, task: Task, localizer: Localizer) -> dict[str, Any]:
-        return await self._complete_json(
-            [
-                {
-                    "role": "system",
-                    "content": (
-                        "You are the CyberVerse LangGraph task classifier. "
-                        "Return JSON only with keys: kind, normalized_request, title. "
-                        "Only kind='research' is supported in this MVP."
-                    ),
-                },
-                {
-                    "role": "user",
-                    "content": json.dumps(
-                        {
-                            "locale": localizer.locale,
-                            "kind_hint": task.kind or "research",
-                            "title_hint": task.title,
-                            "user_request": task.user_request,
-                        },
-                        ensure_ascii=False,
-                    ),
-                },
-            ]
-        )
-
-    async def plan_task(self, task: Task, localizer: Localizer) -> list[str]:
-        payload = await self._complete_json(
-            [
-                {
-                    "role": "system",
-                    "content": (
-                        "You are the planning node in a CyberVerse LangGraph research agent. "
-                        "Return JSON only: {\"steps\":[...]} with 3 to 5 short, concrete steps. "
-                        "Use the requested locale."
-                    ),
-                },
-                {
-                    "role": "user",
-                    "content": json.dumps(
-                        {
-                            "locale": localizer.locale,
-                            "task_title": task.title,
-                            "user_request": task.user_request,
-                        },
-                        ensure_ascii=False,
-                    ),
-                },
-            ]
-        )
-        steps = payload.get("steps")
-        if not isinstance(steps, list):
-            return []
-        return [str(step).strip() for step in steps if str(step).strip()]
-
-    async def draft_artifact(
-        self,
-        task: Task,
-        results: list[dict[str, str]],
-        localizer: Localizer,
-    ) -> DraftResult:
-        payload = await self._complete_json(
-            [
-                {
-                    "role": "system",
-                    "content": (
-                        "You are the drafting node in a CyberVerse LangGraph research agent. "
-                        "Return JSON only with keys: title, content_markdown, summary. "
-                        "content_markdown must be a complete Markdown artifact. "
-                        "summary must be one short sentence for the user. "
-                        "If search results are empty, clearly say the realtime search adapter is not configured yet."
-                    ),
-                },
-                {
-                    "role": "user",
-                    "content": json.dumps(
-                        {
-                            "locale": localizer.locale,
-                            "task_title": task.title,
-                            "user_request": task.user_request,
-                            "search_results": results,
-                        },
-                        ensure_ascii=False,
-                    ),
-                },
-            ]
-        )
-        title = str(payload.get("title") or task.title).strip()
-        content = str(payload.get("content_markdown") or "").strip()
-        summary = str(payload.get("summary") or "").strip()
-        if not content:
-            raise ValueError("agent LLM returned empty content_markdown")
-        return DraftResult(title=title, content_markdown=content + "\n", summary=summary or localizer.text("event.completed"))
+def _langchain_model_provider(provider: str) -> str:
+    normalized = _clean_config_string(provider).lower()
+    if normalized in {"qwen", "dashscope", "openai"}:
+        return "openai"
+    return normalized or "openai"
 
 
-def build_agent_llm(config: AgentLLMConfig | None = None) -> OpenAICompatibleAgentLLM:
-    return OpenAICompatibleAgentLLM(config or agent_llm_config_from_env())
+def init_chat_model_kwargs(config: AgentLLMConfig) -> dict[str, Any]:
+    kwargs: dict[str, Any] = {
+        "model": config.model,
+        "model_provider": _langchain_model_provider(config.provider),
+        "temperature": config.temperature,
+    }
+    if config.api_key:
+        kwargs["api_key"] = config.api_key
+    if config.base_url:
+        kwargs["base_url"] = config.base_url
+    if config.extra_body:
+        kwargs["extra_body"] = config.extra_body
+    return kwargs
 
 
-def build_agent_llm_from_runtime_config(config: dict[str, Any] | None = None) -> OpenAICompatibleAgentLLM:
-    return OpenAICompatibleAgentLLM(agent_llm_config_from_cyberverse_config(config))
+def build_agent_llm(config: AgentLLMConfig | None = None) -> BaseChatModel:
+    return init_chat_model(**init_chat_model_kwargs(config or agent_llm_config_from_env()))
+
+
+def build_agent_llm_from_runtime_config(config: dict[str, Any] | None = None) -> BaseChatModel:
+    return build_agent_llm(agent_llm_config_from_cyberverse_config(config))

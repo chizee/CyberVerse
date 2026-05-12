@@ -49,6 +49,18 @@ func TestStoreTaskEventAndArtifactLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateArtifact: %v", err)
 	}
+	htmlArtifact, err := store.CreateArtifact(ctx, task.ID, CreateArtifactInput{
+		Type:     "html",
+		Title:    "知乎热点页面",
+		MimeType: "text/html; charset=utf-8",
+		Content:  "<!doctype html><html></html>",
+	})
+	if err != nil {
+		t.Fatalf("CreateArtifact html: %v", err)
+	}
+	if filepath.Ext(htmlArtifact.ContentPath) != ".html" {
+		t.Fatalf("expected html artifact extension, got %s", htmlArtifact.ContentPath)
+	}
 
 	event2, updated, err := store.AppendEvent(ctx, task.ID, AppendEventInput{
 		EventType: "task.completed",

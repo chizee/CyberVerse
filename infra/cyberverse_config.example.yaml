@@ -108,6 +108,13 @@ inference:
                 # runtime directly. Defaults to inference.llm.default; set this only
                 # when background tasks should use a different text LLM.
                 provider: "qwen"
+            tools:
+                zhihu:
+                    access_secret: "${ZHIHU_ACCESS_SECRET}"
+                    api_base: "https://developer.zhihu.com"
+                    timeout_seconds: 30
+                    zhida_model: "zhida-fast-1p5"
+            max_agent_iterations: 100
 
     llm:
         # Used by standard mode and by PersonaAgent's local sub-agent runtime.

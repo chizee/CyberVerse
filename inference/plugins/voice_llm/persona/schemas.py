@@ -42,7 +42,6 @@ class Task(ModelDumpMixin):
     title: str
     user_request: str
     character_id: str | None = None
-    kind: str = "research"
     status: TaskStatus = "queued"
     progress: int = 0
     result_summary: str | None = None
@@ -84,4 +83,3 @@ class Artifact(ModelDumpMixin):
     mime_type: str = "text/markdown; charset=utf-8"
     metadata: dict[str, Any] | None = None
     created_at: datetime | None = None
-

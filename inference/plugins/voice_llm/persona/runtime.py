@@ -9,8 +9,14 @@ from typing import Any
 from inference.plugins.voice_llm.persona.i18n import Localizer
 from inference.plugins.voice_llm.persona.llm import AgentLLM, build_agent_llm_from_runtime_config
 from inference.plugins.voice_llm.persona.schemas import Artifact, ArtifactRequest, Task, TaskEvent
-from inference.plugins.voice_llm.persona.subagents.research import run_task_with_langgraph
-from inference.plugins.voice_llm.persona.tools import NullSearchTool, SearchTool
+from inference.plugins.voice_llm.persona.subagents.default_tools import run_task_with_langgraph
+from inference.plugins.voice_llm.persona.tools import (
+    NullSearchTool,
+    SearchTool,
+    ZhihuClient,
+    ZhihuToolExecutor,
+    zhihu_config_from_runtime_config,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -29,16 +35,31 @@ def _as_json(model: Any) -> dict[str, Any]:
     return dict(model)
 
 
-def _normalize_kind(kind: Any) -> str:
-    text = str(kind or "").strip().lower()
-    return text or "research"
-
-
-def _default_title(kind: str, user_request: str) -> str:
-    title = user_request.strip() or kind.strip() or "research"
+def _default_title(user_request: str) -> str:
+    title = user_request.strip() or "后台任务"
     if len(title) > 48:
         return title[:48]
     return title
+
+
+def _persona_runtime_params(runtime_config: dict[str, Any] | None) -> dict[str, Any]:
+    inference = runtime_config.get("inference", {}) if isinstance(runtime_config, dict) else {}
+    inference = inference if isinstance(inference, dict) else {}
+    persona_agent = inference.get("persona_agent", {})
+    if isinstance(persona_agent, dict) and persona_agent:
+        return persona_agent
+    persona_section = inference.get("persona", {})
+    persona_section = persona_section if isinstance(persona_section, dict) else {}
+    persona_plugin = persona_section.get("persona", {})
+    return persona_plugin if isinstance(persona_plugin, dict) else {}
+
+
+def _positive_int(value: Any, default: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = default
+    return max(1, parsed)
 
 
 class RuntimeCallbacks:
@@ -66,10 +87,16 @@ class LocalTaskRuntime:
         runtime_config: dict[str, Any] | None = None,
         llm: AgentLLM | None = None,
         search_tool: SearchTool | None = None,
+        tool_executor: ZhihuToolExecutor | None = None,
         max_active_tasks_per_session: int = 3,
     ) -> None:
+        persona_params = _persona_runtime_params(runtime_config)
         self.llm = llm or build_agent_llm_from_runtime_config(runtime_config)
         self.search_tool = search_tool or NullSearchTool()
+        self.tool_executor = tool_executor or ZhihuToolExecutor(
+            ZhihuClient(zhihu_config_from_runtime_config(runtime_config))
+        )
+        self.max_agent_iterations = _positive_int(persona_params.get("max_agent_iterations"), 8)
         self.max_active_tasks_per_session = max(1, max_active_tasks_per_session)
         self._tasks: dict[str, Task] = {}
         self._events: dict[str, list[TaskEvent]] = {}
@@ -87,15 +114,19 @@ class LocalTaskRuntime:
         self._runners.clear()
 
     async def create_task(self, session_id: str, args: dict[str, Any]) -> dict[str, Any]:
-        user_request = str(args.get("user_request") or args.get("request") or "").strip()
+        user_request = str(
+            args.get("user_request")
+            or args.get("description")
+            or args.get("request")
+            or ""
+        ).strip()
         if not user_request:
             raise ValueError("create_task requires user_request")
         session_id = str(session_id or "").strip()
         if not session_id:
             raise ValueError("create_task requires session_id")
 
-        kind = _normalize_kind(args.get("kind") or "research")
-        title = str(args.get("title") or "").strip() or _default_title(kind, user_request)
+        title = _default_title(user_request)
         metadata = args.get("metadata") if isinstance(args.get("metadata"), dict) else None
         locale = str(args.get("locale") or "").strip() or None
         now = _now()
@@ -103,7 +134,6 @@ class LocalTaskRuntime:
             id=str(uuid.uuid4()),
             session_id=session_id,
             character_id=str(args.get("character_id") or "").strip() or None,
-            kind=kind,
             title=title,
             user_request=user_request,
             status="queued",
@@ -278,13 +308,13 @@ class LocalTaskRuntime:
                 ),
             )
             task = self._tasks[task_id]
-            if task.kind != "research":
-                raise ValueError(f"unsupported task kind: {task.kind}")
             await run_task_with_langgraph(
                 task,
                 self.search_tool,
                 RuntimeCallbacks(self),
                 llm=self.llm,
+                tool_executor=self.tool_executor,
+                max_agent_iterations=self.max_agent_iterations,
             )
         except asyncio.CancelledError:
             raise
