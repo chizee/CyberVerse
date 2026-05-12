@@ -1,15 +1,55 @@
 import { ref, computed } from 'vue'
-import { getConversationMessages, getTaskEvents, listSessionTasks, sendMessage } from '../services/api'
+import {
+  getConversationMessages,
+  getTaskArtifactUrl,
+  getTaskEvents,
+  listSessionTasks,
+  sendMessage,
+  type AgentTask,
+} from '../services/api'
 import { translate } from '../i18n'
+
+export type TaskStatus = 'queued' | 'running' | 'waiting_user' | 'completed' | 'failed' | 'cancelled'
+
+export interface ChatTaskTimelineItem {
+  seq: number
+  eventType: string
+  title: string
+  description: string
+  status: TaskStatus
+  progress: number
+  createdAt?: string
+}
+
+export interface ChatTaskArtifact {
+  id: string
+  title: string
+  type: string
+  url: string
+}
+
+export interface ChatTaskState {
+  id: string
+  agentName: string
+  title: string
+  status: TaskStatus
+  progress: number
+  eventCount: number
+  currentStep: string
+  events: ChatTaskTimelineItem[]
+  artifacts: ChatTaskArtifact[]
+}
 
 export interface ChatMessage {
   id?: string  // Optional ID for deduplication
+  kind?: 'text' | 'task'
   role: 'user' | 'assistant' | 'system'
   content: string
   timestamp: number
   isHistory?: boolean
   sessionId?: string
   artifactUrl?: string
+  task?: ChatTaskState
 }
 
 export type AvatarStatus = 'idle' | 'speaking' | 'processing'
@@ -101,6 +141,194 @@ export function useChat(sessionId: () => string) {
     signalingHandler = fn
   }
 
+  function asRecord(value: unknown): Record<string, unknown> {
+    return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
+  }
+
+  function readString(value: unknown): string {
+    return typeof value === 'string' ? value.trim() : ''
+  }
+
+  function readTaskStatus(value: unknown, fallback: TaskStatus = 'running'): TaskStatus {
+    switch (value) {
+      case 'queued':
+      case 'running':
+      case 'waiting_user':
+      case 'completed':
+      case 'failed':
+      case 'cancelled':
+        return value
+      default:
+        return fallback
+    }
+  }
+
+  function normalizeProgress(value: unknown, fallback = 0): number {
+    const progress = Number(value ?? fallback)
+    if (!Number.isFinite(progress)) return fallback
+    return Math.min(100, Math.max(0, Math.round(progress)))
+  }
+
+  function normalizeSeq(value: unknown): number {
+    const seq = Number(value ?? 0)
+    if (!Number.isFinite(seq) || seq <= 0) return 0
+    return Math.trunc(seq)
+  }
+
+  function agentNameForKind(kind: string): string {
+    if (kind === 'research') return 'Research SubAgent'
+    if (!kind) return 'SubAgent'
+    return `${kind.charAt(0).toUpperCase()}${kind.slice(1)} SubAgent`
+  }
+
+  function taskCardTitle(task: Record<string, unknown>, fallbackTitle: string): string {
+    return readString(task.user_request) || readString(task.title) || fallbackTitle || '后台任务'
+  }
+
+  function eventTitle(eventType: string, message: string): string {
+    switch (eventType) {
+      case 'task.queued':
+        return '任务已加入队列'
+      case 'task.started':
+        return '启动任务'
+      case 'plan.created':
+        return '拆解任务步骤'
+      case 'research.blocked':
+        return '检索候选信息源'
+      case 'artifact.created':
+        return '生成产物'
+      case 'task.completed':
+        return '完成任务'
+      case 'task.failed':
+        return '任务失败'
+      case 'task.cancelled':
+        return '任务已取消'
+      default:
+        return message || eventType || '任务状态更新'
+    }
+  }
+
+  function artifactTypeLabel(type: string): string {
+    const normalized = type.toLowerCase()
+    if (normalized.includes('html')) return 'HTML'
+    if (normalized.includes('markdown') || normalized === 'md') return 'MD'
+    return (type || 'HTML').toUpperCase()
+  }
+
+  function eventDescription(eventType: string, message: string, payload: Record<string, unknown>): string {
+    if (eventType === 'plan.created') {
+      const steps = Array.isArray(payload.steps) ? payload.steps.map(readString).filter(Boolean) : []
+      if (steps.length > 0) return `生成计划：${steps.join('、')}`
+    }
+    if (eventType === 'artifact.created') {
+      return `${artifactTypeLabel(readString(payload.type) || 'html')} 页面已写入 artifact`
+    }
+    if (eventType === 'task.completed') {
+      return message || '任务已完成'
+    }
+    return message || eventTitle(eventType, message)
+  }
+
+  function upsertArtifact(
+    artifacts: ChatTaskArtifact[],
+    taskId: string,
+    payload: Record<string, unknown>,
+    fallbackTitle: string,
+  ): ChatTaskArtifact[] {
+    const artifactId = readString(payload.artifact_id)
+    if (!taskId || !artifactId) return artifacts
+
+    const existing = artifacts.find((artifact) => artifact.id === artifactId)
+    const type = readString(payload.type) || existing?.type || 'html'
+    const title = readString(payload.title) || existing?.title || fallbackTitle || '任务产物'
+    const nextArtifact: ChatTaskArtifact = {
+      id: artifactId,
+      title,
+      type,
+      url: existing?.url || getTaskArtifactUrl(taskId, artifactId),
+    }
+
+    if (existing) {
+      return artifacts.map((artifact) => artifact.id === artifactId ? { ...artifact, ...nextArtifact } : artifact)
+    }
+    return [...artifacts, nextArtifact]
+  }
+
+  function buildTaskMessage(data: any, fallbackTask?: Partial<AgentTask>): ChatMessage | null {
+    const task = {
+      ...asRecord(fallbackTask),
+      ...asRecord(data.task),
+    }
+    const taskId = readString(data.task_id) || readString(task.id)
+    if (!taskId) return null
+
+    const previous = messages.value.find(m => m.id === `task-${taskId}`)?.task
+    const payload = asRecord(data.payload)
+    const eventType = readString(data.event_type)
+    const message = readString(data.message) || '任务状态已更新。'
+    const status = readTaskStatus(data.status || task.status, previous?.status || 'running')
+    const progress = normalizeProgress(data.progress ?? task.progress, previous?.progress || 0)
+    const kind = readString(task.kind) || 'research'
+    const title = taskCardTitle(task, previous?.title || '后台任务')
+    const seq = normalizeSeq(data.seq)
+
+    const nextEvent: ChatTaskTimelineItem | null = eventType
+      ? {
+          seq,
+          eventType,
+          title: eventTitle(eventType, message),
+          description: eventDescription(eventType, message, payload),
+          status,
+          progress,
+          createdAt: readString(data.created_at),
+        }
+      : null
+
+    let events = previous?.events ? [...previous.events] : []
+    if (nextEvent) {
+      const existingIndex = nextEvent.seq > 0 ? events.findIndex(event => event.seq === nextEvent.seq) : -1
+      if (existingIndex >= 0) {
+        events[existingIndex] = nextEvent
+      } else {
+        events.push(nextEvent)
+      }
+      events = events.sort((a, b) => a.seq - b.seq)
+    }
+
+    let artifacts = previous?.artifacts ? [...previous.artifacts] : []
+    if (payload.artifact_id) {
+      artifacts = upsertArtifact(artifacts, taskId, payload, readString(task.title) || title)
+    }
+
+    const latestEvent = events[events.length - 1]
+    const currentStep = status === 'completed' && artifacts.length > 0
+      ? '已完成：资料已生成'
+      : status === 'failed'
+        ? message || '任务失败'
+        : status === 'cancelled'
+          ? '任务已取消'
+          : latestEvent?.title || message
+
+    return {
+      id: `task-${taskId}`,
+      kind: 'task',
+      role: 'system',
+      content: title,
+      timestamp: Date.now(),
+      task: {
+        id: taskId,
+        agentName: agentNameForKind(kind),
+        title,
+        status,
+        progress,
+        eventCount: Math.max(events.length, previous?.eventCount || 0),
+        currentStep,
+        events,
+        artifacts,
+      },
+    }
+  }
+
   function handleTaskEvent(data: any, fallbackTask?: any) {
     const task = data.task || fallbackTask || {}
     const taskId = data.task_id || task.id || ''
@@ -110,21 +338,10 @@ export function useChat(sessionId: () => string) {
       if (seq <= previousSeq) return
       lastTaskSeqByTaskId.set(taskId, seq)
     }
-    const title = task.title || '后台任务'
-    const status = data.status || task.status || ''
-    const progress = Number(data.progress ?? task.progress ?? 0)
-    const message = data.message || '任务状态已更新。'
-    const payload = data.payload || {}
-    const artifactId = payload.artifact_id
-    const artifactUrl = taskId && artifactId ? `/api/v1/tasks/${taskId}/artifacts/${artifactId}` : undefined
-    const suffix = artifactUrl ? '\n资料已生成。' : ''
-    upsertMessage({
-      id: taskId ? `task-${taskId}` : `task-${Date.now()}`,
-      role: 'system',
-      content: `任务「${title}」${status}，进度 ${progress}%：${message}${suffix}`,
-      timestamp: Date.now(),
-      artifactUrl,
-    })
+    const taskMessage = buildTaskMessage(data, fallbackTask)
+    if (taskMessage) {
+      upsertMessage(taskMessage)
+    }
   }
 
   async function recoverTaskEvents() {

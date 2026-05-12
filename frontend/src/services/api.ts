@@ -131,6 +131,10 @@ export async function getTaskEvents(taskId: string, afterSeq = 0): Promise<{ eve
   return request(`/tasks/${taskId}/events?after_seq=${afterSeq}`)
 }
 
+export function getTaskArtifactUrl(taskId: string, artifactId: string): string {
+  return `${API_BASE}/tasks/${encodeURIComponent(taskId)}/artifacts/${encodeURIComponent(artifactId)}`
+}
+
 // ── Conversation History ──
 
 export interface ConversationMessagesResponse {

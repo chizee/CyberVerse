@@ -2,6 +2,7 @@
 import { ref, nextTick, watch, onMounted, onUnmounted, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { ChatMessage, AvatarStatus } from '../composables/useChat'
+import TaskProgressCard from './TaskProgressCard.vue'
 
 const props = defineProps<{
   messages: ChatMessage[]
@@ -58,6 +59,19 @@ const sessionBreaks = computed(() => {
   return breaks
 })
 
+const messageRenderKey = computed(() => props.messages.map((msg) => {
+  if (msg.kind === 'task' && msg.task) {
+    return [
+      msg.id,
+      msg.task.status,
+      msg.task.progress,
+      msg.task.eventCount,
+      msg.task.artifacts.map(artifact => artifact.id).join(','),
+    ].join(':')
+  }
+  return `${msg.id || ''}:${msg.timestamp}:${msg.content}`
+}).join('|'))
+
 watch(
   () => props.historyLoading,
   (loading) => {
@@ -73,10 +87,11 @@ watch(
 )
 
 watch(
-  () => props.messages.length,
-  async (newLen) => {
+  messageRenderKey,
+  async () => {
     const container = messagesContainer.value
     if (!container) return
+    const newLen = props.messages.length
 
     if (isLoadingHistory && newLen > prevMessageCount) {
       // History was prepended: preserve scroll position using height captured before load
@@ -143,6 +158,15 @@ onUnmounted(() => {
         </div>
 
         <div
+          v-if="msg.kind === 'task' && msg.task"
+          class="message task"
+          :class="{ history: msg.isHistory }"
+        >
+          <TaskProgressCard :task="msg.task" />
+        </div>
+
+        <div
+          v-else
           class="message"
           :class="[msg.role, { history: msg.isHistory }]"
         >
@@ -300,6 +324,14 @@ onUnmounted(() => {
   max-width: 88%;
   background: #24303a;
   color: #cbd5e1;
+}
+.message.task {
+  align-self: stretch;
+  width: 100%;
+  max-width: 100%;
+  padding: 0;
+  background: transparent;
+  color: inherit;
 }
 .message.history {
   opacity: 0.75;
