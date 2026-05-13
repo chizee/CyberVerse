@@ -26,7 +26,8 @@ fi
 
 # ── Read YAML values (env still wins when set) ──────────────────────────────
 _yaml_first_val() {
-  python3 - "$CONFIG" "$@" <<'PY'
+  # Match `python -m inference.server` below; non-interactive bash ignores zsh `python3` aliases.
+  python - "$CONFIG" "$@" <<'PY'
 import sys
 import yaml
 
