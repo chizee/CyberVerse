@@ -25,6 +25,9 @@ warmup:
 
 inference:
     avatar:
+        # Set to false for pure voice sessions. Cached idle videos are still
+        # served, but realtime speaking video and new idle video generation stop.
+        enabled: true
         # Select the avatar backend initialized by the inference process.
         default: "flash_head"
         runtime:

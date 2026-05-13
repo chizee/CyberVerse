@@ -222,6 +222,7 @@ type voicePipelineTurn struct {
 	firstVideoAt        time.Time
 	syncBuf             *voiceAVSyncBuffer
 	avatarStarted       bool
+	audioOnlyStarted    bool
 	avatarInputClosed   bool
 	avatarAudioCh       chan *pb.AudioChunk
 	avatarCtx           context.Context
@@ -658,6 +659,13 @@ func (o *Orchestrator) SetTaskService(taskService *agenttask.Service) {
 // StreamingMode returns the current streaming mode.
 func (o *Orchestrator) StreamingMode() string {
 	return o.streamingMode
+}
+
+func (o *Orchestrator) AvatarEnabled() bool {
+	if o == nil || o.pipelineCfg.AvatarEnabled == nil {
+		return true
+	}
+	return *o.pipelineCfg.AvatarEnabled
 }
 
 func (o *Orchestrator) HealthCheck(ctx context.Context) error {
@@ -1249,6 +1257,9 @@ func (o *Orchestrator) EnsureIdleVideo(ctx context.Context, characterID string) 
 	if o.inference == nil {
 		return "", errors.New("inference service is not configured")
 	}
+	if !o.AvatarEnabled() {
+		return "", errors.New("avatar inference is disabled")
+	}
 
 	_, imageFilename, err := o.activeCharacterImage(characterID)
 	if err != nil || imageFilename == "" {
@@ -1376,8 +1387,10 @@ loop:
 func (o *Orchestrator) SetupSession(ctx context.Context, session *Session, roomMgr *livekit.RoomManager) (mediapeer.MediaPeer, []string, error) {
 	warnings := []string{}
 
-	// Best-effort: apply the character's active avatar image.
-	if session != nil && session.CharacterID != "" {
+	// Best-effort: apply the character's active avatar image when realtime
+	// avatar inference is enabled. Pure voice sessions keep cached idle videos
+	// but do not touch the avatar model.
+	if o.AvatarEnabled() && session != nil && session.CharacterID != "" {
 		_, imageFilename, err := o.activeCharacterImage(session.CharacterID)
 		if err != nil {
 			log.Printf("SetupSession: could not resolve active image for character %s: %v", session.CharacterID, err)
@@ -2357,6 +2370,54 @@ func (o *Orchestrator) runStandardPipeline(ctx context.Context, session *Session
 		SessionID:     sessionID,
 	})
 
+	lookupStdPeer := func() mediapeer.MediaPeer {
+		o.mu.RLock()
+		defer o.mu.RUnlock()
+		return o.peers[sessionID]
+	}
+
+	if !o.AvatarEnabled() {
+		speakingBroadcasted := false
+		for ttsAudioCh != nil || ttsErrCh != nil {
+			select {
+			case <-ctx.Done():
+				return
+			case chunk, ok := <-ttsAudioCh:
+				if !ok {
+					ttsAudioCh = nil
+					continue
+				}
+				pcm, sampleRate := audioChunkToPCM16(chunk)
+				if len(pcm) == 0 {
+					continue
+				}
+				appendRecAudio(pcm, sampleRate)
+				if !speakingBroadcasted {
+					speakingBroadcasted = true
+					session.SetState(StateSpeaking)
+					o.broadcastStatus(sessionID, "speaking")
+				}
+				if peer := lookupStdPeer(); peer != nil {
+					if err := peer.PublishAudioFrame(pcm, sampleRate); err != nil {
+						log.Printf("std audio-only publish failed session=%s: %v", sessionID, err)
+					}
+				}
+			case err, ok := <-ttsErrCh:
+				if !ok {
+					ttsErrCh = nil
+					continue
+				}
+				if err == nil {
+					continue
+				}
+				log.Printf("TTS stream error for session %s: %v", sessionID, err)
+				o.broadcastError(sessionID, "Speech synthesis failed")
+				return
+			}
+		}
+		return
+	}
+
 	// 4. Start Avatar stream
 	stdSyncBuf := newVoiceAVSyncBuffer(voiceMaxPCMBufferSamples)
 	avatarAudioCh := make(chan *pb.AudioChunk, 8)
@@ -2421,11 +2482,6 @@ func (o *Orchestrator) runStandardPipeline(ctx context.Context, session *Session
 		segSeq         int64
 		firstFrameSent bool
 	)
-	lookupStdPeer := func() mediapeer.MediaPeer {
-		o.mu.RLock()
-		defer o.mu.RUnlock()
-		return o.peers[sessionID]
-	}
 	flushStdSeg := func(isFinalSeg bool) {
 		if segCount == 0 {
 			return
@@ -3110,6 +3166,13 @@ func (o *Orchestrator) runVoiceLLMPipelineWithConfig(
 		case output, ok := <-outputCh:
 			if !ok {
 				outputCh = nil
+				if currentTurn != nil && !o.AvatarEnabled() && !currentTurn.avatarStarted {
+					turn := currentTurn
+					currentTurn = nil
+					currentTurnDone = nil
+					saveCompletedTurn(turn)
+					setIdleIfCurrent(turn.seq)
+				}
 				continue
 			}
 			if rawTaskEvent := strings.TrimSpace(output.GetTaskEventJson()); rawTaskEvent != "" {
@@ -3279,6 +3342,7 @@ func (o *Orchestrator) runVoiceLLMPipelineWithConfig(
 
 			audio := output.GetAudio()
 			if audio != nil && len(audio.GetData()) > 0 {
+				pcm, pcmSampleRate := audioChunkToPCM16(audio)
 				if currentTurn.firstAudioAt.IsZero() {
 					currentTurn.firstAudioAt = time.Now()
 					logVoiceTrace(
@@ -3290,32 +3354,51 @@ func (o *Orchestrator) runVoiceLLMPipelineWithConfig(
 						currentTurn.userFinalAt,
 					)
 				}
-				if !currentTurn.avatarStarted {
-					startAvatarWorker(currentTurn)
+				if len(pcm) > 0 {
+					currentTurn.recAudioBuf = append(currentTurn.recAudioBuf, pcm...)
+					if pcmSampleRate > 0 {
+						currentTurn.recAudioSR = pcmSampleRate
+					}
 				}
-				if dropped := currentTurn.syncBuf.appendPCM(audio.GetData(), int(audio.GetSampleRate())); dropped > 0 {
-					bufferedSamples, _, _, _ := currentTurn.syncBuf.snapshot()
-					log.Printf("voice sync buffer overflow for session %s: dropped=%d bytes, buffered_samples=%d", sessionID, dropped, bufferedSamples)
-				}
-				currentTurn.recAudioBuf = append(currentTurn.recAudioBuf, audio.GetData()...)
-				if int(audio.GetSampleRate()) > 0 {
-					currentTurn.recAudioSR = int(audio.GetSampleRate())
-				}
-				audioClone := proto.Clone(audio).(*pb.AudioChunk)
-				if currentTurn.firstAvatarAudioAt.IsZero() {
-					currentTurn.firstAvatarAudioAt = time.Now()
-					logVoiceTrace(
-						"go_avatar_first_audio_enqueued",
-						sessionID,
-						currentTurn.seq,
-						currentTurn.replyID,
-						currentTurn.questionID,
-						currentTurn.userFinalAt,
-					)
-				}
-				select {
-				case currentTurn.avatarAudioCh <- audioClone:
-				case <-currentTurn.avatarCtx.Done():
+				if !o.AvatarEnabled() {
+					if len(pcm) > 0 {
+						if !currentTurn.audioOnlyStarted && session.IsCurrentPipeline(pipelineSeq) && session.IsCurrentTurn(currentTurn.seq) {
+							currentTurn.audioOnlyStarted = true
+							session.SetState(StateSpeaking)
+							o.broadcastStatusTurn(sessionID, "speaking", currentTurn.seq)
+						}
+						if peer := lookupPeer(); peer != nil {
+							if err := peer.PublishAudioFrame(pcm, pcmSampleRate); err != nil {
+								log.Printf("voice audio-only publish failed session=%s turn=%d: %v", sessionID, currentTurn.seq, err)
+							}
+						}
+					}
+				} else {
+					if !currentTurn.avatarStarted {
+						startAvatarWorker(currentTurn)
+					}
+					if len(pcm) > 0 {
+						if dropped := currentTurn.syncBuf.appendPCM(pcm, pcmSampleRate); dropped > 0 {
+							bufferedSamples, _, _, _ := currentTurn.syncBuf.snapshot()
+							log.Printf("voice sync buffer overflow for session %s: dropped=%d bytes, buffered_samples=%d", sessionID, dropped, bufferedSamples)
+						}
+					}
+					audioClone := proto.Clone(audio).(*pb.AudioChunk)
+					if currentTurn.firstAvatarAudioAt.IsZero() {
+						currentTurn.firstAvatarAudioAt = time.Now()
+						logVoiceTrace(
+							"go_avatar_first_audio_enqueued",
+							sessionID,
+							currentTurn.seq,
+							currentTurn.replyID,
+							currentTurn.questionID,
+							currentTurn.userFinalAt,
+						)
+					}
+					select {
+					case currentTurn.avatarAudioCh <- audioClone:
+					case <-currentTurn.avatarCtx.Done():
+					}
 				}
 			}
 
@@ -3622,6 +3705,52 @@ func (o *Orchestrator) runAssistantSpeechPipeline(ctx context.Context, session *
 		SessionID:     sessionID,
 	})
 
+	lookupPeer := func() mediapeer.MediaPeer {
+		o.mu.RLock()
+		defer o.mu.RUnlock()
+		return o.peers[sessionID]
+	}
+
+	if !o.AvatarEnabled() {
+		speakingBroadcasted := false
+		for ttsAudioCh != nil || ttsErrCh != nil {
+			select {
+			case <-ctx.Done():
+				return
+			case chunk, ok := <-ttsAudioCh:
+				if !ok {
+					ttsAudioCh = nil
+					continue
+				}
+				pcm, sampleRate := audioChunkToPCM16(chunk)
+				if len(pcm) == 0 {
+					continue
+				}
+				if !speakingBroadcasted {
+					speakingBroadcasted = true
+					session.SetState(StateSpeaking)
+					o.broadcastStatusTurn(sessionID, "speaking", turnSeq)
+				}
+				if peer := lookupPeer(); peer != nil {
+					if err := peer.PublishAudioFrame(pcm, sampleRate); err != nil {
+						log.Printf("assistant speech audio-only publish failed session=%s: %v", sessionID, err)
+					}
+				}
+			case err, ok := <-ttsErrCh:
+				if !ok {
+					ttsErrCh = nil
+					continue
+				}
+				if err != nil {
+					log.Printf("assistant speech TTS error for session %s: %v", sessionID, err)
+					o.broadcastError(sessionID, "Speech synthesis failed")
+					return
+				}
+			}
+		}
+		return
+	}
+
 	syncBuf := newVoiceAVSyncBuffer(voiceMaxPCMBufferSamples)
 	avatarAudioCh := make(chan *pb.AudioChunk, 8)
 	go func() {
@@ -3656,12 +3785,6 @@ func (o *Orchestrator) runAssistantSpeechPipeline(ctx context.Context, session *
 			}
 		}
 	}()
-
-	lookupPeer := func() mediapeer.MediaPeer {
-		o.mu.RLock()
-		defer o.mu.RUnlock()
-		return o.peers[sessionID]
-	}
 
 	o.avatarMu.Lock()
 	defer o.avatarMu.Unlock()

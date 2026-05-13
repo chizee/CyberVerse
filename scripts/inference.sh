@@ -60,6 +60,22 @@ else:
 PY
 }
 
+# Avatar inference can be disabled for pure voice sessions. The inference
+# process still starts so omni/LLM/TTS/ASR plugins remain available.
+AVATAR_ENABLED_RAW="$(_yaml_first_val 'inference.avatar.enabled' 'true')"
+AVATAR_ENABLED="$(printf '%s' "${AVATAR_ENABLED_RAW}" | tr '[:upper:]' '[:lower:]')"
+case "${AVATAR_ENABLED}" in
+  1|true|yes|on) AVATAR_ENABLED="true" ;;
+  0|false|no|off) AVATAR_ENABLED="false" ;;
+  *) AVATAR_ENABLED="true" ;;
+esac
+
+if [[ "${AVATAR_ENABLED}" == "false" ]]; then
+  echo "[inference] Avatar inference disabled; starting voice-only inference server"
+  ./scripts/generate_proto.sh
+  exec python -m inference.server --config "${CONFIG}"
+fi
+
 # Detect active avatar model from config
 AVATAR_MODEL="$(_yaml_first_val 'inference.avatar.default' 'flash_head')"
 echo "[inference] Active avatar model: ${AVATAR_MODEL}"

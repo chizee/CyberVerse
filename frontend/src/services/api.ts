@@ -34,6 +34,7 @@ export interface CreateSessionResponse {
   session_id: string
   mode: PipelineMode
   streaming_mode: string  // "direct" or "livekit"
+  avatar_enabled?: boolean
   livekit_url?: string
   livekit_token?: string
   idle_video_url?: string

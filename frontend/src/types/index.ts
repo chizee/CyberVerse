@@ -127,6 +127,7 @@ export interface ConfigSection {
 export interface LaunchConfig {
   active_model: string
   configured_default_model: string
+  avatar_enabled: boolean
   config_status: AvatarModelConfigStatus
   sections: ConfigSection[]
 }
@@ -152,6 +153,7 @@ export interface AvatarModelDescriptor {
 export interface AvatarModelInfo {
   active_model: string
   configured_default_model: string
+  avatar_enabled: boolean
   models: AvatarModelDescriptor[]
   config_status: AvatarModelConfigStatus
 }

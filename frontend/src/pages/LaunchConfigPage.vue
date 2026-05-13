@@ -8,6 +8,7 @@ import CvSelect from '../components/CvSelect.vue'
 import LanguageSwitcher from '../components/LanguageSwitcher.vue'
 import type { AvatarModelInfo, ConfigSection, ConfigParam } from '../types'
 import { formatVoiceTypeDisplay } from '../utils/voice'
+import { buildSessionLaunchState, saveSessionLaunchState } from '../utils/sessionLaunchState'
 
 const router = useRouter()
 const route = useRoute()
@@ -148,19 +149,8 @@ async function launch() {
     resp.warnings?.forEach((warning) => {
       console.warn('[CyberVerse]', warning)
     })
-    router.push({
-      path: `/session/${resp.session_id}`,
-      query: {
-        streaming_mode: resp.streaming_mode || 'direct',
-        mode: resp.mode || launchMode,
-        livekit_url: resp.livekit_url,
-        livekit_token: resp.livekit_token,
-        idle_video_url: resp.idle_video_url,
-        idle_video_urls: resp.idle_video_urls ? JSON.stringify(resp.idle_video_urls) : undefined,
-        visual_input: resp.visual_input ? JSON.stringify(resp.visual_input) : undefined,
-        character_id: characterId.value,
-      },
-    })
+    saveSessionLaunchState(buildSessionLaunchState(resp, characterId.value, launchMode))
+    router.push(`/session/${resp.session_id}`)
   } catch (e) {
     errorMessage.value = e instanceof Error ? e.message : t('launch.launchFailed')
     console.error('Failed to launch:', e)

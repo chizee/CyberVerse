@@ -28,9 +28,15 @@ type InferenceConfig struct {
 }
 
 type PluginDefaults struct {
-	LLM PluginDefaultSection `yaml:"llm"`
-	ASR PluginDefaultSection `yaml:"asr"`
-	TTS PluginDefaultSection `yaml:"tts"`
+	Avatar AvatarPluginSection  `yaml:"avatar"`
+	LLM    PluginDefaultSection `yaml:"llm"`
+	ASR    PluginDefaultSection `yaml:"asr"`
+	TTS    PluginDefaultSection `yaml:"tts"`
+}
+
+type AvatarPluginSection struct {
+	Enabled *bool  `yaml:"enabled"`
+	Default string `yaml:"default"`
 }
 
 type PluginDefaultSection struct {
@@ -73,6 +79,7 @@ type PipelineConfig struct {
 	DefaultLLM      string            `yaml:"-"`
 	DefaultASR      string            `yaml:"-"`
 	DefaultTTS      string            `yaml:"-"`
+	AvatarEnabled   *bool             `yaml:"-"`
 }
 
 type RAGConfig struct {
@@ -102,6 +109,13 @@ type VisualInputConfig struct {
 
 func (c VisualInputConfig) IsEnabled() bool {
 	return c.Enabled == nil || *c.Enabled
+}
+
+func (c *Config) AvatarEnabled() bool {
+	if c == nil || c.Plugins.Avatar.Enabled == nil {
+		return true
+	}
+	return *c.Plugins.Avatar.Enabled
 }
 
 // ICEServer configures STUN/TURN servers for direct WebRTC mode.
@@ -218,6 +232,8 @@ func Load(path string) (*Config, error) {
 	cfg.Pipeline.DefaultLLM = cfg.Plugins.LLM.Default
 	cfg.Pipeline.DefaultASR = cfg.Plugins.ASR.Default
 	cfg.Pipeline.DefaultTTS = cfg.Plugins.TTS.Default
+	avatarEnabled := cfg.AvatarEnabled()
+	cfg.Pipeline.AvatarEnabled = &avatarEnabled
 
 	// Inference gRPC address: env var takes precedence
 	if addr := os.Getenv("GRPC_INFERENCE_ADDR"); addr != "" {
