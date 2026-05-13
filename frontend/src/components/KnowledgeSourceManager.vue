@@ -44,6 +44,7 @@ type MaterialFolderEntry = {
   path: string
   depth: number
   fileCount: number
+  expanded: boolean
 }
 
 type MaterialTreeEntry = MaterialFileEntry | MaterialFolderEntry
@@ -70,10 +71,11 @@ const error = ref('')
 const skippedFiles = ref<KnowledgeUploadSkippedFile[]>([])
 const fileInput = ref<HTMLInputElement | null>(null)
 const folderInput = ref<HTMLInputElement | null>(null)
+const expandedFolders = ref<Set<string>>(new Set())
 let pollTimer: number | undefined
 
 const hasIndexing = computed(() => sources.value.some(item => item.status === 'indexing'))
-const materialTreeEntries = computed(() => buildMaterialTreeEntries(sources.value))
+const materialTreeEntries = computed(() => buildMaterialTreeEntries(sources.value, expandedFolders.value))
 
 function statusLabel(status: KnowledgeSource['status']) {
   if (status === 'ready') return 'ready'
@@ -116,7 +118,8 @@ function countFolderFiles(folder: MaterialFolderNode): number {
   return count
 }
 
-function flattenFolder(folder: MaterialFolderNode, entries: MaterialTreeEntry[]) {
+function flattenFolder(folder: MaterialFolderNode, entries: MaterialTreeEntry[], expanded: Set<string>) {
+  const isExpanded = expanded.has(folder.path)
   entries.push({
     kind: 'folder',
     key: `folder:${folder.path}`,
@@ -124,16 +127,19 @@ function flattenFolder(folder: MaterialFolderNode, entries: MaterialTreeEntry[])
     path: folder.path,
     depth: folder.depth,
     fileCount: countFolderFiles(folder),
+    expanded: isExpanded,
   })
+  if (!isExpanded) return
+
   const childFolders = Array.from(folder.folders.values()).sort((a, b) => compareName(a.name, b.name))
   for (const child of childFolders) {
-    flattenFolder(child, entries)
+    flattenFolder(child, entries, expanded)
   }
   const files = [...folder.files].sort((a, b) => compareName(a.name, b.name))
   entries.push(...files)
 }
 
-function buildMaterialTreeEntries(items: KnowledgeSource[]): MaterialTreeEntry[] {
+function buildMaterialTreeEntries(items: KnowledgeSource[], expanded: Set<string>): MaterialTreeEntry[] {
   const root = createFolderNode('', '', -1)
   const sorted = [...items].sort((a, b) => compareName(materialPath(a), materialPath(b)))
 
@@ -163,7 +169,7 @@ function buildMaterialTreeEntries(items: KnowledgeSource[]): MaterialTreeEntry[]
   const entries: MaterialTreeEntry[] = []
   const folders = Array.from(root.folders.values()).sort((a, b) => compareName(a.name, b.name))
   for (const folder of folders) {
-    flattenFolder(folder, entries)
+    flattenFolder(folder, entries, expanded)
   }
   entries.push(...[...root.files].sort((a, b) => compareName(a.name, b.name)))
   return entries
@@ -171,6 +177,16 @@ function buildMaterialTreeEntries(items: KnowledgeSource[]): MaterialTreeEntry[]
 
 function entryPadding(depth: number) {
   return `${16 + Math.max(0, depth) * 22}px`
+}
+
+function toggleFolder(path: string) {
+  const next = new Set(expandedFolders.value)
+  if (next.has(path)) {
+    next.delete(path)
+  } else {
+    next.add(path)
+  }
+  expandedFolders.value = next
 }
 
 function fileLabel(source: KnowledgeSource) {
@@ -438,9 +454,23 @@ onUnmounted(stopPolling)
         >
           <div
             v-if="entry.kind === 'folder'"
-            class="flex min-w-0 items-center gap-2 bg-cv-surface/40 py-2 pr-4 text-xs text-cv-text-secondary"
+            class="flex min-w-0 cursor-pointer items-center gap-2 bg-cv-surface/40 py-2 pr-4 text-xs text-cv-text-secondary transition-colors hover:bg-cv-hover"
             :style="{ paddingLeft: entryPadding(entry.depth) }"
+            role="button"
+            tabindex="0"
+            :aria-expanded="entry.expanded"
+            @click="toggleFolder(entry.path)"
+            @keydown.enter.prevent="toggleFolder(entry.path)"
+            @keydown.space.prevent="toggleFolder(entry.path)"
           >
+            <svg
+              viewBox="0 0 24 24"
+              class="h-3.5 w-3.5 shrink-0 text-cv-text-muted transition-transform"
+              :class="entry.expanded ? 'rotate-90' : ''"
+              aria-hidden="true"
+            >
+              <path fill="currentColor" d="M9 6l6 6-6 6V6Z" />
+            </svg>
             <svg viewBox="0 0 24 24" class="h-4 w-4 shrink-0 text-cv-text-muted" aria-hidden="true">
               <path fill="currentColor" d="M10 4l2 2h8a2 2 0 0 1 2 2v1H2V6a2 2 0 0 1 2-2h6Zm12 7v7a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-7h20Z" />
             </svg>
