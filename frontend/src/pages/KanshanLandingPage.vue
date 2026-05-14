@@ -143,6 +143,11 @@ async function enterKanshanVoiceCall(options: { requireAuth?: boolean } = {}) {
     saveSessionLaunchState(buildSessionLaunchState(response, KANSHAN_CHARACTER_ID, launchMode, KANSHAN_RETURN_PATH))
     router.push(`/session/${response.session_id}`)
   } catch (error) {
+    if (error instanceof Error && error.message.includes('not authenticated with Zhihu')) {
+      zhihuUser.value = null
+      await startZhihuLogin()
+      return
+    }
     launchError.value = error instanceof Error ? error.message : '语音通话启动失败，请检查服务状态。'
   } finally {
     connecting.value = false

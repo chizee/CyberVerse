@@ -267,6 +267,20 @@ func TestZhihuAPIErrorDoesNotLeakRawTokenBody(t *testing.T) {
 	}
 }
 
+func TestZhihuOwnerIDPrefersUIDAndFallsBackToHashID(t *testing.T) {
+	ownerID, ok := (zhihuUser{UID: 42, HashID: "hash-1"}).ownerID()
+	if !ok || ownerID != "zhihu:42" {
+		t.Fatalf("expected uid owner, got owner=%q ok=%v", ownerID, ok)
+	}
+	ownerID, ok = (zhihuUser{HashID: "hash-1"}).ownerID()
+	if !ok || ownerID != "zhihu_hash:hash-1" {
+		t.Fatalf("expected hash owner, got owner=%q ok=%v", ownerID, ok)
+	}
+	if ownerID, ok = (zhihuUser{Fullname: "missing id"}).ownerID(); ok || ownerID != "" {
+		t.Fatalf("expected missing stable id to fail, got owner=%q ok=%v", ownerID, ok)
+	}
+}
+
 func TestZhihuLogoutClearsSession(t *testing.T) {
 	setTestZhihuEnv(t)
 

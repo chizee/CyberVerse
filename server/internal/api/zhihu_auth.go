@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -53,6 +54,17 @@ type zhihuUser struct {
 	URL         string `json:"url,omitempty"`
 	PhoneNo     string `json:"phone_no,omitempty"`
 	Email       string `json:"email,omitempty"`
+}
+
+func (u zhihuUser) ownerID() (string, bool) {
+	if u.UID != 0 {
+		return "zhihu:" + strconv.FormatInt(u.UID, 10), true
+	}
+	hashID := strings.TrimSpace(u.HashID)
+	if hashID != "" {
+		return "zhihu_hash:" + hashID, true
+	}
+	return "", false
 }
 
 type zhihuTokenResponse struct {
@@ -234,7 +246,22 @@ func (r *Router) handleZhihuMe(w http.ResponseWriter, req *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, ErrorResponse{Error: "not authenticated with Zhihu"})
 		return
 	}
+	if _, ok := session.User.ownerID(); !ok {
+		writeJSON(w, http.StatusUnauthorized, ErrorResponse{Error: "not authenticated with Zhihu"})
+		return
+	}
 	writeJSON(w, http.StatusOK, zhihuMeResponse{Authenticated: true, User: session.User})
+}
+
+func (r *Router) zhihuOwnerIDFromRequest(req *http.Request) (string, bool) {
+	if r == nil || r.zhihuAuth == nil {
+		return "", false
+	}
+	session, ok := r.zhihuAuth.sessionFromRequest(req)
+	if !ok {
+		return "", false
+	}
+	return session.User.ownerID()
 }
 
 func (r *Router) handleZhihuLogout(w http.ResponseWriter, req *http.Request) {
@@ -363,8 +390,8 @@ func (s *zhihuAuthService) fetchUser(ctx context.Context, accessToken string) (z
 	if err := s.doJSON(req, &user); err != nil {
 		return zhihuUser{}, fmt.Errorf("Zhihu user fetch failed: %w", err)
 	}
-	if user.UID == 0 && user.Fullname == "" {
-		return zhihuUser{}, errors.New("Zhihu user fetch failed: missing user profile")
+	if _, ok := user.ownerID(); !ok {
+		return zhihuUser{}, errors.New("Zhihu user fetch failed: missing stable user identifier")
 	}
 	return user, nil
 }
