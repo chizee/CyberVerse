@@ -2,7 +2,6 @@ package agenttask
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"path/filepath"
 	"testing"
@@ -90,100 +89,6 @@ func TestStoreTaskEventAndArtifactLifecycle(t *testing.T) {
 	}
 	if gotArtifact.Title != "知乎热点资料" || string(content) != "# 知乎热点\n" {
 		t.Fatalf("unexpected artifact: artifact=%+v content=%q", gotArtifact, content)
-	}
-}
-
-func TestStorePersistsTaskOwnerAndFiltersByOwner(t *testing.T) {
-	ctx := context.Background()
-	root := t.TempDir()
-	store, err := OpenStore(filepath.Join(root, "tasks.db"), filepath.Join(root, "artifacts"))
-	if err != nil {
-		t.Fatalf("OpenStore: %v", err)
-	}
-	defer store.Close()
-
-	ownerTask, err := store.CreateTask(ctx, CreateTaskInput{
-		ID:          "owner-task",
-		SessionID:   "session-1",
-		OwnerID:     "zhihu:101",
-		UserRequest: "owner task",
-	})
-	if err != nil {
-		t.Fatalf("CreateTask owner: %v", err)
-	}
-	if ownerTask.OwnerID != "zhihu:101" {
-		t.Fatalf("expected owner on created task, got %+v", ownerTask)
-	}
-	if _, err := store.CreateTask(ctx, CreateTaskInput{
-		ID:          "other-task",
-		SessionID:   "session-1",
-		OwnerID:     "zhihu:202",
-		UserRequest: "other task",
-	}); err != nil {
-		t.Fatalf("CreateTask other: %v", err)
-	}
-
-	got, err := store.GetTask(ctx, ownerTask.ID)
-	if err != nil {
-		t.Fatalf("GetTask: %v", err)
-	}
-	if got.OwnerID != "zhihu:101" {
-		t.Fatalf("expected owner from GetTask, got %+v", got)
-	}
-
-	tasks, err := store.ListSessionTasksForOwner(ctx, "session-1", "zhihu:101", 10)
-	if err != nil {
-		t.Fatalf("ListSessionTasksForOwner: %v", err)
-	}
-	if len(tasks) != 1 || tasks[0].ID != ownerTask.ID {
-		t.Fatalf("expected only owner task, got %+v", tasks)
-	}
-}
-
-func TestStoreMigratesLegacyTasksOwnerColumn(t *testing.T) {
-	ctx := context.Background()
-	root := t.TempDir()
-	dbPath := filepath.Join(root, "tasks.db")
-	db, err := sql.Open("sqlite", dbPath)
-	if err != nil {
-		t.Fatalf("open legacy db: %v", err)
-	}
-	if _, err := db.ExecContext(ctx, `CREATE TABLE tasks (
-		id TEXT PRIMARY KEY,
-		session_id TEXT NOT NULL,
-		character_id TEXT NOT NULL DEFAULT '',
-		kind TEXT NOT NULL,
-		title TEXT NOT NULL,
-		user_request TEXT NOT NULL,
-		status TEXT NOT NULL,
-		progress INTEGER NOT NULL DEFAULT 0,
-		result_summary TEXT NOT NULL DEFAULT '',
-		created_at TEXT NOT NULL,
-		updated_at TEXT NOT NULL,
-		finished_at TEXT NOT NULL DEFAULT ''
-	);`); err != nil {
-		t.Fatalf("create legacy tasks table: %v", err)
-	}
-	if _, err := db.ExecContext(ctx, `INSERT INTO tasks
-		(id, session_id, character_id, kind, title, user_request, status, progress, created_at, updated_at)
-		VALUES ('legacy-task', 'legacy-session', '', 'research', 'legacy', 'legacy', 'queued', 0, '2026-05-01T00:00:00Z', '2026-05-01T00:00:00Z')`); err != nil {
-		t.Fatalf("insert legacy task: %v", err)
-	}
-	if err := db.Close(); err != nil {
-		t.Fatalf("close legacy db: %v", err)
-	}
-
-	store, err := OpenStore(dbPath, filepath.Join(root, "artifacts"))
-	if err != nil {
-		t.Fatalf("OpenStore migrated: %v", err)
-	}
-	defer store.Close()
-	task, err := store.GetTask(ctx, "legacy-task")
-	if err != nil {
-		t.Fatalf("GetTask legacy: %v", err)
-	}
-	if task.OwnerID != "" {
-		t.Fatalf("expected legacy owner_id to default empty, got %+v", task)
 	}
 }
 

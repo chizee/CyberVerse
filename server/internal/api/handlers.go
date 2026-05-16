@@ -170,15 +170,6 @@ func (r *Router) handleCreateSession(w http.ResponseWriter, req *http.Request) {
 	}
 	mode := parsePipelineMode(modeName)
 
-	ownerID := ""
-	if isKanshanCharacter(body.CharacterID) {
-		var ok bool
-		ownerID, ok = r.requireZhihuOwner(w, req)
-		if !ok {
-			return
-		}
-	}
-
 	if r.orch != nil && r.charStore != nil && body.CharacterID != "" && r.orch.AvatarEnabled() {
 		if _, err := r.activeAvatarModel(req.Context()); err != nil {
 			writeJSON(w, http.StatusServiceUnavailable, ErrorResponse{Error: err.Error()})
@@ -195,9 +186,6 @@ func (r *Router) handleCreateSession(w http.ResponseWriter, req *http.Request) {
 		}
 		writeJSON(w, status, ErrorResponse{Error: err.Error()})
 		return
-	}
-	if ownerID != "" {
-		session.SetOwnerID(ownerID)
 	}
 	if r.orch != nil {
 		if err := r.orch.HydrateVoiceDialogContext(session); err != nil {
@@ -319,12 +307,8 @@ func (r *Router) handleCreateSession(w http.ResponseWriter, req *http.Request) {
 
 func (r *Router) handleDeleteSession(w http.ResponseWriter, req *http.Request) {
 	id := req.PathValue("id")
-	session, err := r.sessionMgr.Get(id)
-	if err != nil {
+	if _, err := r.sessionMgr.Get(id); err != nil {
 		writeJSON(w, http.StatusNotFound, ErrorResponse{Error: err.Error()})
-		return
-	}
-	if !r.authorizeKanshanSessionAccess(w, req, session) {
 		return
 	}
 
@@ -341,12 +325,8 @@ func (r *Router) handleDeleteSession(w http.ResponseWriter, req *http.Request) {
 
 func (r *Router) handleSendMessage(w http.ResponseWriter, req *http.Request) {
 	id := req.PathValue("id")
-	session, err := r.sessionMgr.Get(id)
-	if err != nil {
+	if _, err := r.sessionMgr.Get(id); err != nil {
 		writeJSON(w, http.StatusNotFound, ErrorResponse{Error: err.Error()})
-		return
-	}
-	if !r.authorizeKanshanSessionAccess(w, req, session) {
 		return
 	}
 
@@ -381,36 +361,18 @@ func (r *Router) handleListSessions(w http.ResponseWriter, req *http.Request) {
 		ID    string `json:"id"`
 		State string `json:"state"`
 	}
-	ownerID, hasOwner := r.zhihuOwnerIDFromRequest(req)
-	result := make([]sessionInfo, 0, len(sessions))
-	for _, s := range sessions {
-		if isKanshanCharacter(s.CharacterID) {
-			if !hasOwner || s.OwnerIDSnapshot() != ownerID {
-				continue
-			}
-		}
-		result = append(result, sessionInfo{ID: s.ID, State: s.GetState().String()})
+	result := make([]sessionInfo, len(sessions))
+	for i, s := range sessions {
+		result[i] = sessionInfo{ID: s.ID, State: s.GetState().String()}
 	}
 	writeJSON(w, http.StatusOK, result)
 }
 
 func (r *Router) handleWebSocket(w http.ResponseWriter, req *http.Request) {
 	id := req.PathValue("id")
-	session, err := r.sessionMgr.Get(id)
-	if err != nil {
+	if _, err := r.sessionMgr.Get(id); err != nil {
 		http.Error(w, "session not found", http.StatusNotFound)
 		return
-	}
-	if isKanshanCharacter(session.CharacterID) {
-		ownerID, ok := r.zhihuOwnerIDFromRequest(req)
-		if !ok {
-			http.Error(w, zhihuUnauthenticatedError, http.StatusUnauthorized)
-			return
-		}
-		if session.OwnerIDSnapshot() != ownerID {
-			http.Error(w, "session not found", http.StatusNotFound)
-			return
-		}
 	}
 
 	maxMessageSize := int64(0)

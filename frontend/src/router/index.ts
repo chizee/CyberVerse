@@ -13,17 +13,12 @@ const router = createRouter({
     {
       path: '/',
       name: 'landing',
-      redirect: '/kanshan',
+      component: () => import('../pages/LandingPage.vue'),
     },
     {
       path: '/kanshan',
       name: 'kanshan-landing',
       component: () => import('../pages/KanshanLandingPage.vue'),
-    },
-    {
-      path: '/kanshan/oauth/callback',
-      name: 'kanshan-oauth-callback',
-      component: () => import('../pages/KanshanOAuthCallbackPage.vue'),
     },
     {
       path: '/characters',
