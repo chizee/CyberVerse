@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"testing"
+	"time"
 )
 
 func testPCM(samples int, start int) []byte {
@@ -111,5 +112,67 @@ func TestHandleAVSyncFeedbackIgnoresStaleTurn(t *testing.T) {
 	out := p.applyAudioDelay(2, pcm, sampleRate)
 	if !bytes.Equal(out, pcm) {
 		t.Fatalf("stale feedback should not delay current epoch audio")
+	}
+}
+
+func TestHandleAVSyncFeedbackUsesJitterDeltaWithoutPresentationLag(t *testing.T) {
+	t.Parallel()
+	p := &DirectPeer{}
+
+	const sampleRate = 1000
+	pcm := testPCM(600, 0)
+	_ = p.applyAudioDelay(1, pcm, sampleRate)
+	p.HandleAVSyncFeedback(1, 0, 500, "video_late_audio_leads")
+
+	out := p.applyAudioDelay(1, pcm, sampleRate)
+	delayBytes := audioDelayPCMBytes(audioDelayStepMS, sampleRate)
+	if !bytes.Equal(out[:delayBytes], make([]byte, delayBytes)) {
+		t.Fatalf("expected jitter-only feedback to insert %d bytes of silence", delayBytes)
+	}
+}
+
+func TestPrepareMediaPathResetKeepsUserAudioChannelOpen(t *testing.T) {
+	t.Parallel()
+	p := NewDirectPeer("session-test", nil, nil, nil, nil)
+	oldConnected := p.connected
+	p.lastVideoWriteTime = time.Now()
+	p.lastAudioWriteTime = time.Now()
+	p.targetBitrateBps.Store(1_200_000)
+	p.audioDelayTargetMS = 320
+	p.audioDelayCurrentMS = 160
+	p.audioDelayPCM = []byte{1, 2, 3}
+	p.audioDelaySampleRate = 24000
+	p.audioDelayEpoch = 7
+	p.audioDelayLastFeedback = time.Now()
+	p.opusEncoderSR = 24000
+
+	oldPC := p.prepareMediaPathReset()
+	if oldPC != nil {
+		t.Fatalf("old pc=%v want nil", oldPC)
+	}
+	if p.connected == oldConnected {
+		t.Fatalf("expected connected channel to be replaced")
+	}
+	if p.videoTrack != nil || p.audioTrack != nil {
+		t.Fatalf("expected media tracks to be cleared")
+	}
+	if !p.lastVideoWriteTime.IsZero() || !p.lastAudioWriteTime.IsZero() {
+		t.Fatalf("expected RTP write timestamps to be reset")
+	}
+	if got := p.targetBitrateBps.Load(); got != 0 {
+		t.Fatalf("target bitrate=%d want 0", got)
+	}
+	if p.opusEncoder != nil || p.opusEncoderSR != 0 {
+		t.Fatalf("expected opus encoder state to be reset")
+	}
+	if p.audioDelayTargetMS != 0 || p.audioDelayCurrentMS != 0 || len(p.audioDelayPCM) != 0 ||
+		p.audioDelaySampleRate != 0 || p.audioDelayEpoch != 0 || !p.audioDelayLastFeedback.IsZero() {
+		t.Fatalf("expected audio delay state to be reset")
+	}
+
+	select {
+	case p.userAudioCh <- []byte{42}:
+	default:
+		t.Fatalf("user audio channel should remain open and writable")
 	}
 }

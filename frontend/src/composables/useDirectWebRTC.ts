@@ -3,6 +3,7 @@ import type {
   ConnectionState,
   AVSyncDebugState,
   AVSegmentTimeline,
+  AVPlayoutEstimate,
   FrameJitterStats,
   WebRTCNetworkStats,
 } from './useWebRTC'
@@ -24,6 +25,8 @@ let videoFirstFrameTime: number | null = null
 let videoLastFrameWallMs: number | null = null
 let audioPlayWallMs: number | null = null
 let debugPollTimer: ReturnType<typeof setInterval> | null = null
+let videoFrameCallbackToken = 0
+let videoFrameCallbackElement: HTMLVideoElement | null = null
 
 // Jitter measurement
 const JITTER_WINDOW = 120
@@ -31,10 +34,16 @@ let frameArrivalTimes: number[] = []
 const AV_SEGMENT_TIMELINE_LIMIT = 80
 const AV_SEGMENT_MATCH_TOLERANCE_MS = 80
 const AV_MARKER_MATCH_TOLERANCE_MS = 120
-const AV_SYNC_FEEDBACK_MIN_EXCESS_VIDEO_LAG_MS = 150
-const AV_SYNC_FEEDBACK_MIN_JB_DELTA_MS = 120
-const AV_SYNC_FEEDBACK_CONSECUTIVE_SEGMENTS = 3
-const AV_SYNC_FEEDBACK_THROTTLE_MS = 1500
+const AV_SYNC_FEEDBACK_MIN_EXCESS_VIDEO_LAG_MS = 120
+const AV_SYNC_FEEDBACK_MIN_JB_DELTA_MS = 100
+const AV_SYNC_FEEDBACK_HIGH_JB_DELTA_MS = 220
+const AV_SYNC_FEEDBACK_CONSECUTIVE_SEGMENTS = 2
+const AV_SYNC_FEEDBACK_THROTTLE_MS = 1000
+const DIRECT_MEDIA_RESET_MIN_JB_DELTA_MS = 300
+const DIRECT_MEDIA_RESET_MIN_VIDEO_JB_MS = 350
+const DIRECT_MEDIA_RESET_MAX_AUDIO_JB_MS = 160
+const DIRECT_MEDIA_RESET_CONSECUTIVE_STATS = 2
+const DIRECT_MEDIA_RESET_COOLDOWN_MS = 15_000
 let avSegmentTimelines: AVSegmentTimeline[] = []
 let avSegmentMediaBaseTurnSeq: number | null = null
 let avSegmentMediaBaseMs: number | null = null
@@ -46,6 +55,12 @@ let avSyncFeedbackTurnSeq: number | null = null
 let avSyncFeedbackBaselineLagMs: number | null = null
 let avSyncFeedbackConsecutiveLateSegments = 0
 let avSyncFeedbackLastSentAtMs = 0
+let directMediaResetNeeded = false
+let directMediaResetInFlight = false
+let directMediaResetReason = ''
+let directMediaResetDetails = ''
+let directMediaResetLastRequestedAtMs = 0
+let directMediaHighJitterStats = 0
 let avCalibrationEnabled = false
 let avCalibrationCanvas: HTMLCanvasElement | null = null
 let avCalibrationCtx: CanvasRenderingContext2D | null = null
@@ -99,6 +114,48 @@ function resetAVSyncFeedback() {
   avSyncFeedbackBaselineLagMs = null
   avSyncFeedbackConsecutiveLateSegments = 0
   avSyncFeedbackLastSentAtMs = 0
+}
+
+function resetDirectMediaPoisonState(clearPending: boolean) {
+  directMediaHighJitterStats = 0
+  if (!clearPending) return
+  directMediaResetNeeded = false
+  directMediaResetInFlight = false
+  directMediaResetReason = ''
+  directMediaResetDetails = ''
+}
+
+function markDirectMediaPoisoned(reason: string, details: string) {
+  if (directMediaResetNeeded || directMediaResetInFlight) return
+  directMediaResetNeeded = true
+  directMediaResetReason = reason
+  directMediaResetDetails = details
+  console.warn(`[DirectRTC][${ts()}] Direct media path marked for reset reason=${reason} ${details}`)
+}
+
+function observeDirectMediaPoisonFromStats(estimate: AVPlayoutEstimate) {
+  const jbDelta = estimate.jitterBufferDelayDeltaMs
+  const videoJB = estimate.videoJitterBufferDelayMs
+  const audioJB = estimate.audioJitterBufferDelayMs
+  const poisoned =
+    jbDelta !== null &&
+    videoJB !== null &&
+    audioJB !== null &&
+    jbDelta >= DIRECT_MEDIA_RESET_MIN_JB_DELTA_MS &&
+    videoJB >= DIRECT_MEDIA_RESET_MIN_VIDEO_JB_MS &&
+    audioJB <= DIRECT_MEDIA_RESET_MAX_AUDIO_JB_MS
+
+  if (!poisoned) {
+    directMediaHighJitterStats = 0
+    return
+  }
+  directMediaHighJitterStats++
+  if (directMediaHighJitterStats < DIRECT_MEDIA_RESET_CONSECUTIVE_STATS) return
+
+  markDirectMediaPoisoned(
+    'high_video_jitter',
+    `JBDelta=${roundedMs(jbDelta)}ms videoJB=${roundedMs(videoJB)}ms audioJB=${roundedMs(audioJB)}ms`,
+  )
 }
 
 function segmentKey(seg: AVSegmentTimeline): string {
@@ -297,17 +354,19 @@ function maybeSendAVSyncFeedback(seg: AVSegmentTimeline, mediaInTurnMs: number) 
     avSyncFeedbackBaselineLagMs = videoPresentationLagMs
     avSyncFeedbackConsecutiveLateSegments = 0
     avSyncFeedbackLastSentAtMs = 0
-    return
   }
   if (avSyncFeedbackBaselineLagMs === null) {
     avSyncFeedbackBaselineLagMs = videoPresentationLagMs
-    return
   }
 
   const excessVideoLagMs = videoPresentationLagMs - avSyncFeedbackBaselineLagMs
-  const videoLate =
+  const highVideoJitter = latestJitterBufferDelayDeltaMs >= AV_SYNC_FEEDBACK_HIGH_JB_DELTA_MS
+  const growingPresentationLag =
     excessVideoLagMs >= AV_SYNC_FEEDBACK_MIN_EXCESS_VIDEO_LAG_MS &&
     latestJitterBufferDelayDeltaMs >= AV_SYNC_FEEDBACK_MIN_JB_DELTA_MS
+  const videoLate =
+    highVideoJitter ||
+    growingPresentationLag
 
   if (!videoLate) {
     avSyncFeedbackConsecutiveLateSegments = 0
@@ -332,8 +391,15 @@ function maybeSendAVSyncFeedback(seg: AVSegmentTimeline, mediaInTurnMs: number) 
   })
   console.log(
     `[DirectRTC][${ts()}] AV drift feedback turn=${seg.turnSeq} segment=${seg.segmentSeq}` +
-      ` excessVideoLag=${roundedMs(excessVideoLagMs)}ms JBDelta=${roundedMs(latestJitterBufferDelayDeltaMs)}ms`
+      ` excessVideoLag=${roundedMs(excessVideoLagMs)}ms JBDelta=${roundedMs(latestJitterBufferDelayDeltaMs)}ms` +
+      ` reason=${highVideoJitter ? 'high_video_jitter' : 'presentation_lag'}`
   )
+  if (highVideoJitter) {
+    markDirectMediaPoisoned(
+      'high_video_jitter',
+      `turn=${seg.turnSeq} segment=${seg.segmentSeq} JBDelta=${roundedMs(latestJitterBufferDelayDeltaMs)}ms`,
+    )
+  }
 }
 
 function recordAVSegmentPresentation(
@@ -571,14 +637,24 @@ function resetState() {
   resetJitterState()
 }
 
+function stopVideoFrameCallback() {
+  videoFrameCallbackToken++
+  videoFrameCallbackElement = null
+}
+
 type VideoFrameMeta = { mediaTime: number; presentedFrames: number; expectedDisplayTime?: DOMHighResTimeStamp }
 type VideoWithRVFC = HTMLVideoElement & {
   requestVideoFrameCallback: (cb: (now: DOMHighResTimeStamp, meta: VideoFrameMeta) => void) => void
 }
 
 function attachVideoFrameCallback(el: HTMLVideoElement) {
+  if (videoFrameCallbackElement === el) return
+  videoFrameCallbackElement = el
+  const token = ++videoFrameCallbackToken
+
   if (!('requestVideoFrameCallback' in el)) {
     (el as HTMLVideoElement).addEventListener('timeupdate', () => {
+      if (token !== videoFrameCallbackToken || videoFrameCallbackElement !== el) return
       if ((el as HTMLVideoElement).currentTime > 0) {
         videoLastFrameWallMs = Date.now()
       }
@@ -591,6 +667,7 @@ function attachVideoFrameCallback(el: HTMLVideoElement) {
 
   const rvfc = (el as VideoWithRVFC).requestVideoFrameCallback.bind(el)
   const onFrame = (now: DOMHighResTimeStamp, meta: VideoFrameMeta) => {
+    if (token !== videoFrameCallbackToken || videoFrameCallbackElement !== el) return
     videoFrameCount++
     videoLastFrameWallMs = Date.now()
     recordFrameArrival(now)
@@ -935,6 +1012,7 @@ export function useDirectWebRTC() {
         return
       }
       latestJitterBufferDelayDeltaMs = avSync.jitterBufferDelayDeltaMs
+      observeDirectMediaPoisonFromStats(avSync)
       const now = Date.now()
       if (now - lastAVSyncLogAtMs >= 1000) {
         lastAVSyncLogAtMs = now
@@ -968,6 +1046,7 @@ export function useDirectWebRTC() {
     avSyncFeedbackSender = signalingFn
     pendingIceServers = null
     sentWebrtcReady = false
+    resetDirectMediaPoisonState(true)
     needsPlaybackGesture.value = false
     isOutputMuted.value = false
     avSyncLoggingEnabled = false
@@ -1040,6 +1119,7 @@ export function useDirectWebRTC() {
     }
 
     newPc.ontrack = (event) => {
+      if (newPc !== pc) return
       const track = event.track
       const now = Date.now()
 
@@ -1088,6 +1168,7 @@ export function useDirectWebRTC() {
     }
 
     newPc.onicecandidate = (event) => {
+      if (newPc !== pc) return
       if (event.candidate) {
         sendSignaling?.({
           type: 'ice_candidate',
@@ -1105,9 +1186,11 @@ export function useDirectWebRTC() {
       console.log(`[DirectRTC][${ts()}] connection state: ${state}`)
       pushNote(`connection: ${state}`)
       if (state === 'connected') {
+        directMediaResetInFlight = false
         connectionState.value = 'connected'
         debugState.value.connectionState = 'connected'
       } else if (state === 'failed' || state === 'closed') {
+        directMediaResetInFlight = false
         connectionState.value = 'disconnected'
         debugState.value.connectionState = 'disconnected'
       }
@@ -1151,6 +1234,9 @@ export function useDirectWebRTC() {
         // Create PeerConnection now, using TURN ICE servers if available
         const iceServers: RTCIceServer[] = pendingIceServers || [{ urls: 'stun:stun.l.google.com:19302' }]
         console.log(`[DirectRTC][${ts()}] creating PeerConnection with ICE servers:`, iceServers)
+        const oldPc = pc
+        pc = null
+        oldPc?.close()
         pc = createPeerConnection(iceServers)
 
         console.log(`[DirectRTC][${ts()}] received SDP offer, setting remote description...`)
@@ -1186,6 +1272,57 @@ export function useDirectWebRTC() {
     }).catch(e => {
       console.error('[DirectRTC] signaling chain error:', e)
     })
+  }
+
+  function clearRemoteMediaForRenegotiation() {
+    if (networkStatsTimer) {
+      clearInterval(networkStatsTimer)
+      networkStatsTimer = null
+    }
+    stopAVCalibrationAudioMonitor()
+    stopVideoFrameCallback()
+    remoteAudioTrackForCalibration = null
+
+    const notes = debugState.value.notes
+    if (videoElement.value) {
+      videoElement.value.pause()
+      videoElement.value.srcObject = null
+      videoElement.value.load()
+    }
+    clearRemoteAudioElement()
+    resetState()
+    resetAVSegmentDiagnostics()
+    avPlayoutEstimator = createAVPlayoutEstimatorState()
+    lastAVSyncLogAtMs = 0
+    debugState.value = { ...emptyDebugState(), connectionState: 'connecting', notes }
+  }
+
+  function requestMediaResetIfNeeded(trigger: string): boolean {
+    if (!sendSignaling || !directMediaResetNeeded || directMediaResetInFlight) return false
+
+    const now = Date.now()
+    if (now - directMediaResetLastRequestedAtMs < DIRECT_MEDIA_RESET_COOLDOWN_MS) return false
+
+    const reason = directMediaResetReason || 'unknown'
+    const details = directMediaResetDetails
+    directMediaResetLastRequestedAtMs = now
+    directMediaResetInFlight = true
+    directMediaResetNeeded = false
+    directMediaHighJitterStats = 0
+    directMediaResetReason = ''
+    directMediaResetDetails = ''
+
+    const oldPc = pc
+    pc = null
+    signalingChain = Promise.resolve()
+    clearRemoteMediaForRenegotiation()
+    oldPc?.close()
+    connectionState.value = 'connecting'
+    debugState.value.connectionState = 'connecting'
+    sendSignaling({ type: 'direct_media_reset_request' })
+    pushNote(`direct media reset requested (${trigger})`)
+    console.warn(`[DirectRTC][${ts()}] Direct media reset requested trigger=${trigger} reason=${reason} ${details}`)
+    return true
   }
 
   async function toggleMute() {
@@ -1243,12 +1380,14 @@ export function useDirectWebRTC() {
     avPlayoutEstimator = createAVPlayoutEstimatorState()
     lastAVSyncLogAtMs = 0
     resetAVSegmentDiagnostics()
+    resetDirectMediaPoisonState(true)
     configureAVCalibration(false)
     remoteAudioTrackForCalibration = null
 
     if (videoElement.value) {
       videoElement.value.srcObject = null
     }
+    stopVideoFrameCallback()
     clearRemoteAudioElement()
 
     if (localStream) {
@@ -1336,5 +1475,6 @@ export function useDirectWebRTC() {
     toggleOutputMute,
     handleSignaling,
     setAVSyncLoggingEnabled,
+    requestMediaResetIfNeeded,
   }
 }

@@ -451,7 +451,7 @@ func (r *Router) handleWebSocket(w http.ResponseWriter, req *http.Request) {
 						}
 					}()
 				}
-			case "webrtc_ready", "webrtc_answer", "ice_candidate", "av_calibration_config", "av_sync_feedback":
+			case "webrtc_ready", "webrtc_answer", "ice_candidate", "av_calibration_config", "av_sync_feedback", "direct_media_reset_request":
 				if r.orch != nil {
 					r.orch.HandleSignaling(sessionID, msg)
 				}

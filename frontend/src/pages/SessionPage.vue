@@ -314,6 +314,11 @@ watchEffect(() => {
   setAVSyncLoggingEnabled(avatarStatus.value === 'speaking' && displayMode.value === 'webrtc')
 })
 
+watch(displayMode, (mode, previousMode) => {
+  if (!isDirectMode || previousMode !== 'webrtc' || mode !== 'standby') return
+  dp.requestMediaResetIfNeeded('standby')
+})
+
 // Auto-connect on mount using session params from query
 onMounted(async () => {
   if (queryLaunchState && Object.keys(route.query).length > 0) {

@@ -5,16 +5,6 @@ import (
 	"time"
 )
 
-func TestCappedRTPGap(t *testing.T) {
-	t.Parallel()
-	if got := cappedRTPGap(10 * time.Second); got != maxRTPTimestampGap {
-		t.Fatalf("expected cap %v, got %v", maxRTPTimestampGap, got)
-	}
-	if got := cappedRTPGap(500 * time.Millisecond); got != 500*time.Millisecond {
-		t.Fatalf("expected 500ms, got %v", got)
-	}
-}
-
 func TestRTPGapThresholdUsesFrameDuration(t *testing.T) {
 	t.Parallel()
 	frameDur := time.Second / 25
@@ -33,7 +23,7 @@ func TestRTPGapToSkip(t *testing.T) {
 	if got := rtpGapToSkip(500*time.Millisecond, frameDur); got != 500*time.Millisecond {
 		t.Fatalf("expected 500ms skip, got %v", got)
 	}
-	if got := rtpGapToSkip(36*time.Second, frameDur); got != maxRTPTimestampGap {
-		t.Fatalf("expected capped skip %v, got %v", maxRTPTimestampGap, got)
+	if got := rtpGapToSkip(36*time.Second, frameDur); got != 36*time.Second {
+		t.Fatalf("expected full idle gap skip, got %v", got)
 	}
 }

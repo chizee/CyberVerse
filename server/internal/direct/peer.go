@@ -59,8 +59,8 @@ const (
 	maxDirectVideoBitrateKbps     = 1800
 	videoBitrateSafetyPercent     = 65
 
-	maxAudioDelayMS          int64 = 350
-	audioDelayStepMS         int64 = 60
+	maxAudioDelayMS          int64 = 800
+	audioDelayStepMS         int64 = 160
 	audioDelayFeedbackMaxAge       = 4 * time.Second
 )
 
@@ -86,6 +86,7 @@ type DirectPeer struct {
 	// Connection state
 	connected chan struct{}
 	mu        sync.Mutex
+	mediaMu   sync.Mutex
 
 	// AV pipeline (same pattern as Bot)
 	encodeCh         chan *mediapeer.RawAVSegment
@@ -197,6 +198,9 @@ func (p *DirectPeer) Connect(ctx context.Context) error {
 
 	// Handle incoming user audio track (mic)
 	pc.OnTrack(func(track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
+		if !p.isActivePeerConnection(pc) {
+			return
+		}
 		if track.Kind() != webrtc.RTPCodecTypeAudio {
 			return
 		}
@@ -206,6 +210,9 @@ func (p *DirectPeer) Connect(ctx context.Context) error {
 
 	// Forward ICE candidates to browser via signaling
 	pc.OnICECandidate(func(c *webrtc.ICECandidate) {
+		if !p.isActivePeerConnection(pc) {
+			return
+		}
 		if c == nil {
 			log.Printf("[DirectPeer] session=%s ICE gathering complete", p.sessionID)
 			return
@@ -227,11 +234,17 @@ func (p *DirectPeer) Connect(ctx context.Context) error {
 
 	// Track ICE connection state (more granular than PeerConnection state)
 	pc.OnICEConnectionStateChange(func(state webrtc.ICEConnectionState) {
+		if !p.isActivePeerConnection(pc) {
+			return
+		}
 		log.Printf("[DirectPeer] session=%s ICE connection state: %s", p.sessionID, state.String())
 	})
 
 	// Track connection state
 	pc.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
+		if !p.isActivePeerConnection(pc) {
+			return
+		}
 		log.Printf("[DirectPeer] session=%s connection state: %s", p.sessionID, state.String())
 		if state == webrtc.PeerConnectionStateConnected {
 			select {
@@ -269,6 +282,67 @@ func (p *DirectPeer) Connect(ctx context.Context) error {
 	return nil
 }
 
+func (p *DirectPeer) isActivePeerConnection(pc *webrtc.PeerConnection) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.pc == pc
+}
+
+func (p *DirectPeer) resetAudioDelayState() {
+	p.audioDelayMu.Lock()
+	defer p.audioDelayMu.Unlock()
+	p.audioDelayTargetMS = 0
+	p.audioDelayCurrentMS = 0
+	p.audioDelayPCM = nil
+	p.audioDelaySampleRate = 0
+	p.audioDelayEpoch = 0
+	p.audioDelayLastFeedback = time.Time{}
+}
+
+func (p *DirectPeer) prepareMediaPathReset() *webrtc.PeerConnection {
+	p.mu.Lock()
+	oldPC := p.pc
+	p.pc = nil
+	p.videoTrack = nil
+	p.audioTrack = nil
+	p.connected = make(chan struct{})
+	p.lastVideoWriteTime = time.Time{}
+	p.lastAudioWriteTime = time.Time{}
+	p.mu.Unlock()
+
+	p.targetBitrateBps.Store(0)
+	p.opusMu.Lock()
+	p.opusEncoder = nil
+	p.opusEncoderSR = 0
+	p.opusMu.Unlock()
+	p.resetAudioDelayState()
+	return oldPC
+}
+
+// ResetMediaPath rebuilds the Direct WebRTC PeerConnection without closing
+// the user audio subscription channel owned by the session.
+func (p *DirectPeer) ResetMediaPath(ctx context.Context) error {
+	p.mediaMu.Lock()
+	defer p.mediaMu.Unlock()
+
+	log.Printf("[DirectPeer] session=%s Direct media path reset requested", p.sessionID)
+	oldPC := p.prepareMediaPathReset()
+	if oldPC != nil {
+		if err := oldPC.Close(); err != nil {
+			log.Printf("[DirectPeer] session=%s close old PeerConnection during media reset failed: %v", p.sessionID, err)
+		}
+	}
+
+	if err := p.Connect(ctx); err != nil {
+		return err
+	}
+	if err := p.StartNegotiation(); err != nil {
+		return err
+	}
+	log.Printf("[DirectPeer] session=%s Direct media path reset negotiation started", p.sessionID)
+	return nil
+}
+
 // SetAVCalibrationEnabled toggles explicit in-band AV marker injection for diagnostics.
 func (p *DirectPeer) SetAVCalibrationEnabled(enabled bool) {
 	p.avCalibrationEnabled.Store(enabled)
@@ -287,11 +361,11 @@ func (p *DirectPeer) HandleAVSyncFeedback(turnSeq uint64, excessVideoLagMS, jitt
 		math.IsNaN(jitterBufferDeltaMS) || math.IsInf(jitterBufferDeltaMS, 0) {
 		return
 	}
-	if excessVideoLagMS <= 0 || jitterBufferDeltaMS <= 0 {
+	if jitterBufferDeltaMS <= 0 {
 		return
 	}
 
-	wanted := int64(math.Round(math.Min(excessVideoLagMS, jitterBufferDeltaMS)))
+	wanted := int64(math.Round(math.Max(math.Max(excessVideoLagMS, 0), jitterBufferDeltaMS)))
 	if wanted < 0 {
 		wanted = 0
 	}
@@ -762,12 +836,22 @@ func (p *DirectPeer) applyAudioDelay(epoch uint64, pcm []byte, sampleRate int) [
 		p.audioDelayLastFeedback = time.Now()
 	}
 
+	previousDelayMS := p.audioDelayCurrentMS
 	if p.audioDelayTargetMS > p.audioDelayCurrentMS+audioDelayStepMS {
 		p.audioDelayCurrentMS += audioDelayStepMS
 	} else if p.audioDelayTargetMS < p.audioDelayCurrentMS-audioDelayStepMS {
 		p.audioDelayCurrentMS -= audioDelayStepMS
 	} else {
 		p.audioDelayCurrentMS = p.audioDelayTargetMS
+	}
+	if p.audioDelayCurrentMS > 0 || p.audioDelayTargetMS > 0 || previousDelayMS > 0 {
+		log.Printf(
+			"[DirectPeer] session=%s audio delay apply epoch=%d current=%dms target=%dms",
+			p.sessionID,
+			epoch,
+			p.audioDelayCurrentMS,
+			p.audioDelayTargetMS,
+		)
 	}
 
 	desiredBytes := audioDelayPCMBytes(p.audioDelayCurrentMS, sampleRate)
@@ -827,11 +911,22 @@ func (p *DirectPeer) waitConnected(timeout time.Duration) bool {
 }
 
 func (p *DirectPeer) publishAVSegment(seg *mediapeer.AVSegment) {
+	p.mediaMu.Lock()
+	defer p.mediaMu.Unlock()
+
 	// Wait for connection to be established
 	if !p.waitConnected(10 * time.Second) {
 		if p.avPipelineCtx.Err() == nil {
 			log.Printf("[DirectPeer] session=%s publish timeout waiting for connection", p.sessionID)
 		}
+		return
+	}
+	p.mu.Lock()
+	videoTrack := p.videoTrack
+	audioTrack := p.audioTrack
+	p.mu.Unlock()
+	if videoTrack == nil {
+		log.Printf("[DirectPeer] session=%s publish skipped: video track is not ready", p.sessionID)
 		return
 	}
 	publishStart := time.Now()
@@ -853,6 +948,10 @@ func (p *DirectPeer) publishAVSegment(seg *mediapeer.AVSegment) {
 	// the sample-loss caused by slicing PCM per video frame.
 	var opusFrames []media.Sample
 	if len(seg.PCM) > 0 && seg.SampleRate > 0 {
+		if audioTrack == nil {
+			log.Printf("[DirectPeer] session=%s publish skipped: audio track is not ready", p.sessionID)
+			return
+		}
 		var err error
 		pcm := p.applyAudioDelay(seg.Epoch, seg.PCM, seg.SampleRate)
 		opusFrames, err = mediapeer.EncodePCMToOpusSamples(pcm, seg.SampleRate)
@@ -862,8 +961,6 @@ func (p *DirectPeer) publishAVSegment(seg *mediapeer.AVSegment) {
 		}
 	}
 
-	nVideo := len(seg.VP8Samples)
-	nAudio := len(opusFrames)
 	p.sendAVSegmentDiagnostic(seg, publishStart)
 
 	// --- RTP timestamp gap correction ---
@@ -886,64 +983,131 @@ func (p *DirectPeer) publishAVSegment(seg *mediapeer.AVSegment) {
 	}
 	if rtpGap > 0 {
 		if len(opusFrames) > 0 {
-			if err := p.audioTrack.WriteSample(media.Sample{Duration: rtpGap}); err != nil {
+			if err := audioTrack.WriteSample(media.Sample{Duration: rtpGap}); err != nil {
 				log.Printf("[DirectPeer] audio RTP gap skip error: %v", err)
 				return
 			}
 		}
 		if len(seg.VP8Samples) > 0 {
-			if err := p.videoTrack.WriteSample(media.Sample{Duration: rtpGap}); err != nil {
+			if err := videoTrack.WriteSample(media.Sample{Duration: rtpGap}); err != nil {
 				log.Printf("[DirectPeer] video RTP gap skip error: %v", err)
 				return
 			}
 		}
 	}
 
+	nVideo := len(seg.VP8Samples)
+	segmentStartWall := time.Now()
+	segmentDuration := avSegmentWallDuration(seg, frameDur, opusFrames)
+	maxSlip := time.Duration(0)
 	firstVideoWritten := false
-	for i := range seg.VP8Samples {
+	videoIndex := 0
+	audioIndex := 0
+	audioOffset := time.Duration(0)
+
+	for videoIndex < nVideo || audioIndex < len(opusFrames) {
 		if p.isPlaybackStale(seg.Epoch) {
 			return
 		}
-		frameStart := time.Now()
 
-		// Distribute pre-encoded Opus frames evenly across video frames.
-		// Video frame i sends opusFrames[lo:hi].
-		if nAudio > 0 {
-			lo := (nAudio * i) / nVideo
-			hi := (nAudio * (i + 1)) / nVideo
-			for j := lo; j < hi; j++ {
-				if err := p.audioTrack.WriteSample(opusFrames[j]); err != nil {
-					log.Printf("[DirectPeer] audio write error: %v", err)
-					return
-				}
+		videoDeadline := segmentStartWall.Add(time.Duration(videoIndex) * frameDur)
+		audioDeadline := segmentStartWall.Add(audioOffset)
+		if videoIndex < nVideo && (audioIndex >= len(opusFrames) || !videoDeadline.After(audioDeadline)) {
+			slip, err := p.sleepUntil(videoDeadline)
+			if err != nil {
+				log.Printf("[DirectPeer] video pacing error: %v", err)
+				return
 			}
+			if slip > maxSlip {
+				maxSlip = slip
+			}
+			if err := videoTrack.WriteSample(seg.VP8Samples[videoIndex]); err != nil {
+				log.Printf("[DirectPeer] video write error: %v", err)
+				return
+			}
+			if !firstVideoWritten {
+				firstVideoWritten = true
+				directVoiceTrace(
+					"direct_first_video_sample_written",
+					seg.TraceLabel,
+					"publish_ms=%d",
+					seg.UserFinalAt,
+					time.Since(publishStart).Milliseconds(),
+				)
+			}
+			videoIndex++
+			continue
 		}
 
-		// Write VP8 video sample
-		if err := p.videoTrack.WriteSample(seg.VP8Samples[i]); err != nil {
-			log.Printf("[DirectPeer] video write error: %v", err)
+		if audioIndex < len(opusFrames) {
+			slip, err := p.sleepUntil(audioDeadline)
+			if err != nil {
+				log.Printf("[DirectPeer] audio pacing error: %v", err)
+				return
+			}
+			if slip > maxSlip {
+				maxSlip = slip
+			}
+			sample := opusFrames[audioIndex]
+			if err := audioTrack.WriteSample(sample); err != nil {
+				log.Printf("[DirectPeer] audio write error: %v", err)
+				return
+			}
+			audioOffset += mediaSampleDuration(sample, 20*time.Millisecond)
+			audioIndex++
+		}
+	}
+	if segmentDuration > 0 {
+		slip, err := p.sleepUntil(segmentStartWall.Add(segmentDuration))
+		if err != nil {
+			log.Printf("[DirectPeer] segment pacing error: %v", err)
 			return
 		}
-		if !firstVideoWritten {
-			firstVideoWritten = true
-			directVoiceTrace(
-				"direct_first_video_sample_written",
-				seg.TraceLabel,
-				"publish_ms=%d",
-				seg.UserFinalAt,
-				time.Since(publishStart).Milliseconds(),
-			)
+		if slip > maxSlip {
+			maxSlip = slip
 		}
-
-		// Real-time pacing
-		if elapsed := time.Since(frameStart); elapsed < frameDur {
-			time.Sleep(frameDur - elapsed)
-		}
+	}
+	if maxSlip >= 20*time.Millisecond {
+		directVoiceTrace(
+			"direct_publish_pacing_slip",
+			seg.TraceLabel,
+			"seg=%d max_slip_ms=%d publish_ms=%d",
+			seg.UserFinalAt,
+			seg.SegmentSeq,
+			maxSlip.Milliseconds(),
+			time.Since(publishStart).Milliseconds(),
+		)
 	}
 
 	// Record the last write time for gap correction on the next segment.
-	p.lastVideoWriteTime = time.Now()
+	if segmentDuration > 0 {
+		p.lastVideoWriteTime = segmentStartWall.Add(segmentDuration)
+	} else {
+		p.lastVideoWriteTime = time.Now()
+	}
 	p.lastAudioWriteTime = p.lastVideoWriteTime
+}
+
+func mediaSampleDuration(sample media.Sample, fallback time.Duration) time.Duration {
+	if sample.Duration > 0 {
+		return sample.Duration
+	}
+	return fallback
+}
+
+func avSegmentWallDuration(seg *mediapeer.AVSegment, frameDur time.Duration, opusFrames []media.Sample) time.Duration {
+	if seg.DurationMS > 0 {
+		return time.Duration(seg.DurationMS) * time.Millisecond
+	}
+	videoDuration := time.Duration(len(seg.VP8Samples)) * frameDur
+	audioDuration := time.Duration(0)
+	for _, sample := range opusFrames {
+		audioDuration += mediaSampleDuration(sample, 20*time.Millisecond)
+	}
+	if audioDuration > videoDuration {
+		return audioDuration
+	}
+	return videoDuration
 }
 
 func (p *DirectPeer) sendAVSegmentDiagnostic(seg *mediapeer.AVSegment, publishStart time.Time) {
@@ -989,6 +1153,9 @@ func (p *DirectPeer) PublishAudioFrame(pcm []byte, sampleRate int) error {
 	if len(pcm) == 0 || sampleRate <= 0 {
 		return nil
 	}
+	p.mediaMu.Lock()
+	defer p.mediaMu.Unlock()
+
 	if !p.waitConnected(10 * time.Second) {
 		if p.avPipelineCtx.Err() != nil {
 			return fmt.Errorf("audio publish cancelled")
@@ -1003,6 +1170,13 @@ func (p *DirectPeer) PublishAudioFrame(pcm []byte, sampleRate int) error {
 func (p *DirectPeer) writeOpus(pcm []byte, sampleRate int) error {
 	p.opusMu.Lock()
 	defer p.opusMu.Unlock()
+
+	p.mu.Lock()
+	audioTrack := p.audioTrack
+	p.mu.Unlock()
+	if audioTrack == nil {
+		return fmt.Errorf("audio track is not ready")
+	}
 
 	// Lazily create or recreate encoder if sample rate changed
 	if p.opusEncoder == nil || p.opusEncoderSR != sampleRate {
@@ -1036,7 +1210,7 @@ func (p *DirectPeer) writeOpus(pcm []byte, sampleRate int) error {
 		}
 		payload := append([]byte(nil), opusBuf[:n]...)
 
-		if err := p.audioTrack.WriteSample(media.Sample{
+		if err := audioTrack.WriteSample(media.Sample{
 			Data:     payload,
 			Duration: frameDuration,
 		}); err != nil {
@@ -1053,18 +1227,36 @@ func (p *DirectPeer) sleepAudioFrame(d time.Duration) error {
 	if d <= 0 {
 		return nil
 	}
+	_, err := p.sleepUntil(time.Now().Add(d))
+	return err
+}
+
+func (p *DirectPeer) sleepUntil(deadline time.Time) (time.Duration, error) {
+	if deadline.IsZero() {
+		return 0, nil
+	}
+	delay := time.Until(deadline)
+	if delay <= 0 {
+		return -delay, nil
+	}
 	ctx := p.avPipelineCtx
 	if ctx == nil {
-		time.Sleep(d)
-		return nil
+		time.Sleep(delay)
+		if slip := time.Since(deadline); slip > 0 {
+			return slip, nil
+		}
+		return 0, nil
 	}
-	timer := time.NewTimer(d)
+	timer := time.NewTimer(delay)
 	defer timer.Stop()
 	select {
 	case <-ctx.Done():
-		return fmt.Errorf("audio publish cancelled")
+		return 0, fmt.Errorf("media publish cancelled")
 	case <-timer.C:
-		return nil
+		if slip := time.Since(deadline); slip > 0 {
+			return slip, nil
+		}
+		return 0, nil
 	}
 }
 

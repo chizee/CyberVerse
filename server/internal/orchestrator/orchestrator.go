@@ -630,19 +630,14 @@ func (o *Orchestrator) HandleSignaling(sessionID string, msg ws.WSMessage) {
 	case "av_sync_feedback":
 		dp.HandleAVSyncFeedback(msg.TurnSeq, msg.ExcessVideoLagMS, msg.JitterBufferDeltaMS, msg.Likely)
 	case "webrtc_ready":
-		// Send TURN ICE server config before the SDP offer
-		if o.turnServer != nil {
-			host := o.pipelineCfg.ICEPublicIP
-			if host == "" {
-				host = "127.0.0.1"
-			}
-			o.broadcastJSON(sessionID, map[string]any{
-				"type":        "webrtc_config",
-				"ice_servers": []any{o.turnServer.ICEServerConfig(host)},
-			})
-		}
+		o.sendDirectWebRTCConfig(sessionID)
 		if err := dp.StartNegotiation(); err != nil {
 			log.Printf("[Orchestrator] session=%s StartNegotiation failed: %v", sessionID, err)
+		}
+	case "direct_media_reset_request":
+		o.sendDirectWebRTCConfig(sessionID)
+		if err := dp.ResetMediaPath(context.Background()); err != nil {
+			log.Printf("[Orchestrator] session=%s ResetMediaPath failed: %v", sessionID, err)
 		}
 	case "webrtc_answer", "ice_candidate":
 		var sdpMid *string
@@ -651,6 +646,21 @@ func (o *Orchestrator) HandleSignaling(sessionID string, msg ws.WSMessage) {
 		}
 		dp.HandleSignaling(msg.Type, msg.SDP, msg.Candidate, sdpMid, msg.SDPMLine)
 	}
+}
+
+func (o *Orchestrator) sendDirectWebRTCConfig(sessionID string) {
+	// Send TURN ICE server config before the SDP offer.
+	if o.turnServer == nil {
+		return
+	}
+	host := o.pipelineCfg.ICEPublicIP
+	if host == "" {
+		host = "127.0.0.1"
+	}
+	o.broadcastJSON(sessionID, map[string]any{
+		"type":        "webrtc_config",
+		"ice_servers": []any{o.turnServer.ICEServerConfig(host)},
+	})
 }
 
 // SetTURNServer sets the embedded TURN server for NAT traversal.
