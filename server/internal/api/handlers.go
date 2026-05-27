@@ -27,6 +27,7 @@ type CreateSessionResponse struct {
 	Mode          string               `json:"mode"`
 	StreamingMode string               `json:"streaming_mode"`
 	AvatarEnabled bool                 `json:"avatar_enabled"`
+	IdleStrategy  string               `json:"idle_strategy"`
 	LiveKitURL    string               `json:"livekit_url,omitempty"`
 	Token         string               `json:"livekit_token,omitempty"`
 	IdleVideoURL  string               `json:"idle_video_url,omitempty"`
@@ -218,12 +219,25 @@ func (r *Router) handleCreateSession(w http.ResponseWriter, req *http.Request) {
 	}
 
 	resp := CreateSessionResponse{
-		SessionID: sessionID,
-		Mode:      modeString(mode),
+		SessionID:    sessionID,
+		Mode:         modeString(mode),
+		IdleStrategy: config.AvatarIdleStrategyCachedVideo,
+	}
+	if r.orch != nil {
+		resp.IdleStrategy = r.orch.AvatarIdleStrategy()
+		if !r.orch.AvatarEnabled() {
+			resp.IdleStrategy = config.AvatarIdleStrategyCachedVideo
+		}
+	} else if r.cfg != nil {
+		resp.IdleStrategy = r.cfg.AvatarIdleStrategy()
+		if !r.cfg.AvatarEnabled() {
+			resp.IdleStrategy = config.AvatarIdleStrategyCachedVideo
+		}
 	}
 	resp.VisualInput = r.visualInputResponseForSession(session)
 
-	if r.orch != nil && body.CharacterID != "" {
+	useCachedIdleVideo := resp.IdleStrategy != config.AvatarIdleStrategySilentInference
+	if r.orch != nil && body.CharacterID != "" && useCachedIdleVideo {
 		target := r.currentIdleVideoTarget(req.Context())
 		// Return any already-cached idle video URLs immediately; generation happens in background.
 		if char, err := r.charStore.Get(body.CharacterID); err == nil {

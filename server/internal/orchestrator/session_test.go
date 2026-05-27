@@ -26,6 +26,54 @@ func TestSessionSetGetState(t *testing.T) {
 	}
 }
 
+func TestMarkPipelineFinishedClearsCurrentPipelineCancel(t *testing.T) {
+	s := NewSession("test-1", ModeStandard, "")
+	seq := s.MarkPipelineRunning()
+	cancelled := false
+	s.mu.Lock()
+	s.PipelineCancel = func() {
+		cancelled = true
+	}
+	s.mu.Unlock()
+
+	s.MarkPipelineFinished(seq)
+	if s.PipelineCancel != nil {
+		t.Fatal("expected completed pipeline cancel to be cleared")
+	}
+	if (&Orchestrator{}).cancelPipeline(s) {
+		t.Fatal("expected completed pipeline not to be cancelled later")
+	}
+	if cancelled {
+		t.Fatal("expected completed pipeline cancel not to be called")
+	}
+}
+
+func TestLatePipelineFinishedDoesNotClearCurrentPipelineCancel(t *testing.T) {
+	s := NewSession("test-1", ModeStandard, "")
+	oldSeq := s.MarkPipelineRunning()
+	currentSeq := s.MarkPipelineRunning()
+	if oldSeq == currentSeq {
+		t.Fatal("expected pipeline sequence to advance")
+	}
+	cancelled := false
+	s.mu.Lock()
+	s.PipelineCancel = func() {
+		cancelled = true
+	}
+	s.mu.Unlock()
+
+	s.MarkPipelineFinished(oldSeq)
+	if s.PipelineCancel == nil {
+		t.Fatal("expected current pipeline cancel to remain")
+	}
+	if !(&Orchestrator{}).cancelPipeline(s) {
+		t.Fatal("expected current pipeline to be cancellable")
+	}
+	if !cancelled {
+		t.Fatal("expected current pipeline cancel to be called")
+	}
+}
+
 func TestSessionAddMessage(t *testing.T) {
 	s := NewSession("test-1", ModeStandard, "")
 	s.AddMessage(ChatMessage{Role: "user", Content: "hello"})

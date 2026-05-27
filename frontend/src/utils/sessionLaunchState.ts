@@ -2,6 +2,7 @@ import type { CreateSessionResponse } from '../services/api'
 import type { PipelineMode } from '../types'
 
 export type SessionVisualInputConfig = NonNullable<CreateSessionResponse['visual_input']>
+export type AvatarIdleStrategy = NonNullable<CreateSessionResponse['idle_strategy']>
 
 export interface SessionLaunchState {
   session_id: string
@@ -10,6 +11,7 @@ export interface SessionLaunchState {
   streaming_mode: string
   return_path?: string
   avatar_enabled?: boolean
+  idle_strategy?: AvatarIdleStrategy
   livekit_url?: string
   livekit_token?: string
   idle_video_url?: string
@@ -59,6 +61,10 @@ function normalizeReturnPath(path: string): string | undefined {
   return trimmed
 }
 
+function normalizeIdleStrategy(strategy: string): AvatarIdleStrategy {
+  return strategy === 'silent_inference' ? 'silent_inference' : 'cached_video'
+}
+
 export function buildSessionLaunchState(
   response: CreateSessionResponse,
   characterId: string,
@@ -72,6 +78,7 @@ export function buildSessionLaunchState(
     streaming_mode: response.streaming_mode || 'direct',
     return_path: returnPath ? normalizeReturnPath(returnPath) : undefined,
     avatar_enabled: response.avatar_enabled,
+    idle_strategy: normalizeIdleStrategy(response.idle_strategy || ''),
     livekit_url: response.livekit_url,
     livekit_token: response.livekit_token,
     idle_video_url: response.idle_video_url,
@@ -102,6 +109,7 @@ export function loadSessionLaunchState(sessionId: string): SessionLaunchState | 
     streaming_mode: parsed.streaming_mode || 'direct',
     return_path: normalizeReturnPath(parsed.return_path || ''),
     avatar_enabled: parsed.avatar_enabled,
+    idle_strategy: normalizeIdleStrategy(parsed.idle_strategy || ''),
     livekit_url: parsed.livekit_url,
     livekit_token: parsed.livekit_token,
     idle_video_url: parsed.idle_video_url,
@@ -123,6 +131,7 @@ export function sessionLaunchStateFromQuery(
   const streamingMode = firstQueryValue(query.streaming_mode)
   const mode = firstQueryValue(query.mode)
   const avatarEnabled = firstQueryValue(query.avatar_enabled)
+  const idleStrategy = firstQueryValue(query.idle_strategy)
   const characterId = firstQueryValue(query.character_id)
   const livekitUrl = firstQueryValue(query.livekit_url)
   const livekitToken = firstQueryValue(query.livekit_token)
@@ -131,7 +140,7 @@ export function sessionLaunchStateFromQuery(
   const visualInput = parseJSON<SessionVisualInputConfig>(firstQueryValue(query.visual_input))
   const returnPath = normalizeReturnPath(firstQueryValue(query.return_path))
 
-  if (!streamingMode && !mode && !avatarEnabled && !characterId && !livekitUrl && !livekitToken && !idleVideoUrl && !idleVideoUrls && !visualInput && !returnPath) {
+  if (!streamingMode && !mode && !avatarEnabled && !idleStrategy && !characterId && !livekitUrl && !livekitToken && !idleVideoUrl && !idleVideoUrls && !visualInput && !returnPath) {
     return null
   }
 
@@ -142,6 +151,7 @@ export function sessionLaunchStateFromQuery(
     streaming_mode: streamingMode || 'direct',
     return_path: returnPath,
     avatar_enabled: avatarEnabled ? avatarEnabled === 'true' : undefined,
+    idle_strategy: normalizeIdleStrategy(idleStrategy),
     livekit_url: livekitUrl || undefined,
     livekit_token: livekitToken || undefined,
     idle_video_url: idleVideoUrl || undefined,

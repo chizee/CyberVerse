@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cyberverse/server/internal/character"
 	"github.com/cyberverse/server/internal/config"
@@ -32,6 +33,7 @@ type fakeInferenceService struct {
 	setAvatarFormats          []string
 	generateAvatarStreamCalls int
 	generateAvatarCalls       int
+	generateAvatarNotify      chan struct{}
 	checkVoiceProviderError   string
 	checkVoiceErr             error
 	checkVoiceConfigs         chan inference.VoiceLLMSessionConfig
@@ -78,6 +80,12 @@ func (f *fakeInferenceService) GenerateAvatarStream(context.Context, <-chan *pb.
 }
 func (f *fakeInferenceService) GenerateAvatar(context.Context, []*pb.AudioChunk) (<-chan *pb.VideoChunk, <-chan error) {
 	f.generateAvatarCalls++
+	if f.generateAvatarNotify != nil {
+		select {
+		case f.generateAvatarNotify <- struct{}{}:
+		default:
+		}
+	}
 	videoCh := make(chan *pb.VideoChunk)
 	errCh := make(chan error)
 	close(videoCh)
@@ -830,5 +838,221 @@ inference:
 	}
 	if inf.infoCalls != 0 || inf.setAvatarCalls != 0 || inf.generateAvatarCalls != 0 || inf.generateAvatarStreamCalls != 0 {
 		t.Fatalf("expected no avatar calls when disabled, info=%d set=%d gen=%d stream=%d", inf.infoCalls, inf.setAvatarCalls, inf.generateAvatarCalls, inf.generateAvatarStreamCalls)
+	}
+}
+
+func TestCreateSessionWithCachedVideoUsesIdleCacheAndSkipsSilentRuntime(t *testing.T) {
+	root := t.TempDir()
+	configPath := filepath.Join(root, "cyberverse_config.yaml")
+	if err := os.WriteFile(configPath, []byte(`
+inference:
+  avatar:
+    enabled: true
+    default: live_act
+    idle_strategy: cached_video
+    live_act:
+      infer_params:
+        size: "320*480"
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	charStore, err := character.NewStore(filepath.Join(root, "characters"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	char, err := charStore.Create(&character.Character{Name: "Cached Runtime", VoiceType: "Tina"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	image := character.ImageInfo{Filename: "avatar.png", OrigName: "avatar.png"}
+	if err := os.WriteFile(filepath.Join(charStore.ImagesDir(char.ID), image.Filename), []byte("avatar"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := charStore.AddImage(char.ID, image); err != nil {
+		t.Fatal(err)
+	}
+	idleDir := charStore.IdleVideosForSizeDir(char.ID, image.Filename, 320, 480)
+	if err := os.MkdirAll(idleDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(idleDir, "cached.mp4"), []byte("cached"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	mgr := orchestrator.NewSessionManager(4)
+	inf := &fakeInferenceService{
+		avatarInfo: &pb.AvatarInfo{ModelName: "avatar.live_act", OutputFps: 20, OutputWidth: 320, OutputHeight: 480},
+	}
+	orch := orchestrator.New(inf, nil, mgr, nil, charStore, cfg.Pipeline)
+	r := NewRouter(mgr, orch, nil, nil, cfg, charStore, "", configPath)
+
+	body := `{"mode":"omni","character_id":"` + char.ID + `"}`
+	req := httptest.NewRequest("POST", "/api/v1/sessions", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.Handler().ServeHTTP(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp CreateSessionResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.IdleStrategy != config.AvatarIdleStrategyCachedVideo {
+		t.Fatalf("expected cached_video response, got %q", resp.IdleStrategy)
+	}
+	if len(resp.IdleVideoURLs) != 1 || !strings.Contains(resp.IdleVideoURLs[0], "cached.mp4") {
+		t.Fatalf("expected cached idle video URL, got %v", resp.IdleVideoURLs)
+	}
+	if inf.generateAvatarStreamCalls != 0 {
+		t.Fatalf("expected cached_video not to start silent avatar stream, got %d GenerateAvatarStream calls", inf.generateAvatarStreamCalls)
+	}
+	if inf.generateAvatarCalls != 0 {
+		t.Fatalf("expected existing cache to skip idle video generation, got %d GenerateAvatar calls", inf.generateAvatarCalls)
+	}
+}
+
+func TestCreateSessionWithCachedVideoMissingCacheStartsIdleGeneration(t *testing.T) {
+	root := t.TempDir()
+	configPath := filepath.Join(root, "cyberverse_config.yaml")
+	if err := os.WriteFile(configPath, []byte(`
+inference:
+  avatar:
+    enabled: true
+    default: flash_head
+    idle_strategy: cached_video
+    flash_head:
+      infer_params:
+        width: 512
+        height: 512
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	charStore, err := character.NewStore(filepath.Join(root, "characters"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	char, err := charStore.Create(&character.Character{Name: "Generate Cache", VoiceType: "Tina"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	image := character.ImageInfo{Filename: "avatar.png", OrigName: "avatar.png"}
+	if err := os.WriteFile(filepath.Join(charStore.ImagesDir(char.ID), image.Filename), []byte("avatar"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := charStore.AddImage(char.ID, image); err != nil {
+		t.Fatal(err)
+	}
+
+	mgr := orchestrator.NewSessionManager(4)
+	inf := &fakeInferenceService{
+		avatarInfo:           &pb.AvatarInfo{ModelName: "avatar.flash_head", OutputFps: 25, OutputWidth: 512, OutputHeight: 512},
+		generateAvatarNotify: make(chan struct{}, 1),
+	}
+	orch := orchestrator.New(inf, nil, mgr, nil, charStore, cfg.Pipeline)
+	r := NewRouter(mgr, orch, nil, nil, cfg, charStore, "", configPath)
+
+	body := `{"mode":"omni","character_id":"` + char.ID + `"}`
+	req := httptest.NewRequest("POST", "/api/v1/sessions", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.Handler().ServeHTTP(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp CreateSessionResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.IdleStrategy != config.AvatarIdleStrategyCachedVideo {
+		t.Fatalf("expected cached_video response, got %q", resp.IdleStrategy)
+	}
+	if len(resp.IdleVideoURLs) != 0 || resp.IdleVideoURL != "" {
+		t.Fatalf("expected no immediate idle URLs without cache, got %q %v", resp.IdleVideoURL, resp.IdleVideoURLs)
+	}
+	select {
+	case <-inf.generateAvatarNotify:
+	case <-time.After(time.Second):
+		t.Fatal("expected cached_video to start background idle video generation")
+	}
+	if inf.generateAvatarStreamCalls != 0 {
+		t.Fatalf("expected cached_video not to start silent avatar stream, got %d GenerateAvatarStream calls", inf.generateAvatarStreamCalls)
+	}
+}
+
+func TestCreateSessionWithSilentInferenceSkipsIdleVideoGeneration(t *testing.T) {
+	root := t.TempDir()
+	configPath := filepath.Join(root, "cyberverse_config.yaml")
+	if err := os.WriteFile(configPath, []byte(`
+inference:
+  avatar:
+    enabled: true
+    default: flash_head
+    idle_strategy: silent_inference
+    flash_head:
+      infer_params:
+        width: 512
+        height: 512
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	charStore, err := character.NewStore(filepath.Join(root, "characters"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	char, err := charStore.Create(&character.Character{Name: "Silent Runtime", VoiceType: "Tina"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	image := character.ImageInfo{Filename: "avatar.png", OrigName: "avatar.png"}
+	if err := os.WriteFile(filepath.Join(charStore.ImagesDir(char.ID), image.Filename), []byte("avatar"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := charStore.AddImage(char.ID, image); err != nil {
+		t.Fatal(err)
+	}
+
+	mgr := orchestrator.NewSessionManager(4)
+	inf := &fakeInferenceService{
+		avatarInfo: &pb.AvatarInfo{ModelName: "avatar.flash_head", OutputFps: 25, OutputWidth: 512, OutputHeight: 512, ChunkDurationS: 1.12},
+	}
+	orch := orchestrator.New(inf, nil, mgr, nil, charStore, cfg.Pipeline)
+	r := NewRouter(mgr, orch, nil, nil, cfg, charStore, "", configPath)
+
+	body := `{"mode":"omni","character_id":"` + char.ID + `"}`
+	req := httptest.NewRequest("POST", "/api/v1/sessions", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.Handler().ServeHTTP(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp CreateSessionResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.IdleStrategy != config.AvatarIdleStrategySilentInference {
+		t.Fatalf("expected silent_inference response, got %q", resp.IdleStrategy)
+	}
+	if len(resp.IdleVideoURLs) != 0 || resp.IdleVideoURL != "" {
+		t.Fatalf("expected no idle video URLs for silent_inference, got %q %v", resp.IdleVideoURL, resp.IdleVideoURLs)
+	}
+	if inf.generateAvatarCalls != 0 {
+		t.Fatalf("expected no cached idle video generation, got %d GenerateAvatar calls", inf.generateAvatarCalls)
 	}
 }

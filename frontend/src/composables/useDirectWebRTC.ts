@@ -182,6 +182,8 @@ function parseAVSegmentTimeline(data: any): AVSegmentTimeline | null {
     fps: numberField(data, 'fps'),
     audioSamples: numberField(data, 'audio_samples'),
     sampleRate: numberField(data, 'sample_rate'),
+    queuedWallMs: numberField(data, 'queued_wall_ms'),
+    publishQueueMs: numberField(data, 'publish_queue_ms'),
     publishWallMs: numberField(data, 'publish_wall_ms'),
     receivedWallMs: Date.now(),
     markerId: numberField(data, 'marker_id'),
@@ -741,11 +743,13 @@ export function useDirectWebRTC() {
 
     const videoDurationMs = seg.fps > 0 ? (seg.videoFrames * 1000) / seg.fps : 0
     const audioDurationMs = seg.sampleRate > 0 ? (seg.audioSamples * 1000) / seg.sampleRate : 0
+    const receiveLagMs = seg.publishWallMs > 0 ? seg.receivedWallMs - seg.publishWallMs : 0
     console.log(
       `[DirectRTC][${ts()}] AV segment timeline turn=${seg.turnSeq} segment=${seg.segmentSeq}` +
         ` mediaStart=${seg.mediaStartMs}ms duration=${seg.durationMs}ms` +
         ` video=${seg.videoFrames}f@${seg.fps}fps(${videoDurationMs.toFixed(1)}ms)` +
         ` audio=${seg.audioSamples}@${seg.sampleRate}Hz(${audioDurationMs.toFixed(1)}ms)` +
+        ` publishQueue=${seg.publishQueueMs}ms receiveLag=${receiveLagMs}ms` +
         ` publishWall=${seg.publishWallMs}` +
         (seg.markerId > 0 ? ` marker=${seg.markerId}@${seg.markerMediaTimeMs}ms` : '')
     )

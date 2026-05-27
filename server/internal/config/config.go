@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -35,8 +36,9 @@ type PluginDefaults struct {
 }
 
 type AvatarPluginSection struct {
-	Enabled *bool  `yaml:"enabled"`
-	Default string `yaml:"default"`
+	Enabled      *bool  `yaml:"enabled"`
+	Default      string `yaml:"default"`
+	IdleStrategy string `yaml:"idle_strategy"`
 }
 
 type PluginDefaultSection struct {
@@ -63,23 +65,24 @@ type SessionConfig struct {
 }
 
 type PipelineConfig struct {
-	DefaultMode     string            `yaml:"default_mode"`
-	StreamingMode   string            `yaml:"streaming_mode"` // "direct" (default, P2P WebRTC) or "livekit"
-	VisualInput     VisualInputConfig `yaml:"visual_input,omitempty"`
-	RAG             RAGConfig         `yaml:"rag,omitempty"`
-	ICEServers      []ICEServer       `yaml:"ice_servers,omitempty"`
-	ICETCPPort      int               `yaml:"ice_tcp_port,omitempty"`      // Deprecated: use TURN instead
-	ICEPublicIP     string            `yaml:"ice_public_ip,omitempty"`     // Public IP or hostname (also used by TURN)
-	ICENetworkTypes []string          `yaml:"ice_network_types,omitempty"` // Deprecated: use TURN instead
-	TURNEnabled     bool              `yaml:"turn_enabled,omitempty"`      // Enable embedded TURN-over-TCP server
-	TURNPort        int               `yaml:"turn_port,omitempty"`         // TCP port for TURN (default 3478)
-	TURNRealm       string            `yaml:"turn_realm,omitempty"`        // TURN realm (default "cyberverse")
-	TURNUsername    string            `yaml:"turn_username,omitempty"`     // TURN username (default "cyberverse")
-	TURNPassword    string            `yaml:"turn_password,omitempty"`     // TURN password (required when enabled)
-	DefaultLLM      string            `yaml:"-"`
-	DefaultASR      string            `yaml:"-"`
-	DefaultTTS      string            `yaml:"-"`
-	AvatarEnabled   *bool             `yaml:"-"`
+	DefaultMode        string            `yaml:"default_mode"`
+	StreamingMode      string            `yaml:"streaming_mode"` // "direct" (default, P2P WebRTC) or "livekit"
+	VisualInput        VisualInputConfig `yaml:"visual_input,omitempty"`
+	RAG                RAGConfig         `yaml:"rag,omitempty"`
+	ICEServers         []ICEServer       `yaml:"ice_servers,omitempty"`
+	ICETCPPort         int               `yaml:"ice_tcp_port,omitempty"`      // Deprecated: use TURN instead
+	ICEPublicIP        string            `yaml:"ice_public_ip,omitempty"`     // Public IP or hostname (also used by TURN)
+	ICENetworkTypes    []string          `yaml:"ice_network_types,omitempty"` // Deprecated: use TURN instead
+	TURNEnabled        bool              `yaml:"turn_enabled,omitempty"`      // Enable embedded TURN-over-TCP server
+	TURNPort           int               `yaml:"turn_port,omitempty"`         // TCP port for TURN (default 3478)
+	TURNRealm          string            `yaml:"turn_realm,omitempty"`        // TURN realm (default "cyberverse")
+	TURNUsername       string            `yaml:"turn_username,omitempty"`     // TURN username (default "cyberverse")
+	TURNPassword       string            `yaml:"turn_password,omitempty"`     // TURN password (required when enabled)
+	DefaultLLM         string            `yaml:"-"`
+	DefaultASR         string            `yaml:"-"`
+	DefaultTTS         string            `yaml:"-"`
+	AvatarEnabled      *bool             `yaml:"-"`
+	AvatarIdleStrategy string            `yaml:"-"`
 }
 
 type RAGConfig struct {
@@ -116,6 +119,35 @@ func (c *Config) AvatarEnabled() bool {
 		return true
 	}
 	return *c.Plugins.Avatar.Enabled
+}
+
+const (
+	AvatarIdleStrategyCachedVideo     = "cached_video"
+	AvatarIdleStrategySilentInference = "silent_inference"
+)
+
+func NormalizeAvatarIdleStrategy(strategy string) (string, error) {
+	strategy = strings.TrimSpace(strategy)
+	if strategy == "" {
+		return AvatarIdleStrategyCachedVideo, nil
+	}
+	switch strategy {
+	case AvatarIdleStrategyCachedVideo, AvatarIdleStrategySilentInference:
+		return strategy, nil
+	default:
+		return "", fmt.Errorf("invalid avatar idle_strategy %q: expected %q or %q", strategy, AvatarIdleStrategyCachedVideo, AvatarIdleStrategySilentInference)
+	}
+}
+
+func (c *Config) AvatarIdleStrategy() string {
+	if c == nil {
+		return AvatarIdleStrategyCachedVideo
+	}
+	strategy, err := NormalizeAvatarIdleStrategy(c.Plugins.Avatar.IdleStrategy)
+	if err != nil {
+		return AvatarIdleStrategyCachedVideo
+	}
+	return strategy
 }
 
 // ICEServer configures STUN/TURN servers for direct WebRTC mode.
@@ -229,11 +261,17 @@ func Load(path string) (*Config, error) {
 	if cfg.Plugins.TTS.Default == "" {
 		cfg.Plugins.TTS.Default = "qwen"
 	}
+	idleStrategy, err := NormalizeAvatarIdleStrategy(cfg.Plugins.Avatar.IdleStrategy)
+	if err != nil {
+		return nil, err
+	}
+	cfg.Plugins.Avatar.IdleStrategy = idleStrategy
 	cfg.Pipeline.DefaultLLM = cfg.Plugins.LLM.Default
 	cfg.Pipeline.DefaultASR = cfg.Plugins.ASR.Default
 	cfg.Pipeline.DefaultTTS = cfg.Plugins.TTS.Default
 	avatarEnabled := cfg.AvatarEnabled()
 	cfg.Pipeline.AvatarEnabled = &avatarEnabled
+	cfg.Pipeline.AvatarIdleStrategy = idleStrategy
 
 	// Inference gRPC address: env var takes precedence
 	if addr := os.Getenv("GRPC_INFERENCE_ADDR"); addr != "" {

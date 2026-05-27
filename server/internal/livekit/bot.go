@@ -49,12 +49,13 @@ type Bot struct {
 	lastPublishEnd time.Time // [AVGap] Timestamp when the previous publish completed.
 
 	// AV pipeline
-	encodeCh         chan *RawAVSegment
-	publishCh        chan *AVSegment
-	avPipelineCtx    context.Context
-	avPipelineCancel context.CancelFunc
-	avPipelineWg     sync.WaitGroup
-	playbackEpoch    atomic.Uint64
+	encodeCh          chan *RawAVSegment
+	publishCh         chan *AVSegment
+	avPipelineCtx     context.Context
+	avPipelineCancel  context.CancelFunc
+	avPipelineWg      sync.WaitGroup
+	playbackEpoch     atomic.Uint64
+	latestSpeechEpoch atomic.Uint64
 }
 
 // NewBot creates a new bot for the given room.
@@ -422,7 +423,7 @@ func (b *Bot) StopAVPipeline() {
 // causing audio-video desync.
 func (b *Bot) SendAVSegment(seg *RawAVSegment) error {
 	seg.QueuedAt = time.Now()
-	if b.isPlaybackStale(seg.Epoch) {
+	if !b.prepareRawAVSegment(seg) {
 		return nil
 	}
 	select {
@@ -430,6 +431,34 @@ func (b *Bot) SendAVSegment(seg *RawAVSegment) error {
 		return nil
 	case <-b.avPipelineCtx.Done():
 		return b.avPipelineCtx.Err()
+	}
+}
+
+func (b *Bot) prepareRawAVSegment(seg *RawAVSegment) bool {
+	if seg == nil || b.isPlaybackStale(seg.Epoch) {
+		return false
+	}
+	if seg.Supersedable {
+		seg.SpeechEpochAtQueue = b.latestSpeechEpoch.Load()
+	}
+	if seg.Epoch > 0 {
+		b.advanceLatestSpeechEpoch(seg.Epoch)
+	}
+	return !b.isRawAVSegmentStale(seg)
+}
+
+func (b *Bot) advanceLatestSpeechEpoch(epoch uint64) {
+	if epoch == 0 {
+		return
+	}
+	for {
+		current := b.latestSpeechEpoch.Load()
+		if epoch <= current {
+			return
+		}
+		if b.latestSpeechEpoch.CompareAndSwap(current, epoch) {
+			return
+		}
 	}
 }
 
@@ -490,7 +519,7 @@ func (b *Bot) runEncoder() {
 			}
 			continue
 		}
-		if b.isPlaybackStale(raw.Epoch) {
+		if b.isRawAVSegmentStale(raw) {
 			continue
 		}
 
@@ -502,24 +531,29 @@ func (b *Bot) runEncoder() {
 		if len(vp8Samples) == 0 {
 			continue
 		}
+		if b.isRawAVSegmentStale(raw) {
+			continue
+		}
 		seg := &AVSegment{
-			TraceLabel:        raw.TraceLabel,
-			Epoch:             raw.Epoch,
-			SegmentSeq:        raw.SegmentSeq,
-			MediaStartMS:      raw.MediaStartMS,
-			DurationMS:        raw.DurationMS,
-			MarkerID:          raw.MarkerID,
-			MarkerMediaMS:     raw.MarkerMediaMS,
-			MarkerDurationMS:  raw.MarkerDurationMS,
-			MarkerFrequencyHz: raw.MarkerFrequencyHz,
-			VP8Samples:        vp8Samples,
-			PCM:               raw.PCM,
-			SampleRate:        raw.SampleRate,
-			Width:             raw.Width,
-			Height:            raw.Height,
-			FPS:               raw.FPS,
-			NumFrames:         raw.NumFrames,
-			QueuedAt:          raw.QueuedAt,
+			TraceLabel:         raw.TraceLabel,
+			Epoch:              raw.Epoch,
+			SegmentSeq:         raw.SegmentSeq,
+			MediaStartMS:       raw.MediaStartMS,
+			DurationMS:         raw.DurationMS,
+			MarkerID:           raw.MarkerID,
+			MarkerMediaMS:      raw.MarkerMediaMS,
+			MarkerDurationMS:   raw.MarkerDurationMS,
+			MarkerFrequencyHz:  raw.MarkerFrequencyHz,
+			VP8Samples:         vp8Samples,
+			PCM:                raw.PCM,
+			SampleRate:         raw.SampleRate,
+			Width:              raw.Width,
+			Height:             raw.Height,
+			FPS:                raw.FPS,
+			NumFrames:          raw.NumFrames,
+			QueuedAt:           raw.QueuedAt,
+			Supersedable:       raw.Supersedable,
+			SpeechEpochAtQueue: raw.SpeechEpochAtQueue,
 		}
 		select {
 		case b.publishCh <- seg:
@@ -542,7 +576,7 @@ func (b *Bot) runPublisher() {
 			close(seg.Fence)
 			continue
 		}
-		if b.isPlaybackStale(seg.Epoch) {
+		if b.isAVSegmentStale(seg) {
 			continue
 		}
 		b.publishAVSegment(seg)
@@ -579,7 +613,7 @@ func (b *Bot) publishAVSegment(seg *AVSegment) {
 	hasPCM := len(seg.PCM) > 0 && seg.SampleRate > 0
 
 	for i := range seg.VP8Samples {
-		if b.isPlaybackStale(seg.Epoch) {
+		if b.isAVSegmentStale(seg) {
 			return
 		}
 		frameStart := time.Now()
@@ -618,6 +652,26 @@ func (b *Bot) isPlaybackStale(epoch uint64) bool {
 	}
 	current := b.playbackEpoch.Load()
 	return current > 0 && epoch < current
+}
+
+func (b *Bot) isRawAVSegmentStale(seg *RawAVSegment) bool {
+	if seg == nil {
+		return true
+	}
+	if b.isPlaybackStale(seg.Epoch) {
+		return true
+	}
+	return seg.Supersedable && b.latestSpeechEpoch.Load() > seg.SpeechEpochAtQueue
+}
+
+func (b *Bot) isAVSegmentStale(seg *AVSegment) bool {
+	if seg == nil {
+		return true
+	}
+	if b.isPlaybackStale(seg.Epoch) {
+		return true
+	}
+	return seg.Supersedable && b.latestSpeechEpoch.Load() > seg.SpeechEpochAtQueue
 }
 
 // Disconnect leaves the room and cleans up.

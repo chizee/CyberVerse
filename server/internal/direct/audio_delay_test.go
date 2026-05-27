@@ -5,6 +5,8 @@ import (
 	"encoding/binary"
 	"testing"
 	"time"
+
+	"github.com/cyberverse/server/internal/mediapeer"
 )
 
 func testPCM(samples int, start int) []byte {
@@ -174,5 +176,34 @@ func TestPrepareMediaPathResetKeepsUserAudioChannelOpen(t *testing.T) {
 	case p.userAudioCh <- []byte{42}:
 	default:
 		t.Fatalf("user audio channel should remain open and writable")
+	}
+}
+
+func TestSupersedableIdleStalesAfterSpeechEpochAdvances(t *testing.T) {
+	t.Parallel()
+	p := &DirectPeer{}
+
+	idleBeforeSpeech := &mediapeer.RawAVSegment{Supersedable: true}
+	if !p.prepareRawAVSegment(idleBeforeSpeech) {
+		t.Fatal("expected idle segment before speech to be accepted")
+	}
+	if p.isRawAVSegmentStale(idleBeforeSpeech) {
+		t.Fatal("idle segment should not be stale before speech is ready")
+	}
+
+	speech := &mediapeer.RawAVSegment{Epoch: 3}
+	if !p.prepareRawAVSegment(speech) {
+		t.Fatal("expected speech segment to be accepted")
+	}
+	if !p.isRawAVSegmentStale(idleBeforeSpeech) {
+		t.Fatal("expected older idle segment to become stale after speech epoch advances")
+	}
+
+	idleAfterSpeech := &mediapeer.RawAVSegment{Supersedable: true}
+	if !p.prepareRawAVSegment(idleAfterSpeech) {
+		t.Fatal("expected idle segment after speech to be accepted")
+	}
+	if p.isRawAVSegmentStale(idleAfterSpeech) {
+		t.Fatal("idle segment queued after the current speech epoch should remain publishable")
 	}
 }

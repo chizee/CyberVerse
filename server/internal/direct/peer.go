@@ -101,6 +101,7 @@ type DirectPeer struct {
 	lastVideoWriteTime     time.Time
 	lastAudioWriteTime     time.Time
 	playbackEpoch          atomic.Uint64
+	latestSpeechEpoch      atomic.Uint64
 	avCalibrationEnabled   atomic.Bool
 	avCalibrationMarkerSeq atomic.Int64
 	targetBitrateBps       atomic.Int64
@@ -541,7 +542,7 @@ func (p *DirectPeer) StartAVPipeline(ctx context.Context) {
 // SendAVSegment enqueues a raw segment for encoding and publishing.
 func (p *DirectPeer) SendAVSegment(seg *mediapeer.RawAVSegment) error {
 	seg.QueuedAt = time.Now()
-	if p.isPlaybackStale(seg.Epoch) {
+	if !p.prepareRawAVSegment(seg) {
 		return nil
 	}
 	directVoiceTrace(
@@ -555,6 +556,34 @@ func (p *DirectPeer) SendAVSegment(seg *mediapeer.RawAVSegment) error {
 		return nil
 	case <-p.avPipelineCtx.Done():
 		return fmt.Errorf("av pipeline cancelled")
+	}
+}
+
+func (p *DirectPeer) prepareRawAVSegment(seg *mediapeer.RawAVSegment) bool {
+	if seg == nil || p.isPlaybackStale(seg.Epoch) {
+		return false
+	}
+	if seg.Supersedable {
+		seg.SpeechEpochAtQueue = p.latestSpeechEpoch.Load()
+	}
+	if seg.Epoch > 0 {
+		p.advanceLatestSpeechEpoch(seg.Epoch)
+	}
+	return !p.isRawAVSegmentStale(seg)
+}
+
+func (p *DirectPeer) advanceLatestSpeechEpoch(epoch uint64) {
+	if epoch == 0 {
+		return
+	}
+	for {
+		current := p.latestSpeechEpoch.Load()
+		if epoch <= current {
+			return
+		}
+		if p.latestSpeechEpoch.CompareAndSwap(current, epoch) {
+			return
+		}
 	}
 }
 
@@ -637,7 +666,7 @@ func (p *DirectPeer) runEncoder() {
 			}
 			continue
 		}
-		if p.isPlaybackStale(raw.Epoch) {
+		if p.isRawAVSegmentStale(raw) {
 			continue
 		}
 
@@ -670,6 +699,9 @@ func (p *DirectPeer) runEncoder() {
 		if len(vp8Samples) == 0 {
 			continue
 		}
+		if p.isRawAVSegmentStale(raw) {
+			continue
+		}
 		directVoiceTrace(
 			"direct_vp8_encode_done",
 			raw.TraceLabel,
@@ -679,24 +711,26 @@ func (p *DirectPeer) runEncoder() {
 		)
 
 		seg := &mediapeer.AVSegment{
-			TraceLabel:        raw.TraceLabel,
-			Epoch:             raw.Epoch,
-			SegmentSeq:        raw.SegmentSeq,
-			MediaStartMS:      raw.MediaStartMS,
-			DurationMS:        raw.DurationMS,
-			MarkerID:          raw.MarkerID,
-			MarkerMediaMS:     raw.MarkerMediaMS,
-			MarkerDurationMS:  raw.MarkerDurationMS,
-			MarkerFrequencyHz: raw.MarkerFrequencyHz,
-			VP8Samples:        vp8Samples,
-			PCM:               raw.PCM,
-			UserFinalAt:       raw.UserFinalAt,
-			SampleRate:        raw.SampleRate,
-			Width:             raw.Width,
-			Height:            raw.Height,
-			FPS:               raw.FPS,
-			NumFrames:         raw.NumFrames,
-			QueuedAt:          raw.QueuedAt,
+			TraceLabel:         raw.TraceLabel,
+			Epoch:              raw.Epoch,
+			SegmentSeq:         raw.SegmentSeq,
+			MediaStartMS:       raw.MediaStartMS,
+			DurationMS:         raw.DurationMS,
+			MarkerID:           raw.MarkerID,
+			MarkerMediaMS:      raw.MarkerMediaMS,
+			MarkerDurationMS:   raw.MarkerDurationMS,
+			MarkerFrequencyHz:  raw.MarkerFrequencyHz,
+			VP8Samples:         vp8Samples,
+			PCM:                raw.PCM,
+			UserFinalAt:        raw.UserFinalAt,
+			SampleRate:         raw.SampleRate,
+			Width:              raw.Width,
+			Height:             raw.Height,
+			FPS:                raw.FPS,
+			NumFrames:          raw.NumFrames,
+			QueuedAt:           raw.QueuedAt,
+			Supersedable:       raw.Supersedable,
+			SpeechEpochAtQueue: raw.SpeechEpochAtQueue,
 		}
 		select {
 		case p.publishCh <- seg:
@@ -892,7 +926,7 @@ func (p *DirectPeer) runPublisher() {
 			close(seg.Fence)
 			continue
 		}
-		if p.isPlaybackStale(seg.Epoch) {
+		if p.isAVSegmentStale(seg) {
 			continue
 		}
 		p.publishAVSegment(seg)
@@ -930,6 +964,9 @@ func (p *DirectPeer) publishAVSegment(seg *mediapeer.AVSegment) {
 		return
 	}
 	publishStart := time.Now()
+	if p.isAVSegmentStale(seg) {
+		return
+	}
 	directVoiceTrace(
 		"direct_publish_started",
 		seg.TraceLabel,
@@ -987,12 +1024,14 @@ func (p *DirectPeer) publishAVSegment(seg *mediapeer.AVSegment) {
 				log.Printf("[DirectPeer] audio RTP gap skip error: %v", err)
 				return
 			}
+			p.lastAudioWriteTime = now
 		}
 		if len(seg.VP8Samples) > 0 {
 			if err := videoTrack.WriteSample(media.Sample{Duration: rtpGap}); err != nil {
 				log.Printf("[DirectPeer] video RTP gap skip error: %v", err)
 				return
 			}
+			p.lastVideoWriteTime = now
 		}
 	}
 
@@ -1006,7 +1045,7 @@ func (p *DirectPeer) publishAVSegment(seg *mediapeer.AVSegment) {
 	audioOffset := time.Duration(0)
 
 	for videoIndex < nVideo || audioIndex < len(opusFrames) {
-		if p.isPlaybackStale(seg.Epoch) {
+		if p.isAVSegmentStale(seg) {
 			return
 		}
 
@@ -1025,6 +1064,7 @@ func (p *DirectPeer) publishAVSegment(seg *mediapeer.AVSegment) {
 				log.Printf("[DirectPeer] video write error: %v", err)
 				return
 			}
+			p.lastVideoWriteTime = videoDeadline.Add(frameDur)
 			if !firstVideoWritten {
 				firstVideoWritten = true
 				directVoiceTrace(
@@ -1053,6 +1093,7 @@ func (p *DirectPeer) publishAVSegment(seg *mediapeer.AVSegment) {
 				log.Printf("[DirectPeer] audio write error: %v", err)
 				return
 			}
+			p.lastAudioWriteTime = audioDeadline.Add(mediaSampleDuration(sample, 20*time.Millisecond))
 			audioOffset += mediaSampleDuration(sample, 20*time.Millisecond)
 			audioIndex++
 		}
@@ -1122,6 +1163,12 @@ func (p *DirectPeer) sendAVSegmentDiagnostic(seg *mediapeer.AVSegment, publishSt
 	if durationMS <= 0 && seg.NumFrames > 0 && fps > 0 {
 		durationMS = int64(math.Round(float64(seg.NumFrames) * 1000 / float64(fps)))
 	}
+	publishQueueMS := int64(0)
+	queuedWallMS := int64(0)
+	if !seg.QueuedAt.IsZero() {
+		queuedWallMS = seg.QueuedAt.UnixMilli()
+		publishQueueMS = publishStart.Sub(seg.QueuedAt).Milliseconds()
+	}
 	p.signalingFn(p.sessionID, map[string]any{
 		"type":                 "av_segment_diagnostic",
 		"turn_seq":             seg.Epoch,
@@ -1132,6 +1179,8 @@ func (p *DirectPeer) sendAVSegmentDiagnostic(seg *mediapeer.AVSegment, publishSt
 		"fps":                  fps,
 		"audio_samples":        len(seg.PCM) / 2,
 		"sample_rate":          seg.SampleRate,
+		"queued_wall_ms":       queuedWallMS,
+		"publish_queue_ms":     publishQueueMS,
 		"publish_wall_ms":      publishStart.UnixMilli(),
 		"marker_id":            seg.MarkerID,
 		"marker_media_time_ms": seg.MarkerMediaMS,
@@ -1146,6 +1195,26 @@ func (p *DirectPeer) isPlaybackStale(epoch uint64) bool {
 	}
 	current := p.playbackEpoch.Load()
 	return current > 0 && epoch < current
+}
+
+func (p *DirectPeer) isRawAVSegmentStale(seg *mediapeer.RawAVSegment) bool {
+	if seg == nil {
+		return true
+	}
+	if p.isPlaybackStale(seg.Epoch) {
+		return true
+	}
+	return seg.Supersedable && p.latestSpeechEpoch.Load() > seg.SpeechEpochAtQueue
+}
+
+func (p *DirectPeer) isAVSegmentStale(seg *mediapeer.AVSegment) bool {
+	if seg == nil {
+		return true
+	}
+	if p.isPlaybackStale(seg.Epoch) {
+		return true
+	}
+	return seg.Supersedable && p.latestSpeechEpoch.Load() > seg.SpeechEpochAtQueue
 }
 
 // PublishAudioFrame publishes raw PCM audio (for TTS in standard pipeline).

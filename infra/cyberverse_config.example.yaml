@@ -30,6 +30,9 @@ inference:
         enabled: true
         # Select the avatar backend initialized by the inference process.
         default: "flash_head"
+        # cached_video plays a pre-rendered standby MP4 while idle.
+        # silent_inference keeps one realtime avatar stream open and feeds idle audio.
+        idle_strategy: "cached_video"
         runtime:
             cuda_visible_devices: 0 # Use 0,1 for two GPUs.
             world_size: 1 # Match the number of visible GPUs.

@@ -124,6 +124,8 @@ export type AVSegmentTimeline = {
   fps: number
   audioSamples: number
   sampleRate: number
+  queuedWallMs: number
+  publishQueueMs: number
   publishWallMs: number
   receivedWallMs: number
   markerId: number

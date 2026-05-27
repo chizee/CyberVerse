@@ -626,33 +626,36 @@ func logVoiceTrace(event, sessionID string, turnSeq uint64, replyID, questionID 
 // coordinating between the gRPC inference client, media peers,
 // and WebSocket hub for real-time updates.
 type Orchestrator struct {
-	inference     inference.InferenceService
-	wsHub         *ws.Hub
-	sessionMgr    *SessionManager
-	charStore     *character.Store
-	peers         map[string]mediapeer.MediaPeer // sessionID → media peer (Bot or DirectPeer)
-	directPeers   map[string]*direct.DirectPeer  // sessionID → DirectPeer (for signaling dispatch)
-	recorder      *recording.VideoRecorder
-	streamingMode string
-	pipelineCfg   config.PipelineConfig
-	turnServer    *direct.TURNServer
-	webrtcAPI     *webrtc.API
-	estimatorCh   <-chan cc.BandwidthEstimator
-	taskService   *agenttask.Service
-	avatarMu      sync.Mutex
-	mu            sync.RWMutex
+	inference      inference.InferenceService
+	wsHub          *ws.Hub
+	sessionMgr     *SessionManager
+	charStore      *character.Store
+	peers          map[string]mediapeer.MediaPeer // sessionID → media peer (Bot or DirectPeer)
+	directPeers    map[string]*direct.DirectPeer  // sessionID → DirectPeer (for signaling dispatch)
+	recorder       *recording.VideoRecorder
+	streamingMode  string
+	pipelineCfg    config.PipelineConfig
+	turnServer     *direct.TURNServer
+	webrtcAPI      *webrtc.API
+	estimatorCh    <-chan cc.BandwidthEstimator
+	taskService    *agenttask.Service
+	avatarMu       sync.Mutex
+	silentMu       sync.Mutex
+	silentRuntimes map[string]*silentAvatarRuntime
+	mu             sync.RWMutex
 }
 
 // New creates a new Orchestrator.
 func New(inferenceClient inference.InferenceService, hub *ws.Hub, sessionMgr *SessionManager, recorder *recording.VideoRecorder, charStore *character.Store, pipelineCfg ...config.PipelineConfig) *Orchestrator {
 	o := &Orchestrator{
-		inference:   inferenceClient,
-		wsHub:       hub,
-		sessionMgr:  sessionMgr,
-		charStore:   charStore,
-		peers:       make(map[string]mediapeer.MediaPeer),
-		directPeers: make(map[string]*direct.DirectPeer),
-		recorder:    recorder,
+		inference:      inferenceClient,
+		wsHub:          hub,
+		sessionMgr:     sessionMgr,
+		charStore:      charStore,
+		peers:          make(map[string]mediapeer.MediaPeer),
+		directPeers:    make(map[string]*direct.DirectPeer),
+		silentRuntimes: make(map[string]*silentAvatarRuntime),
+		recorder:       recorder,
 	}
 	if len(pipelineCfg) > 0 {
 		o.pipelineCfg = pipelineCfg[0]
@@ -662,6 +665,21 @@ func New(inferenceClient inference.InferenceService, hub *ws.Hub, sessionMgr *Se
 		o.streamingMode = "direct"
 	}
 	return o
+}
+
+func (o *Orchestrator) AvatarIdleStrategy() string {
+	if o == nil {
+		return config.AvatarIdleStrategyCachedVideo
+	}
+	strategy, err := config.NormalizeAvatarIdleStrategy(o.pipelineCfg.AvatarIdleStrategy)
+	if err != nil {
+		return config.AvatarIdleStrategyCachedVideo
+	}
+	return strategy
+}
+
+func (o *Orchestrator) useSilentInference() bool {
+	return o != nil && o.AvatarEnabled() && o.AvatarIdleStrategy() == config.AvatarIdleStrategySilentInference
 }
 
 // HandleSignaling dispatches WebRTC signaling messages to the DirectPeer.
@@ -1457,6 +1475,9 @@ loop:
 // When roomMgr is nil (direct mode), a DirectPeer is created instead of a LiveKit Bot.
 func (o *Orchestrator) SetupSession(ctx context.Context, session *Session, roomMgr *livekit.RoomManager) (mediapeer.MediaPeer, []string, error) {
 	warnings := []string{}
+	if o.useSilentInference() && session != nil && o.hasOtherSilentAvatarRuntime(session.ID) {
+		return nil, warnings, errors.New("silent_inference currently supports one active avatar session")
+	}
 
 	// Best-effort: apply the character's active avatar image when realtime
 	// avatar inference is enabled. Pure voice sessions keep cached idle videos
@@ -1524,6 +1545,8 @@ func (o *Orchestrator) SetupSession(ctx context.Context, session *Session, roomM
 	o.mu.Lock()
 	o.peers[session.ID] = peer
 	o.mu.Unlock()
+
+	o.startSilentAvatarRuntime(context.Background(), session)
 
 	session.SetState(StateConnected)
 	return peer, warnings, nil
@@ -2513,6 +2536,34 @@ func (o *Orchestrator) runStandardPipeline(ctx context.Context, session *Session
 		return
 	}
 
+	if o.useSilentInference() {
+		defer finishRec()
+		callbacks := silentAvatarSpeechCallbacks{
+			TraceLabel: func(segSeq int64) string {
+				return voiceTraceLabel(sessionID, turnSeq, "standard", "", segSeq)
+			},
+			OnFirstVideo: func(width, height, fps int) {
+				log.Printf("TTFF std pipeline session=%s first_video_chunk=%.3fs", sessionID, time.Since(pipelineStart).Seconds())
+				session.SetState(StateSpeaking)
+				o.broadcastStatusTurn(sessionID, "speaking", turnSeq)
+				beginRec(width, height, fps)
+			},
+			OnSegment: func(rgb []byte, _ []byte, _ int) {
+				writeRecVideo(rgb)
+			},
+			OnFinished: finishRec,
+		}
+		if err := o.runSilentAvatarSpeechStream(ctx, sessionID, turnSeq, ttsAudioCh, ttsErrCh, callbacks, appendRecAudio); err != nil {
+			if errors.Is(err, context.Canceled) || ctx.Err() != nil {
+				return
+			}
+			log.Printf("silent avatar standard pipeline error for session %s: %v", sessionID, err)
+			o.broadcastError(sessionID, "Avatar generation failed")
+			return
+		}
+		return
+	}
+
 	// 4. Start Avatar stream
 	stdSyncBuf := newVoiceAVSyncBuffer(voiceMaxPCMBufferSamples)
 	avatarAudioCh := make(chan *pb.AudioChunk, 8)
@@ -3024,6 +3075,100 @@ func (o *Orchestrator) runVoiceLLMPipelineWithConfig(
 		logVoiceTrace("go_avatar_worker_started", sessionID, turn.seq, turn.replyID, turn.questionID, turn.userFinalAt)
 		currentTurnDone = turn.doneCh
 
+		if o.useSilentInference() {
+			go func(turn *voicePipelineTurn) {
+				result := voicePipelineTurnResult{turn: turn}
+				defer func() {
+					turn.doneCh <- result
+				}()
+
+				runtime := o.silentRuntime(sessionID)
+				if runtime == nil {
+					result.err = errors.New("silent avatar runtime is not running")
+					return
+				}
+
+				var turnRec *recording.TurnRecording
+				callbacks := silentAvatarSpeechCallbacks{
+					TraceLabel: func(segSeq int64) string {
+						if segSeq == 1 {
+							return voiceTraceLabel(sessionID, turn.seq, turn.replyID, turn.questionID, segSeq)
+						}
+						return ""
+					},
+					UserFinalAt: turn.userFinalAt,
+					OnFirstVideo: func(width, height, fps int) {
+						turn.firstVideoAt = time.Now()
+						logVoiceTrace(
+							"go_avatar_first_video_received",
+							sessionID,
+							turn.seq,
+							turn.replyID,
+							turn.questionID,
+							turn.userFinalAt,
+							"avatar_ms="+strconv.FormatInt(time.Since(turn.avatarWorkerAt).Milliseconds(), 10),
+						)
+						log.Printf("TTFF voice pipeline session=%s turn=%d first_video_chunk=%.3fs", sessionID, turn.seq, time.Since(turn.turnStart).Seconds())
+						if session.IsCurrentPipeline(pipelineSeq) && session.IsCurrentTurn(turn.seq) {
+							session.SetState(StateSpeaking)
+							o.broadcastStatusTurn(sessionID, "speaking", turn.seq)
+						}
+						if o.recorder != nil && turn.recTurnID != "" && width > 0 && height > 0 && fps > 0 {
+							turnRec = o.recorder.BeginTurn(turn.sessionDir, turn.recTurnID, width, height, fps)
+						}
+					},
+					OnSegment: func(rgb []byte, pcm []byte, sampleRate int) {
+						if turnRec != nil {
+							turnRec.WriteVideoChunk(rgb)
+							turnRec.WriteAudioChunk(pcm, sampleRate)
+						}
+					},
+					OnFinished: func() {
+						if turnRec != nil {
+							_ = turnRec.Finish()
+							turnRec = nil
+						}
+					},
+				}
+				speech, err := runtime.beginSpeech(turn.seq, callbacks)
+				if err != nil {
+					result.err = err
+					return
+				}
+				sentAudio := false
+				for {
+					select {
+					case <-turn.avatarCtx.Done():
+						runtime.cancelSpeech(speech, turn.avatarCtx.Err())
+						if turnRec != nil {
+							_ = turnRec.Finish()
+							turnRec = nil
+						}
+						return
+					case chunk, ok := <-turn.avatarAudioCh:
+						if !ok {
+							if !sentAudio {
+								runtime.cancelSpeech(speech, nil)
+								return
+							}
+							if err := runtime.finishSpeech(turn.avatarCtx, speech); err != nil && !errors.Is(err, context.Canceled) {
+								result.err = err
+							}
+							return
+						}
+						if err := runtime.submitSpeech(turn.avatarCtx, speech, chunk); err != nil {
+							if !errors.Is(err, context.Canceled) {
+								result.err = err
+							}
+							return
+						}
+						sentAudio = true
+					}
+				}
+			}(turn)
+			return
+		}
+
 		go func(turn *voicePipelineTurn) {
 			result := voicePipelineTurnResult{turn: turn}
 			defer func() {
@@ -3198,6 +3343,15 @@ func (o *Orchestrator) runVoiceLLMPipelineWithConfig(
 
 	closeTurnInput := func(turn *voicePipelineTurn) {
 		if turn == nil || !turn.avatarStarted || turn.avatarInputClosed {
+			return
+		}
+		if o.useSilentInference() {
+			close(turn.avatarAudioCh)
+			turn.avatarInputClosed = true
+			turn.avatarInputClosedAt = time.Now()
+			if turn.firstVideoAt.IsZero() {
+				logVoiceTrace("go_avatar_input_closed", sessionID, turn.seq, turn.replyID, turn.questionID, turn.userFinalAt)
+			}
 			return
 		}
 		sampleRate := turn.recAudioSR
@@ -3484,7 +3638,7 @@ func (o *Orchestrator) runVoiceLLMPipelineWithConfig(
 					if !currentTurn.avatarStarted {
 						startAvatarWorker(currentTurn)
 					}
-					if len(pcm) > 0 {
+					if len(pcm) > 0 && !o.useSilentInference() {
 						if dropped := currentTurn.syncBuf.appendPCM(pcm, pcmSampleRate); dropped > 0 {
 							bufferedSamples, _, _, _ := currentTurn.syncBuf.snapshot()
 							log.Printf("voice sync buffer overflow for session %s: dropped=%d bytes, buffered_samples=%d", sessionID, dropped, bufferedSamples)
@@ -3651,6 +3805,10 @@ func (o *Orchestrator) TeardownSession(sessionID string) error {
 	// Wait for pipeline goroutine to finish storing messages (up to 3s)
 	session.WaitPipelineDone(3 * time.Second)
 
+	if runtime := o.stopSilentAvatarRuntime(sessionID); runtime != nil {
+		runtime.wait(3 * time.Second)
+	}
+
 	// Disconnect media peer
 	o.mu.Lock()
 	peer, ok := o.peers[sessionID]
@@ -3674,6 +3832,8 @@ func (o *Orchestrator) TeardownSession(sessionID string) error {
 
 // TeardownAll cleans up all sessions. Called during server shutdown.
 func (o *Orchestrator) TeardownAll() {
+	o.stopAllSilentAvatarRuntimes()
+
 	o.mu.Lock()
 	peers := make(map[string]mediapeer.MediaPeer, len(o.peers))
 	for k, v := range o.peers {
@@ -3690,7 +3850,7 @@ func (o *Orchestrator) TeardownAll() {
 }
 
 // cancelPipeline cancels the active pipeline for a session if one exists.
-func (o *Orchestrator) cancelPipeline(session *Session) {
+func (o *Orchestrator) cancelPipeline(session *Session) bool {
 	session.mu.Lock()
 	cancel := session.PipelineCancel
 	session.PipelineCancel = nil
@@ -3698,7 +3858,9 @@ func (o *Orchestrator) cancelPipeline(session *Session) {
 
 	if cancel != nil {
 		cancel()
+		return true
 	}
+	return false
 }
 
 func (o *Orchestrator) advancePlaybackEpoch(sessionID string, turnSeq uint64) {
@@ -3854,6 +4016,27 @@ func (o *Orchestrator) runAssistantSpeechPipeline(ctx context.Context, session *
 					return
 				}
 			}
+		}
+		return
+	}
+
+	if o.useSilentInference() {
+		callbacks := silentAvatarSpeechCallbacks{
+			TraceLabel: func(segSeq int64) string {
+				return voiceTraceLabel(sessionID, turnSeq, "task", "", segSeq)
+			},
+			OnFirstVideo: func(_, _, _ int) {
+				session.SetState(StateSpeaking)
+				o.broadcastStatusTurn(sessionID, "speaking", turnSeq)
+			},
+		}
+		if err := o.runSilentAvatarSpeechStream(ctx, sessionID, turnSeq, ttsAudioCh, ttsErrCh, callbacks, nil); err != nil {
+			if errors.Is(err, context.Canceled) || ctx.Err() != nil {
+				return
+			}
+			log.Printf("silent avatar assistant speech error for session %s: %v", sessionID, err)
+			o.broadcastError(sessionID, "Avatar generation failed")
+			return
 		}
 		return
 	}

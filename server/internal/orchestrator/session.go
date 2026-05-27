@@ -160,13 +160,14 @@ func (s *Session) MarkPipelineRunning() uint64 {
 // MarkPipelineFinished signals that the pipeline goroutine has completed.
 // Late completions from an older pipeline will not close the current pipeline's done channel.
 func (s *Session) MarkPipelineFinished(seq uint64) {
-	s.mu.RLock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	ch := s.PipelineDone
 	currentSeq := s.PipelineSeq
-	s.mu.RUnlock()
 	if seq != currentSeq {
 		return
 	}
+	s.PipelineCancel = nil
 	if ch != nil {
 		select {
 		case <-ch:

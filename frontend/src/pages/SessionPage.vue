@@ -65,6 +65,7 @@ function parseVisualInputConfig(): Partial<VisualInputConfig> | undefined {
 
 const visualInputConfig = computed(() => parseVisualInputConfig())
 const hasVisualInputCapability = computed(() => !!visualInputConfig.value)
+const idleStrategy = computed(() => launchState.value?.idle_strategy || 'cached_video')
 
 // Both composables are called unconditionally (Vue requirement),
 // but only the active one is wired up.
@@ -147,6 +148,7 @@ let visualPreviewDragState: VisualPreviewDragState | null = null
 
 watch([chatConnected, connectionState], ([chatReady, mediaState]) => {
   if (startupGreetingReadySent.value) return
+  if (idleStrategy.value !== 'silent_inference') return
   if (!chatReady || mediaState !== 'connected') return
   if (sendWSMessage({ type: 'client_media_ready' })) {
     startupGreetingReadySent.value = true
@@ -260,9 +262,9 @@ watchEffect(() => {
 // Initialize idle video URLs from route query (if already cached at session creation)
 const launchIdleUrls = launchState.value?.idle_video_urls
 const launchIdleUrl = launchState.value?.idle_video_url || ''
-if (launchIdleUrls && launchIdleUrls.length > 0) {
+if (idleStrategy.value === 'cached_video' && launchIdleUrls && launchIdleUrls.length > 0) {
   idleVideoUrls.value = launchIdleUrls
-} else if (launchIdleUrl) {
+} else if (idleStrategy.value === 'cached_video' && launchIdleUrl) {
   idleVideoUrls.value = [launchIdleUrl]
 }
 
@@ -284,6 +286,19 @@ let _prevDisplayMode = ''
 const displayMode = computed<'webrtc' | 'standby' | 'placeholder'>(() => {
   const lastFrameAt = debugState.value.lastVideoFrameAtMs
   const hasFreshRealtimeFrame = !!lastFrameAt && clockMs.value - lastFrameAt < 3000
+  const hasRealtimeSize = !!videoElement.value?.videoWidth || !!debugState.value.network?.frameWidth
+
+  if (idleStrategy.value === 'silent_inference') {
+    const result = connectionState.value === 'connected' && (hasFreshRealtimeFrame || hasRealtimeSize)
+      ? 'webrtc'
+      : 'placeholder'
+    if (result !== _prevDisplayMode) {
+      const reason = result === 'webrtc' ? 'silent inference realtime stream' : 'silent inference waiting for media'
+      console.log(`[switch] ${_prevDisplayMode || 'init'} → ${result} | reason: ${reason}`)
+      _prevDisplayMode = result
+    }
+    return result
+  }
 
   let result: 'webrtc' | 'standby' | 'placeholder'
   let reason = ''

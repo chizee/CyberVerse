@@ -13,6 +13,27 @@ FLASHHEAD_GENERATION_STARTED_HEADER = (
 AVATAR_DISABLED_MESSAGE = "avatar inference is disabled by config"
 
 
+def _avatar_frames_per_chunk(plugin: AvatarPlugin, fps: int) -> int:
+    infer_params = getattr(plugin, "infer_params", {}) or {}
+    try:
+        frame_num = int(infer_params.get("frame_num", 0) or 0)
+        motion_frames = int(infer_params.get("motion_frames_num", 5) or 5)
+        if frame_num > motion_frames:
+            return frame_num - motion_frames
+    except (TypeError, ValueError):
+        pass
+
+    slice_len_samples = int(getattr(plugin, "_slice_len_samples", 0) or 0)
+    sample_rate = int(infer_params.get("sample_rate", 0) or 0)
+    if slice_len_samples > 0 and sample_rate > 0 and fps > 0:
+        return max(1, round(slice_len_samples * fps / sample_rate))
+
+    frame_num = int(getattr(plugin, "_frame_num", 0) or 0)
+    if frame_num > 0:
+        return frame_num
+    return 28
+
+
 def _metadata_value(context, key: str) -> str:
     for item_key, item_value in context.invocation_metadata():
         if item_key.lower() == key:
@@ -119,11 +140,14 @@ class AvatarGRPCService(avatar_pb2_grpc.AvatarServiceServicer):
             await context.abort(grpc.StatusCode.FAILED_PRECONDITION, AVATAR_DISABLED_MESSAGE)
         plugin = self._get_plugin()
         output_width, output_height = plugin.get_output_dimensions()
+        fps = int(plugin.get_fps() or 25)
+        frames_per_chunk = _avatar_frames_per_chunk(plugin, fps)
+        chunk_duration_s = float(frames_per_chunk / fps) if fps > 0 else 0.0
         return avatar_pb2.AvatarInfo(
             model_name=plugin.name,
-            output_fps=plugin.get_fps(),
+            output_fps=fps,
             output_width=output_width,
             output_height=output_height,
-            frames_per_chunk=28,
-            chunk_duration_s=1.12,
+            frames_per_chunk=frames_per_chunk,
+            chunk_duration_s=chunk_duration_s,
         )
