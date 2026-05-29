@@ -49,3 +49,4 @@ models/SoulX-LiveAct/hls_output/
 models/SoulX-LiveAct/uploads/
 
 skills-lock.json
+.codegraph/
