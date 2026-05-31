@@ -34,20 +34,24 @@ inference:
         # silent_inference keeps one realtime avatar stream open and feeds idle audio.
         idle_strategy: "cached_video"
         runtime:
+            # Used by scripts/inference.sh; world_size must match the visible GPU count.
             cuda_visible_devices: 0 # Use 0,1 for two GPUs.
-            world_size: 1 # Match the number of visible GPUs.
+            world_size: 1
         flash_head:
             plugin_class: "inference.plugins.avatar.flash_head_plugin.FlashHeadAvatarPlugin"
             models_dir: "models"
             checkpoint_dir: "./checkpoints/SoulX-FlashHead-1_3B"
             wav2vec_dir: "./checkpoints/wav2vec2-base-960h"
-            model_type: "pro"
+            model_type: "pro" # "pro" is higher quality; "lite" is faster/lower cost.
             device: "cuda:0"
             seed: 9999
+            # torch.compile can improve steady-state speed but may increase startup cost.
             compile_model: true
             compile_vae: true
+            # Keeps multi-GPU collectives off background Python threads.
             dist_worker_main_thread: true
             infer_params:
+                # These values define FlashHead's streaming window and output cadence.
                 frame_num: 33
                 motion_frames_latent_num: 2
                 tgt_fps: 20
@@ -64,19 +68,23 @@ inference:
             ckpt_dir: "./checkpoints/LiveAct"
             wav2vec_dir: "./checkpoints/chinese-wav2vec2-base"
             seed: 42
-            t5_cpu: false
+            # Memory/performance switches. Enable offload/cache compression only when GPU memory is tight.
+            t5_cpu: false # When true, place the T5 text encoder on CPU to save GPU memory.
+            fp8_gemm: false # Use FP8 GEMM acceleration when supported.
+            fp4_gemm: true # Use FP4 GEMM acceleration on supported B-series GPUs.
             fp8_kv_cache: false
             offload_cache: false
             block_offload: false
             mean_memory: false
-            compile_wan_model: false
-            compile_vae_decode: false
+            # torch.compile for Wan/VAE decode; slower startup, may be unstable in some dev environments.
+            compile_wan_model: true # When true, torch.compile the Wan model; slower startup, may be unstable.
+            compile_vae_decode: true
             dist_worker_main_thread: true
             default_prompt: "一个人在说话"
             infer_params:
-                size: "320*480"
+                size: "320*480" # width*height
                 fps: 20
-                audio_cfg: 1.0
+                audio_cfg: 1.0 # Audio classifier-free guidance scale.
 
     omni:
         # Real realtime omni model providers only.
@@ -96,8 +104,8 @@ inference:
             input_sample_rate: 16000
             output_sample_rate: 24000
             vad_type: "semantic_vad"
-            vad_threshold: 0.5
-            vad_silence_duration_ms: 800
+            vad_threshold: 0.5 # VAD sensitivity; higher usually requires clearer speech.
+            vad_silence_duration_ms: 800 # Silence duration that ends a user turn.
 
     persona:
         # PersonaAgent is the orchestration layer. It wraps a concrete omni
@@ -120,7 +128,7 @@ inference:
                     api_base: "https://developer.zhihu.com"
                     timeout_seconds: 30
                     zhida_model: "zhida-fast-1p5"
-            max_agent_iterations: 100
+            max_agent_iterations: 100 # Max local sub-agent loop iterations per task.
 
     llm:
         # Used by standard mode and by PersonaAgent's local sub-agent runtime.
@@ -131,14 +139,14 @@ inference:
             plugin_class: "inference.plugins.llm.qwen_plugin.QwenLLMPlugin"
             api_key: "${DASHSCOPE_API_KEY}"
             model: "qwen3.6-plus"
-            temperature: 0.7
+            temperature: 0.7 # Sampling randomness for LLM output.
             extra_body:
-                enable_thinking: false
+                enable_thinking: false # Disable Qwen thinking mode for faster spoken replies.
         openai:
             plugin_class: "inference.plugins.llm.openai_plugin.OpenAILLMPlugin"
             api_key: "${OPENAI_API_KEY}"
             model: "gpt-4o"
-            temperature: 0.7
+            temperature: 0.7 # Sampling randomness for LLM output.
 
     embedding:
         # Used by local character RAG indexes.
@@ -159,7 +167,7 @@ inference:
             model: "qwen3-tts-flash-realtime"
             voice: "Momo"
             sample_rate: 24000
-            target_sample_rate: 16000
+            target_sample_rate: 16000 # Resampled rate sent to avatar models.
         openai:
             plugin_class: "inference.plugins.tts.openai_tts_plugin.OpenAITTSPlugin"
             api_key: "${OPENAI_API_KEY}"
@@ -173,13 +181,13 @@ inference:
             plugin_class: "inference.plugins.asr.qwen_asr_plugin.QwenASRPlugin"
             api_key: "${DASHSCOPE_API_KEY}"
             model: "qwen3-asr-flash-realtime"
-            language: "auto"
+            language: "auto" # Auto-detect language; set a code to force one.
             sample_rate: 16000
-            vad_threshold: 0.8
-            vad_silence_duration_ms: 600
+            vad_threshold: 0.8 # Speech detection sensitivity for ASR turns.
+            vad_silence_duration_ms: 600 # Silence duration that finalizes ASR text.
         whisper:
             plugin_class: "inference.plugins.asr.whisper_plugin.WhisperASRPlugin"
-            model_size: "base"
+            model_size: "base" # Whisper model size, such as base/small/medium.
             language: "auto"
             device: "cpu"
 
@@ -194,20 +202,20 @@ pipeline:
     rag:
         enabled: true
         top_k: 5
-        min_score: 0.25
-        max_context_chars: 4500
-        chunk_chars: 900
-        chunk_overlap_chars: 120
+        min_score: 0.25 # Drop retrieval hits below this relevance score.
+        max_context_chars: 4500 # Max retrieved text injected into prompts.
+        chunk_chars: 900 # Target document chunk size during indexing.
+        chunk_overlap_chars: 120 # Overlap between adjacent indexed chunks.
     visual_input:
         enabled: true
-        frame_interval_ms: 1000
+        frame_interval_ms: 1000 # Minimum interval between accepted visual frames.
         max_width: 1280
         max_height: 720
         jpeg_quality: 0.78
-        max_frame_bytes: 524288
-        ws_max_message_bytes: 1048576
+        max_frame_bytes: 524288 # Per-frame byte limit after compression.
+        ws_max_message_bytes: 1048576 # Max WebSocket message size for visual input.
         max_recent_frames: 2
-        frame_ttl_ms: 10000
+        frame_ttl_ms: 10000 # Drop visual frames older than this.
     turn_enabled: true
     turn_port: 8443 # TCP port for embedded TURN server, useful through SSH tunnels.
     turn_realm: "cyberverse"
@@ -221,7 +229,7 @@ recording:
     # Used when a session has no character-specific recording directory.
     # Character sessions are stored under data/characters/.../sessions/...
     output_dir: "./recordings"
-    # x264 quality for recorded MP4 files. Lower means higher quality/larger files.
+    # x264 CRF. Lower means higher quality and larger files.
     crf: 23
 
 inference_grpc:

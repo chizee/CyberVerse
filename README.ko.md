@@ -308,6 +308,8 @@ inference:
       ckpt_dir: "./checkpoints/LiveAct"                     # ← 로컬 경로
       wav2vec_dir: "./checkpoints/chinese-wav2vec2-base"   # ← 로컬 경로
       seed: 42
+      fp8_gemm: true
+      fp4_gemm: false
       compile_wan_model: false
       compile_vae_decode: false
       dist_worker_main_thread: true

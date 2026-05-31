@@ -309,6 +309,8 @@ inference:
       ckpt_dir: "./checkpoints/LiveAct"                     # ← your path
       wav2vec_dir: "./checkpoints/chinese-wav2vec2-base"   # ← your path
       seed: 42
+      fp8_gemm: true
+      fp4_gemm: false
       compile_wan_model: false
       compile_vae_decode: false
       dist_worker_main_thread: true

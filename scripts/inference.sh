@@ -177,11 +177,24 @@ elif [[ "${AVATAR_MODEL}" == "live_act" ]]; then
       "inference.avatar.live_act.dist_worker_main_thread" \
       '1')"
   fi
+  if [[ -z "${LIVEACT_FP8_GEMM:-}" ]]; then
+    LIVEACT_FP8_GEMM="$(_yaml_first_val \
+      "inference.avatar.live_act.fp8_gemm" \
+      '1')"
+  fi
+  if [[ -z "${LIVEACT_FP4_GEMM:-}" ]]; then
+    LIVEACT_FP4_GEMM="$(_yaml_first_val \
+      "inference.avatar.live_act.fp4_gemm" \
+      '0')"
+  fi
   export LIVEACT_COMPILE_WAN_MODEL LIVEACT_COMPILE_VAE_DECODE
   export LIVEACT_DIST_WORKER_MAIN_THREAD
+  export LIVEACT_FP8_GEMM LIVEACT_FP4_GEMM
   echo "[inference] LIVEACT_COMPILE_WAN_MODEL=${LIVEACT_COMPILE_WAN_MODEL}"
   echo "[inference] LIVEACT_COMPILE_VAE_DECODE=${LIVEACT_COMPILE_VAE_DECODE}"
   echo "[inference] LIVEACT_DIST_WORKER_MAIN_THREAD=${LIVEACT_DIST_WORKER_MAIN_THREAD}"
+  echo "[inference] LIVEACT_FP8_GEMM=${LIVEACT_FP8_GEMM}"
+  echo "[inference] LIVEACT_FP4_GEMM=${LIVEACT_FP4_GEMM}"
 fi
 
 exec torchrun \

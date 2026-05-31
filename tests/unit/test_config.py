@@ -37,6 +37,8 @@ def test_load_config_basic():
     live_act_infer_params = config["inference"]["avatar"]["live_act"]["infer_params"]
     live_act = config["inference"]["avatar"]["live_act"]
     assert live_act["dist_worker_main_thread"] is True
+    assert live_act["fp8_gemm"] is False
+    assert live_act["fp4_gemm"] is True
     assert set(live_act_infer_params.keys()) == {
         "size",
         "fps",

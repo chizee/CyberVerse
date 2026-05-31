@@ -5,7 +5,11 @@ import pytest
 pytest.importorskip("torch")
 
 from inference.core.types import PluginConfig
-from inference.plugins.avatar.live_act_plugin import LiveActAvatarPlugin
+from inference.plugins.avatar.live_act_plugin import (
+    LiveActAvatarPlugin,
+    _compile_wan_model,
+    _resolve_gemm_config,
+)
 
 
 def _config(*, warmup_enabled: bool) -> PluginConfig:
@@ -15,6 +19,8 @@ def _config(*, warmup_enabled: bool) -> PluginConfig:
             "world_size": 1,
             "seed": 42,
             "t5_cpu": True,
+            "fp8_gemm": True,
+            "fp4_gemm": False,
             "fp8_kv_cache": False,
             "offload_cache": False,
             "block_offload": False,
@@ -70,6 +76,8 @@ def test_init_sync_runs_warmup_after_avatar_setup():
     assert plugin._height == 480
     assert plugin._fps == 20
     assert plugin._audio_cfg == 1.0
+    assert plugin._fp8_gemm is True
+    assert plugin._fp4_gemm is False
 
 
 def test_init_sync_skips_warmup_when_disabled():
@@ -104,3 +112,70 @@ def test_get_output_dimensions_aligns_to_vae_stride():
     plugin._height = 417
 
     assert plugin.get_output_dimensions() == (256, 416)
+
+
+def test_resolve_gemm_config_defaults_to_fp8_when_unset(monkeypatch):
+    monkeypatch.delenv("LIVEACT_FP8_GEMM", raising=False)
+    monkeypatch.delenv("LIVEACT_FP4_GEMM", raising=False)
+    cfg = _config(warmup_enabled=False)
+    cfg.params.pop("fp8_gemm")
+    cfg.params.pop("fp4_gemm")
+
+    assert _resolve_gemm_config(cfg) == (True, False)
+
+
+def test_resolve_gemm_config_prefers_fp4_over_fp8(monkeypatch):
+    monkeypatch.delenv("LIVEACT_FP8_GEMM", raising=False)
+    monkeypatch.delenv("LIVEACT_FP4_GEMM", raising=False)
+    cfg = _config(warmup_enabled=False)
+    cfg.params["fp8_gemm"] = True
+    cfg.params["fp4_gemm"] = True
+
+    assert _resolve_gemm_config(cfg) == (False, True)
+
+
+def test_resolve_gemm_config_accepts_env_override(monkeypatch):
+    monkeypatch.setenv("LIVEACT_FP8_GEMM", "0")
+    monkeypatch.setenv("LIVEACT_FP4_GEMM", "1")
+    cfg = _config(warmup_enabled=False)
+    cfg.params["fp8_gemm"] = True
+    cfg.params["fp4_gemm"] = False
+
+    assert _resolve_gemm_config(cfg) == (False, True)
+
+
+def test_compile_wan_model_uses_default_compile_for_fp4(monkeypatch):
+    calls = []
+    model = object()
+
+    def fake_compile(*args, **kwargs):
+        calls.append((args, kwargs))
+        return "compiled"
+
+    monkeypatch.setattr("inference.plugins.avatar.live_act_plugin.torch.compile", fake_compile)
+
+    assert _compile_wan_model(model, fp4_gemm=True) == "compiled"
+    assert calls == [((model,), {})]
+
+
+def test_compile_wan_model_keeps_existing_compile_options_without_fp4(monkeypatch):
+    calls = []
+    model = object()
+
+    def fake_compile(*args, **kwargs):
+        calls.append((args, kwargs))
+        return "compiled"
+
+    monkeypatch.setattr("inference.plugins.avatar.live_act_plugin.torch.compile", fake_compile)
+
+    assert _compile_wan_model(model, fp4_gemm=False) == "compiled"
+    assert calls == [
+        (
+            (model,),
+            {
+                "mode": "max-autotune-no-cudagraphs",
+                "backend": "inductor",
+                "dynamic": True,
+            },
+        )
+    ]

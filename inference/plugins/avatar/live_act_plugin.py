@@ -110,6 +110,23 @@ def _parse_bool(value: object, *, default: bool) -> bool:
     raise ValueError(f"Invalid boolean value: {value!r}")
 
 
+def _resolve_gemm_config(config: PluginConfig) -> tuple[bool, bool]:
+    fp4_gemm = _parse_bool(
+        os.environ.get("LIVEACT_FP4_GEMM", config.params.get("fp4_gemm")),
+        default=False,
+    )
+    fp8_gemm = _parse_bool(
+        os.environ.get("LIVEACT_FP8_GEMM", config.params.get("fp8_gemm")),
+        default=not fp4_gemm,
+    )
+    if fp4_gemm and fp8_gemm:
+        logger.warning(
+            "LiveAct FP4 GEMM requested together with FP8 GEMM; using FP4 GEMM only."
+        )
+        fp8_gemm = False
+    return fp8_gemm, fp4_gemm
+
+
 def _parse_positive_float(value: object, *, default: float) -> float:
     if value is None:
         return default
@@ -117,6 +134,17 @@ def _parse_positive_float(value: object, *, default: float) -> float:
     if parsed <= 0:
         raise ValueError(f"Expected a positive float, got {value!r}")
     return parsed
+
+
+def _compile_wan_model(model, *, fp4_gemm: bool):
+    if fp4_gemm:
+        return torch.compile(model)
+    return torch.compile(
+        model,
+        mode="max-autotune-no-cudagraphs",
+        backend="inductor",
+        dynamic=True,
+    )
 
 
 def _is_primary_rank(rank: int, world_size: int) -> bool:
@@ -220,6 +248,8 @@ class LiveActAvatarPlugin(AvatarPlugin):
         self._audio_cfg: float = 1.0
         self._device: int = 0
         self._t5_cpu: bool = True
+        self._fp8_gemm: bool = True
+        self._fp4_gemm: bool = False
         self._fp8_kv_cache: bool = False
         self._offload_cache: bool = False
         self._block_offload: bool = False
@@ -295,6 +325,7 @@ class LiveActAvatarPlugin(AvatarPlugin):
         self._seed = int(config.params.get("seed", 42))
         self._audio_cfg = float(_get_infer_param(config, "audio_cfg", 1.0))
         self._t5_cpu = bool(config.params.get("t5_cpu", True))
+        self._fp8_gemm, self._fp4_gemm = _resolve_gemm_config(config)
         self._fp8_kv_cache = bool(config.params.get("fp8_kv_cache", False))
         self._offload_cache = bool(config.params.get("offload_cache", False))
         self._block_offload = bool(config.params.get("block_offload", False))
@@ -423,7 +454,9 @@ class LiveActAvatarPlugin(AvatarPlugin):
         )
         if _is_primary_rank(self._rank, self._world_size):
             logger.info(
-                "LiveAct torch.compile: wan_model=%s vae_decode=%s",
+                "LiveAct acceleration: fp8_gemm=%s fp4_gemm=%s compile_wan_model=%s vae_decode=%s",
+                self._fp8_gemm,
+                self._fp4_gemm,
                 compile_wan_model,
                 compile_vae_decode,
             )
@@ -450,8 +483,26 @@ class LiveActAvatarPlugin(AvatarPlugin):
             ckpt_dir, torch_dtype=torch.bfloat16, low_cpu_mem_usage=False
         ).to(dtype=torch.bfloat16)
 
-        from fp8_gemm import FP8GemmOptions, enable_fp8_gemm
-        enable_fp8_gemm(self._wan_model, options=FP8GemmOptions())
+        if self._fp4_gemm:
+            from fp4_gemm import (
+                FP4GemmOptions,
+                enable_fp4_gemm,
+                materialize_fp4_gemm,
+            )
+
+            def filter_fn(name, module):
+                del module
+                return "blocks." in name
+
+            enable_fp4_gemm(
+                self._wan_model,
+                options=FP4GemmOptions(),
+                module_filter=filter_fn,
+            )
+        elif self._fp8_gemm:
+            from fp8_gemm import FP8GemmOptions, enable_fp8_gemm
+
+            enable_fp8_gemm(self._wan_model, options=FP8GemmOptions())
 
         if self._block_offload:
             for name, child in self._wan_model.named_children():
@@ -463,12 +514,15 @@ class LiveActAvatarPlugin(AvatarPlugin):
         else:
             self._wan_model = self._wan_model.to(device)
 
+        if self._fp4_gemm and not self._block_offload:
+            materialize_fp4_gemm(self._wan_model, torch.device(f"cuda:{device}"))
+
         self._wan_model.freqs = self._wan_model.freqs.to(device)
         self._wan_model.eval()
         if compile_wan_model:
-            self._wan_model = torch.compile(
-                self._wan_model, mode="max-autotune-no-cudagraphs",
-                backend="inductor", dynamic=True,
+            self._wan_model = _compile_wan_model(
+                self._wan_model,
+                fp4_gemm=self._fp4_gemm,
             )
 
         # Init kv indices for each block
@@ -682,8 +736,14 @@ class LiveActAvatarPlugin(AvatarPlugin):
                                 skip_audio=i not in (1, 2),
                                 **arg_c,
                             )[0]
-                            dt = (self._timesteps[i] - self._timesteps[i + 1]) / 1000
-                            latent = latent + (-noise_pred) * dt[0]
+                            x0_pred = latent + (
+                                -noise_pred
+                            ) * (self._timesteps[i][0] / 1000 - 0.0)
+                            latent = (
+                                (1 - self._timesteps[i + 1][0] / 1000) * x0_pred
+                                + torch.randn_like(x0_pred)
+                                * (self._timesteps[i + 1][0] / 1000)
+                            )
 
                         if iteration == 0:
                             _videos = self._vae.decode(latent)
@@ -1019,8 +1079,11 @@ class LiveActAvatarPlugin(AvatarPlugin):
                     )[0]
                     noise_pred = noise_null + self._audio_cfg * (noise_pred - noise_null)
 
-                dt = (self._timesteps[i] - self._timesteps[i + 1]) / 1000
-                latent = latent + (-noise_pred) * dt[0]
+                x0_pred = latent + (-noise_pred) * (self._timesteps[i][0] / 1000 - 0.0)
+                latent = (
+                    (1 - self._timesteps[i + 1][0] / 1000) * x0_pred
+                    + torch.randn_like(x0_pred) * (self._timesteps[i + 1][0] / 1000)
+                )
 
             # VAE decode with overlap
             if iteration == 0:

@@ -212,6 +212,8 @@ inference:
       wav2vec_dir: "/tmp/live_wav2vec"
       seed: 42
       t5_cpu: false
+      fp8_gemm: true
+      fp4_gemm: false
       fp8_kv_cache: false
       offload_cache: false
       block_offload: false
@@ -311,6 +313,12 @@ func TestGetLaunchConfigKeepsLiveActModelParamsOutOfGPUSection(t *testing.T) {
 			}
 			if got := fmt.Sprint(paths["inference.avatar.live_act.t5_cpu"]); got != "false" {
 				t.Fatalf("expected live_act t5_cpu in avatar section, got %#v", got)
+			}
+			if got := fmt.Sprint(paths["inference.avatar.live_act.fp8_gemm"]); got != "true" {
+				t.Fatalf("expected live_act fp8_gemm in avatar section, got %#v", got)
+			}
+			if got := fmt.Sprint(paths["inference.avatar.live_act.fp4_gemm"]); got != "false" {
+				t.Fatalf("expected live_act fp4_gemm in avatar section, got %#v", got)
 			}
 			if got := fmt.Sprint(paths["inference.avatar.live_act.compile_wan_model"]); got != "true" {
 				t.Fatalf("expected live_act compile_wan_model in avatar section, got %#v", got)
