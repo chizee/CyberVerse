@@ -444,5 +444,6 @@ GNU General Public License v3.0 — see [LICENSE](LICENSE).
 - [SoulX-FlashHead](https://github.com/Soul-AILab/SoulX-FlashHead) — Avatar model by Soul AI Lab
 
 - [SoulX-LiveAct](https://github.com/Soul-AILab/SoulX-LiveAct) - Avatar model by Soul AI Lab
+- [MuseTalk](https://github.com/TMElyralab/MuseTalk) — Real-time lip-sync model by TME Lyra Lab
 - [Pion](https://github.com/pion/webrtc) — Go WebRTC implementation
 - [Linux.do](https://linux.do/)
