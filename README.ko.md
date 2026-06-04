@@ -405,6 +405,51 @@ avatar inference가 활성화되면 `make inference`는 `cyberverse_config.yaml`
 - `Active avatar model initialized: <model_name>`
 - `CyberVerse Inference Server started on port 50051`
 
+## 자주 묻는 질문 — 자가 점검(QA)
+
+아바타 영상이 **끊기거나, 멈추거나, 음성보다 눈에 띄게 늦어질** 때는 먼저 추론이 재생 속도를 따라갈 수 있는지 확인하세요.
+
+### 추론 로그로 RTP 확인
+
+**RTP**(실시간 성능 계수)는 chunk 생성에 걸린 시간과, 해당 chunk를 설정 FPS로 재생하는 데 필요한 시간의 비율입니다.
+
+```text
+RTP = elapsed / (frames / fps)
+```
+
+| RTP | 의미 |
+|-----|------|
+| **&lt; 1** | 생성이 재생보다 빠름 — 실시간 스트리밍 여유 있음 |
+| **= 1** | 정확히 실시간 |
+| **&gt; 1** | 생성이 재생보다 느림 — **산출 속도가 소비 속도를 따라가지 못해** 지연·끊김이 발생하기 쉬움 |
+
+캐릭터가 말하는 동안 추론 터미널(`make inference`) 로그에서 **LiveAct** 또는 **FlashHead** chunk 줄을 확인합니다.
+
+**LiveAct 예시(RTP &gt; 1 — 실시간 불가):**
+
+```text
+INFO:inference.plugins.avatar.live_act_plugin:LiveAct chunk: idx=2 frames=32 320x480 fps=20 iter=2 elapsed=1.870s is_final=False
+```
+
+- 이 chunk 재생 시간: `32 / 20 = 1.6` 초  
+- RTP: `1.870 / 1.6 ≈ 1.17` (**&gt; 1** — 현재 GPU에서 320×480 @ 20 fps를 따라가지 못함)
+
+**FlashHead**도 `elapsed`와 `num_frames`, `fps`로 동일하게 계산합니다.
+
+```text
+INFO:...FlashHead video chunk generated: chunk_index=1 num_frames=33 512x512 fps=20 ... elapsed=2.100s
+```
+
+이 경우 RTP = `2.100 / (33/20) ≈ 1.27`로 실시간을 초과합니다.
+
+### RTP &gt; 1일 때 조치
+
+1. **해상도 또는 화질 낮추기** — 예: LiveAct `infer_params.size`, FlashHead `height` / `width`, 또는 FlashHead `model_type: "lite"`.
+2. **연산 자원 늘리기** — GPU 추가(`runtime.world_size`, `cuda_visible_devices`), 지원 시 FP8/FP4 GEMM·컴파일 가속 활성화, 더 빠른 GPU 사용.
+3. **위 벤치마크 표와 맞추기** — [Avatar 하드웨어 벤치마크](#avatar-하드웨어-벤치마크)에서 **실시간?** 이 **예**인 해상도·FPS·GPU 조합을 선택.
+
+순수 음성 모드(`inference.avatar.enabled: false`)는 Avatar RTP와 무관합니다. 음성만 끊기면 네트워크/WebRTC 또는 상류 음성 지연을 의심하고 [원격 접속 참고](#원격-접속-참고)를 보세요.
+
 ## 원격 접속 참고
 
 `streaming_mode: direct` 에서 내장 TURN 서버를 사용하는 경우, 브라우저가 서버의 `8443/TCP` 에 접속할 수 있어야 합니다. 페이지는 열리지만 오디오/비디오 연결이 끝내 성립하지 않거나, 서버 로그에 `ICE connection state: failed` 또는 `publish timeout waiting for connection` 이 보이면 먼저 로컬 머신에서 서버 `8443` 포트에 연결 가능한지 확인하세요.

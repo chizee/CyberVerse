@@ -403,6 +403,51 @@ Avatar inference 启用后，`make inference` 会读取 `cyberverse_config.yaml`
 - `Active avatar model initialized: <model_name>`
 - `CyberVerse Inference Server started on port 50051`
 
+## 常见问题自检（QA）
+
+当数字人视频出现**卡顿、画面冻结或明显落后于语音**时，可先按下面步骤自检，确认推理是否跟得上播放。
+
+### 用推理日志检查 RTP
+
+**RTP**（实时性能系数）表示：生成一段视频 chunk 实际耗时，与该 chunk 按配置 FPS 播放所需时长的比值：
+
+```text
+RTP = elapsed / (frames / fps)
+```
+
+| RTP | 含义 |
+|-----|------|
+| **&lt; 1** | 生成快于播放，有余量，可稳定实时推流 |
+| **= 1** | 刚好实时 |
+| **&gt; 1** | 生成慢于播放，**产出速度跟不上消耗速度**，容易积压、卡顿 |
+
+在角色说话时查看推理终端（`make inference`）日志，关注 **LiveAct** 或 **FlashHead** 的 chunk 行。
+
+**LiveAct 示例（RTP &gt; 1，无法实时）：**
+
+```text
+INFO:inference.plugins.avatar.live_act_plugin:LiveAct chunk: idx=2 frames=32 320x480 fps=20 iter=2 elapsed=1.870s is_final=False
+```
+
+- 该 chunk 播放时长：`32 / 20 = 1.6` 秒  
+- RTP：`1.870 / 1.6 ≈ 1.17`（**&gt; 1**，说明当前 GPU 在 320×480 @ 20 fps 下跟不上）
+
+**FlashHead** 同理，用 `elapsed` 与 `num_frames`、`fps` 计算：
+
+```text
+INFO:...FlashHead video chunk generated: chunk_index=1 num_frames=33 512x512 fps=20 ... elapsed=2.100s
+```
+
+此处 RTP = `2.100 / (33/20) ≈ 1.27`，同样超出实时。
+
+### RTP &gt; 1 时的处理建议
+
+1. **降低分辨率或画质档位** — 例如调低 LiveAct 的 `infer_params.size`、FlashHead 的 `height` / `width`，或将 FlashHead 设为 `model_type: "lite"`。
+2. **增加算力** — 增加 GPU（`runtime.world_size`、`cuda_visible_devices`），在支持时开启 FP8/FP4 GEMM 或编译加速，或换更快的显卡。
+3. **对照上方基准表** — 选择 [Avatar 硬件基准](#avatar-硬件基准) 中 **实时运行？** 为「是」的分辨率、FPS 与 GPU 组合。
+
+纯语音模式（`inference.avatar.enabled: false`）不涉及 Avatar RTP；若仅语音卡顿，多为网络/WebRTC 或上游语音链路问题，可参考 [远程访问说明](#远程访问说明)。
+
 ## 远程访问说明
 
 当 `streaming_mode: direct` 且使用内嵌 TURN 时，浏览器必须能够访问服务端的 `8443/TCP`。如果页面可以打开，但音视频始终无法建立连接，或者服务端日志中出现 `ICE connection state: failed`、`publish timeout waiting for connection`，请先在本机检查与服务器 `8443` 端口是否连通：

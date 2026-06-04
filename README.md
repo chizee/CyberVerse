@@ -406,6 +406,51 @@ When avatar inference is enabled, `make inference` reads `inference.avatar.defau
 - `Active avatar model initialized: <model_name>`
 - `CyberVerse Inference Server started on port 50051`
 
+## QA — Self-Check
+
+Use this section when avatar video **stutters, freezes, or falls behind** audio. The first step is to confirm whether inference can keep up with playback.
+
+### Check RTP from inference logs
+
+**RTP** (real-time performance factor) compares how long a chunk took to generate versus how long that chunk lasts at the configured FPS:
+
+```text
+RTP = elapsed / (frames / fps)
+```
+
+| RTP | Meaning |
+|-----|---------|
+| **&lt; 1** | Inference is faster than playback — headroom for realtime streaming |
+| **= 1** | Exactly realtime |
+| **&gt; 1** | Inference is slower than playback — production cannot keep up with consumption; video will lag or stutter |
+
+Watch the inference terminal (`make inference`) while the character is speaking. Look for **LiveAct** or **FlashHead** chunk lines.
+
+**LiveAct example (RTP &gt; 1 — cannot keep realtime):**
+
+```text
+INFO:inference.plugins.avatar.live_act_plugin:LiveAct chunk: idx=2 frames=32 320x480 fps=20 iter=2 elapsed=1.870s is_final=False
+```
+
+- Playback duration: `32 / 20 = 1.6` s  
+- RTP: `1.870 / 1.6 ≈ 1.17` (**&gt; 1** → too slow for 320×480 @ 20 fps on this GPU)
+
+**FlashHead** logs use the same idea (`elapsed` vs `num_frames` / `fps`):
+
+```text
+INFO:...FlashHead video chunk generated: chunk_index=1 num_frames=33 512x512 fps=20 ... elapsed=2.100s
+```
+
+Here RTP = `2.100 / (33/20) ≈ 1.27` — also above realtime.
+
+### What to do when RTP &gt; 1
+
+1. **Lower resolution or quality** — e.g. LiveAct `infer_params.size`, FlashHead `height` / `width`, or FlashHead `model_type: "lite"` instead of `"pro"`.
+2. **Add compute** — more GPUs (`runtime.world_size`, `cuda_visible_devices`), enable FP8/FP4 GEMM or compile options where supported, or use a faster GPU.
+3. **Match the benchmark table** — pick a resolution/FPS/GPU row marked **Yes** under **Real-time?** in [Avatar Hardware Benchmarks](#avatar-hardware-benchmarks) above.
+
+Pure voice mode (`inference.avatar.enabled: false`) does not use avatar RTP; stutter there is usually network/WebRTC or upstream voice latency — see [Remote Access Notes](#remote-access-notes).
+
 ## Remote Access Notes
 
 When `streaming_mode: direct` uses the embedded TURN server, the browser must be able to reach the server's `8443/TCP`. If the page loads but audio/video never connects, or the server logs show `ICE connection state: failed` or `publish timeout waiting for connection`, first check whether your machine can reach port `8443` on the server:
