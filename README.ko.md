@@ -97,6 +97,7 @@ GPU 리소스가 있고 Agent를 보이는 존재로 만들고 싶다면 avatar 
 - Conda
 - Python 3.10+
 - FFmpeg
+- libopus-dev、libopusfile-dev、libsoxr-dev，pkg-config
 
 > 순수 음성 세션에는 로컬 Avatar GPU가 필요하지 않습니다. 실행 비용은 설정한 실시간 음성 / omni / LLM / TTS / ASR provider에 따라 달라집니다.
 

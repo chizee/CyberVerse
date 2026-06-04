@@ -96,6 +96,7 @@ CyberVerse 采用multi-agent架构：PersonaAgent 始终驻守前台，负责与
 - Conda
 - Python 3.10+
 - FFmpeg
+- libopus-dev、libopusfile-dev、libsoxr-dev，pkg-config
 
 > 纯语音会话不需要本地 Avatar GPU。运行成本取决于你配置的实时语音 / omni / LLM / TTS / ASR 服务提供商。
 

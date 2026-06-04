@@ -97,6 +97,7 @@ Brain, voice, hearing, tools, memory, and face are all replaceable modules. You 
 - Conda
 - Python 3.10+
 - FFmpeg
+- libopus-dev、libopusfile-dev、libsoxr-dev，pkg-config
 
 > For pure voice sessions, no local avatar GPU is required. Runtime cost depends on the realtime voice/omni/LLM/TTS/ASR providers you configure.
 
