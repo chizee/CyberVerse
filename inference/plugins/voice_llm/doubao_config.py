@@ -51,6 +51,7 @@ class DoubaoSessionConfig:
     speaking_style: str = "你的说话风格简洁明了，语速适中，语调自然。"
     model: str = "2.2.0.0"
     end_smooth_window_ms: int = 1500
+    enable_custom_vad: bool = False
     say_hello_content: str = ""
     recv_timeout: int = 120
     input_mod: str = "keep_alive"
@@ -100,6 +101,7 @@ class DoubaoSessionConfig:
         model = config.params.get("model", "2.2.0.0")
         say_hello_content = str(config.params.get("say_hello_content", "") or "")
         end_smooth_window_ms = int(config.params.get("end_smooth_window_ms", 1500))
+        enable_custom_vad = bool(config.params.get("enable_custom_vad", False))
         recv_timeout = int(config.params.get("recv_timeout", 120))
         input_mod = config.params.get("input_mod", "keep_alive")
         output_sample_rate = int(config.params.get("output_sample_rate", 24000))
@@ -119,6 +121,7 @@ class DoubaoSessionConfig:
             speaking_style=speaking_style,
             model=model,
             end_smooth_window_ms=end_smooth_window_ms,
+            enable_custom_vad=enable_custom_vad,
             say_hello_content=say_hello_content,
             recv_timeout=recv_timeout,
             input_mod=input_mod,
@@ -220,6 +223,7 @@ class DoubaoSessionConfig:
             "asr": {
                 "extra": {
                     "end_smooth_window_ms": self.end_smooth_window_ms,
+                    "enable_custom_vad": self.enable_custom_vad,
                 },
             },
             "tts": {

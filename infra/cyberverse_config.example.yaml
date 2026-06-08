@@ -95,6 +95,7 @@ inference:
             app_id: "${DOUBAO_APP_ID}"
             voice_type: "zh_female_default"
             # Avoid DialogAudioIdleTimeoutError before FlashHead's first chunk arrives.
+            enable_custom_vad: true # Required for end_smooth_window_ms to take effect.
             end_smooth_window_ms: 6000
         qwen_omni:
             plugin_class: "inference.plugins.voice_llm.qwen_omni_realtime.QwenOmniRealtimePlugin"

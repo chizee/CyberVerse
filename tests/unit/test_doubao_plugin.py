@@ -805,3 +805,34 @@ class TestDoubaoSessionConfigOverrides:
         result = DoubaoSessionConfig.from_plugin_config(config)
         assert result.say_hello_content == ""
         assert result.has_welcome_message is False
+
+    def test_enable_custom_vad_defaults_false(self):
+        config = PluginConfig(
+            plugin_name="omni.doubao",
+            params={
+                "access_token": "tok",
+                "app_id": "app",
+            },
+        )
+        result = DoubaoSessionConfig.from_plugin_config(config)
+        assert result.enable_custom_vad is False
+        payload = result.build_start_session_payload()
+        assert payload["asr"]["extra"]["enable_custom_vad"] is False
+
+    def test_enable_custom_vad_in_start_session_payload(self):
+        config = PluginConfig(
+            plugin_name="omni.doubao",
+            params={
+                "access_token": "tok",
+                "app_id": "app",
+                "enable_custom_vad": True,
+                "end_smooth_window_ms": 6000,
+            },
+        )
+        result = DoubaoSessionConfig.from_plugin_config(config)
+        assert result.enable_custom_vad is True
+        payload = result.build_start_session_payload()
+        assert payload["asr"]["extra"] == {
+            "end_smooth_window_ms": 6000,
+            "enable_custom_vad": True,
+        }
