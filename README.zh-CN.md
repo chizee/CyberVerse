@@ -8,7 +8,8 @@
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL%20v3-blue.svg" alt="License: GPL v3"/></a>
   <a href="https://github.com/dsd2077/CyberVerse/pulls"><img src="https://img.shields.io/badge/PRs-welcome-brightgreen.svg" alt="PRs Welcome"/></a>
-  <a href="https://oosmetrics.com/repo/dsd2077/CyberVerse"><img src="https://api.oosmetrics.com/api/v1/badge/achievement/4795438a-70e7-4997-bd8a-93e7a13c8d81.svg" alt="oosmetrics: Top 1 in Streaming by velocity - 2026-05-12"/></a>
+  <a href="https://deepwiki.com/dsd2077/CyberVerse"><img src="https://deepwiki.com/badge.svg" alt="Ask DeepWiki" /></a>
+  <a href="https://x.com/dsd2077"><img src="https://img.shields.io/badge/@dsd2077-black?logo=x&logoColor=white" alt="X" /></a>
 </p>
 
 <p align="center">
