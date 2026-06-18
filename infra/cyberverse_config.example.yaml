@@ -104,6 +104,11 @@ inference:
             api_key: "${OPENAI_API_KEY}"
             model: "gpt-4o"
             temperature: 0.7 # Sampling randomness for LLM output.
+        litellm:
+            plugin_class: "inference.plugins.llm.litellm_plugin.LiteLLMPlugin"
+            model: "anthropic/claude-sonnet-4-6" # Any litellm model string.
+            temperature: 0.7
+            # api_key: "${ANTHROPIC_API_KEY}" # Or set provider env vars directly.
 
     embedding:
         # Used by local character RAG indexes.

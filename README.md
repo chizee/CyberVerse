@@ -87,7 +87,7 @@ When you have GPU resources and want the Agent to be visible, enable avatar infe
 
 ### Plugin-Based Stack
 
-Brain, voice, hearing, tools, memory, and face are all replaceable modules. You can combine omni models, LLMs, TTS, ASR, embeddings, RAG, tool calls, and Avatar backends in `cyberverse_config.yaml`, then configure different vendors' API keys and service endpoints in the web UI at **`/settings`** to switch providers and model combinations by scenario.
+Brain, voice, hearing, tools, memory, and face are all replaceable modules. You can combine omni models, LLMs, TTS, ASR, embeddings, RAG, tool calls, and Avatar backends in `cyberverse_config.yaml`, then configure different vendors' API keys and service endpoints in the web UI at **`/settings`** to switch providers and model combinations by scenario. The [LiteLLM](https://github.com/BerriAI/litellm) plugin adds access to 100+ LLM providers (AWS Bedrock, Azure, Vertex AI, Mistral, Cohere, etc.) through a single unified interface.
 
 ## Quick Start
 
