@@ -886,6 +886,88 @@ func TestCreateSessionBaiduCharacterReturnsH5AudioConfig(t *testing.T) {
 	}
 }
 
+func TestCreateSessionBaiduStandardEnablesGenericAudioInputPeer(t *testing.T) {
+	t.Setenv("BAIDU_XILING_APP_ID", "app-id")
+	t.Setenv("BAIDU_XILING_APP_KEY", "app-key")
+
+	charStore, err := character.NewStore(filepath.Join(t.TempDir(), "characters"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	char, err := charStore.Create(&character.Character{
+		Name:          "Baidu Standard Mic",
+		AvatarBackend: character.AvatarBackendBaiduXiling,
+		BaiduXiling: &character.BaiduXiling{
+			FigureID:     "figure-1",
+			ThumbnailURL: "https://example.com/baidu-thumb.png",
+		},
+		VoiceType: "温柔文雅",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	inf := &fakeInferenceService{
+		avatarInfo: &pb.AvatarInfo{ModelName: "avatar.flash_head", OutputFps: 25, OutputWidth: 512, OutputHeight: 512},
+	}
+	hub := ws.NewHub()
+	mgr := orchestrator.NewSessionManager(4)
+	t.Cleanup(mgr.Stop)
+	orch := orchestrator.New(inf, hub, mgr, nil, charStore)
+	t.Cleanup(orch.TeardownAll)
+	r := NewRouter(mgr, orch, hub, nil, nil, charStore, "", "")
+
+	body := `{"mode":"standard","character_id":"` + char.ID + `"}`
+	req := httptest.NewRequest("POST", "/api/v1/sessions", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp CreateSessionResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Mode != "standard" {
+		t.Fatalf("expected standard mode, got %q", resp.Mode)
+	}
+	if resp.BaiduXiling == nil {
+		t.Fatal("expected Baidu H5 config")
+	}
+	if resp.AudioInput == nil || !resp.AudioInput.Enabled {
+		t.Fatalf("expected audio_input.enabled for Baidu standard session, got %+v", resp.AudioInput)
+	}
+
+	client := &ws.Client{SessionID: resp.SessionID, Send: make(chan []byte, 20)}
+	hub.Register(client)
+	t.Cleanup(func() {
+		hub.Unregister(client)
+	})
+
+	orch.HandleSignaling(resp.SessionID, ws.WSMessage{Type: "webrtc_ready"})
+
+	deadline := time.After(2 * time.Second)
+	for {
+		select {
+		case raw := <-client.Send:
+			var event map[string]any
+			if err := json.Unmarshal(raw, &event); err != nil {
+				t.Fatalf("invalid websocket event: %v", err)
+			}
+			if event["type"] == "webrtc_offer" {
+				if event["sdp"] == "" {
+					t.Fatalf("expected SDP in webrtc_offer, got %+v", event)
+				}
+				return
+			}
+		case <-deadline:
+			t.Fatal("timed out waiting for Direct WebRTC offer")
+		}
+	}
+}
+
 func TestCreateSessionBaiduCharacterFallsBackToThumbnailStandby(t *testing.T) {
 	t.Setenv("BAIDU_XILING_APP_ID", "app-id")
 	t.Setenv("BAIDU_XILING_APP_KEY", "app-key")

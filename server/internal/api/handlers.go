@@ -29,6 +29,7 @@ type CreateSessionResponse struct {
 	StreamingMode string                    `json:"streaming_mode"`
 	AvatarEnabled bool                      `json:"avatar_enabled"`
 	IdleStrategy  string                    `json:"idle_strategy"`
+	AudioInput    *AudioInputResponse       `json:"audio_input,omitempty"`
 	BaiduXiling   *baiduXilingSessionConfig `json:"baidu_xiling,omitempty"`
 	LiveKitURL    string                    `json:"livekit_url,omitempty"`
 	Token         string                    `json:"livekit_token,omitempty"`
@@ -37,6 +38,10 @@ type CreateSessionResponse struct {
 	IdleImageURL  string                    `json:"idle_image_url,omitempty"`
 	Warnings      []string                  `json:"warnings,omitempty"`
 	VisualInput   *VisualInputResponse      `json:"visual_input,omitempty"`
+}
+
+type AudioInputResponse struct {
+	Enabled bool `json:"enabled"`
 }
 
 type VisualInputResponse struct {
@@ -113,6 +118,13 @@ func normalizedVisualInputResponse(cfg config.VisualInputConfig) VisualInputResp
 		MaxRecentFrames:   cfg.MaxRecentFrames,
 		FrameTTLMS:        cfg.FrameTTLMS,
 	}
+}
+
+func (r *Router) audioInputResponseForSession(session *orchestrator.Session) *AudioInputResponse {
+	if session == nil {
+		return nil
+	}
+	return &AudioInputResponse{Enabled: r.orch != nil}
 }
 
 func (r *Router) visualInputResponseForSession(session *orchestrator.Session) *VisualInputResponse {
@@ -259,6 +271,7 @@ func (r *Router) handleCreateSession(w http.ResponseWriter, req *http.Request) {
 		}
 	}
 	resp.VisualInput = r.visualInputResponseForSession(session)
+	resp.AudioInput = r.audioInputResponseForSession(session)
 
 	useCachedIdleVideo := resp.IdleStrategy != config.AvatarIdleStrategySilentInference
 	if isBaiduXilingCharacter {
@@ -327,7 +340,7 @@ func (r *Router) handleCreateSession(w http.ResponseWriter, req *http.Request) {
 		streamingMode := r.orch.StreamingMode()
 		resp.StreamingMode = streamingMode
 		resp.AvatarEnabled = r.orch.AvatarEnabled()
-		setupMediaPeer := !isBaiduXilingCharacter || mode == orchestrator.ModeOmni
+		setupMediaPeer := resp.AudioInput != nil && resp.AudioInput.Enabled
 		if setupMediaPeer {
 			// Generate LiveKit token only in livekit mode.
 			if streamingMode == "livekit" && r.roomMgr != nil && r.cfg != nil {

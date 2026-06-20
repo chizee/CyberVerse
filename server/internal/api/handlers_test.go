@@ -114,6 +114,39 @@ func TestCreateSessionAcceptsLegacyVoiceLLMMode(t *testing.T) {
 	}
 }
 
+func TestCreateSessionAudioInputReturnedForStandardAndOmni(t *testing.T) {
+	r := newTestRouter()
+
+	tests := []struct {
+		name string
+		body string
+	}{
+		{name: "standard", body: `{"mode":"standard"}`},
+		{name: "omni", body: `{"mode":"omni"}`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest("POST", "/api/v1/sessions", strings.NewReader(tt.body))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			r.Handler().ServeHTTP(w, req)
+
+			if w.Code != http.StatusCreated {
+				t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
+			}
+
+			var resp CreateSessionResponse
+			if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+				t.Fatal(err)
+			}
+			if resp.AudioInput == nil || !resp.AudioInput.Enabled {
+				t.Fatalf("expected audio_input.enabled for %s session, got %+v", tt.name, resp.AudioInput)
+			}
+		})
+	}
+}
+
 func TestCreateSessionVisualInputReturnedForStandardAndQwenOmniOnly(t *testing.T) {
 	r := newTestRouter()
 

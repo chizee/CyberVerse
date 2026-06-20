@@ -36,6 +36,17 @@ const clockMs = ref(Date.now())
 let timer: ReturnType<typeof setInterval> | null = null
 const showDiag = ref(false)
 const isChatCollapsed = ref(false)
+const isChatResizing = ref(false)
+const chatSidebarRef = ref<HTMLElement | null>(null)
+const chatSidebarWidth = ref<number | null>(null)
+
+const CHAT_SIDEBAR_MIN_WIDTH = 320
+const CHAT_SIDEBAR_DESKTOP_BASE_WIDTH = 360
+const CHAT_SIDEBAR_DESKTOP_MAX_WIDTH = 560
+const CHAT_SIDEBAR_DESKTOP_RATIO = 0.4
+const CHAT_SIDEBAR_MOBILE_MAX_WIDTH = 420
+const CHAT_SIDEBAR_MOBILE_RATIO = 0.82
+const CHAT_SIDEBAR_COLLAPSE_RESISTANCE = 96
 
 const queryLaunchState = sessionLaunchStateFromQuery(sessionId.value, route.query as Record<string, unknown>)
 if (queryLaunchState) {
@@ -45,8 +56,10 @@ const launchState = ref(loadSessionLaunchState(sessionId.value) || queryLaunchSt
 const streamingMode = launchState.value?.streaming_mode || 'direct'
 const baiduXilingConfig = computed(() => launchState.value?.baidu_xiling)
 const isBaiduXilingSession = computed(() => !!baiduXilingConfig.value)
-const isOmniSession = computed(() => launchState.value?.mode === 'omni')
-const shouldUseMediaPeer = computed(() => !isBaiduXilingSession.value || isOmniSession.value)
+const audioInputConfig = computed(() => launchState.value?.audio_input)
+const hasAudioInputCapability = computed(() => audioInputConfig.value?.enabled ?? true)
+const usesMediaPeerOutput = computed(() => !isBaiduXilingSession.value)
+const shouldUseMediaPeer = computed(() => usesMediaPeerOutput.value || hasAudioInputCapability.value)
 
 function truthyDebugFlag(value: unknown): boolean {
   const raw = Array.isArray(value) ? value[0] : value
@@ -97,9 +110,9 @@ const outputButtonTitle = computed(() => {
   return outputMutedVisual.value ? t('session.outputUnmute') : t('session.outputMute')
 })
 const mediaConnected = computed(() => {
-  if (!isBaiduXilingSession.value) return connectionState.value === 'connected'
-  if (isOmniSession.value) return chatConnected.value && connectionState.value === 'connected'
-  return chatConnected.value
+  if (!shouldUseMediaPeer.value) return chatConnected.value
+  if (isBaiduXilingSession.value) return chatConnected.value && connectionState.value === 'connected'
+  return connectionState.value === 'connected'
 })
 
 watchEffect(() => {
@@ -182,6 +195,24 @@ type VisualPreviewDragState = {
 
 let visualPreviewDragState: VisualPreviewDragState | null = null
 
+type ChatSidebarResizeState = {
+  pointerId: number
+  rightEdge: number
+  minWidth: number
+  maxWidth: number
+  minReachedClientX: number | null
+  handleEl: HTMLElement
+}
+
+let chatSidebarResizeState: ChatSidebarResizeState | null = null
+
+const chatSidebarStyle = computed<Record<string, string> | undefined>(() => {
+  if (chatSidebarWidth.value === null) return undefined
+  return {
+    '--chat-sidebar-width': `${chatSidebarWidth.value}px`,
+  }
+})
+
 watch([chatConnected, connectionState], ([chatReady, mediaState]) => {
   if (!shouldUseMediaPeer.value || isBaiduXilingSession.value) return
   if (startupGreetingReadySent.value) return
@@ -223,6 +254,102 @@ function handleBaiduActiveSessionChange(event: StorageEvent) {
 function clampValue(value: number, min: number, max: number): number {
   if (max < min) return min
   return Math.min(Math.max(value, min), max)
+}
+
+function getChatSidebarMaxWidth(): number {
+  const viewportWidth = window.innerWidth
+  if (window.matchMedia('(max-width: 900px)').matches) {
+    return Math.min(viewportWidth * CHAT_SIDEBAR_MOBILE_RATIO, CHAT_SIDEBAR_MOBILE_MAX_WIDTH)
+  }
+  return clampValue(
+    viewportWidth * CHAT_SIDEBAR_DESKTOP_RATIO,
+    CHAT_SIDEBAR_DESKTOP_BASE_WIDTH,
+    CHAT_SIDEBAR_DESKTOP_MAX_WIDTH,
+  )
+}
+
+function getChatSidebarMinWidth(maxWidth: number): number {
+  return Math.min(CHAT_SIDEBAR_MIN_WIDTH, maxWidth)
+}
+
+function stopChatSidebarResize(event?: PointerEvent) {
+  if (event && chatSidebarResizeState?.pointerId !== event.pointerId) return
+
+  if (chatSidebarResizeState) {
+    try {
+      chatSidebarResizeState.handleEl.releasePointerCapture(chatSidebarResizeState.pointerId)
+    } catch {}
+  }
+
+  chatSidebarResizeState = null
+  isChatResizing.value = false
+  window.removeEventListener('pointermove', handleChatSidebarPointerMove)
+  window.removeEventListener('pointerup', stopChatSidebarResize)
+  window.removeEventListener('pointercancel', stopChatSidebarResize)
+}
+
+function handleChatSidebarPointerMove(event: PointerEvent) {
+  const resize = chatSidebarResizeState
+  if (!resize || event.pointerId !== resize.pointerId) return
+
+  const rawWidth = resize.rightEdge - event.clientX
+  if (rawWidth <= resize.minWidth) {
+    if (resize.minReachedClientX === null) {
+      resize.minReachedClientX = event.clientX
+    }
+
+    chatSidebarWidth.value = resize.minWidth
+    if (event.clientX - resize.minReachedClientX >= CHAT_SIDEBAR_COLLAPSE_RESISTANCE) {
+      isChatCollapsed.value = true
+      event.preventDefault()
+      stopChatSidebarResize(event)
+      return
+    }
+
+    event.preventDefault()
+    return
+  }
+
+  resize.minReachedClientX = null
+  chatSidebarWidth.value = clampValue(rawWidth, resize.minWidth, resize.maxWidth)
+  event.preventDefault()
+}
+
+function handleChatSidebarPointerDown(event: PointerEvent) {
+  if (event.button !== 0 || isChatCollapsed.value) return
+
+  const sidebar = chatSidebarRef.value
+  const handleEl = event.currentTarget as HTMLElement | null
+  if (!sidebar || !handleEl) return
+
+  const rect = sidebar.getBoundingClientRect()
+  const maxWidth = getChatSidebarMaxWidth()
+  const minWidth = getChatSidebarMinWidth(maxWidth)
+  const currentWidth = clampValue(rect.width || maxWidth, minWidth, maxWidth)
+
+  chatSidebarWidth.value = currentWidth
+  chatSidebarResizeState = {
+    pointerId: event.pointerId,
+    rightEdge: rect.right,
+    minWidth,
+    maxWidth,
+    minReachedClientX: currentWidth <= minWidth + 1 ? event.clientX : null,
+    handleEl,
+  }
+  isChatResizing.value = true
+
+  handleEl.setPointerCapture(event.pointerId)
+  window.addEventListener('pointermove', handleChatSidebarPointerMove)
+  window.addEventListener('pointerup', stopChatSidebarResize)
+  window.addEventListener('pointercancel', stopChatSidebarResize)
+  event.preventDefault()
+}
+
+function keepChatSidebarWidthInBounds() {
+  if (chatSidebarWidth.value === null) return
+  const maxWidth = getChatSidebarMaxWidth()
+  const minWidth = getChatSidebarMinWidth(maxWidth)
+  chatSidebarWidth.value = clampValue(chatSidebarWidth.value, minWidth, maxWidth)
 }
 
 function clampVisualPreviewPosition(x: number, y: number, previewEl: HTMLElement): { x: number; y: number } {
@@ -413,6 +540,7 @@ onMounted(async () => {
   }
 
   window.addEventListener('resize', keepVisualPreviewInBounds)
+  window.addEventListener('resize', keepChatSidebarWidthInBounds)
 
   const startedAt = Date.now()
 
@@ -424,7 +552,7 @@ onMounted(async () => {
   }
 
   if (!shouldUseMediaPeer.value) {
-    // Baidu Xiling standard sessions render in the H5 iframe and receive audio through chat WS events.
+    // Sessions without media peer use chat WS only.
   } else if (isDirectMode) {
     // Direct P2P WebRTC: register signaling handler then connect
     registerSignalingHandler((data: any) => dp.handleSignaling(data))
@@ -454,9 +582,11 @@ onMounted(async () => {
 onUnmounted(() => {
   if (timer) clearInterval(timer)
   stopVisualPreviewDragging()
+  stopChatSidebarResize()
   clearBaiduSessionActive()
   window.removeEventListener('storage', handleBaiduActiveSessionChange)
   window.removeEventListener('resize', keepVisualPreviewInBounds)
+  window.removeEventListener('resize', keepChatSidebarWidthInBounds)
   visualInput.stop(undefined, true)
 })
 
@@ -501,7 +631,7 @@ function formatTime(s: number): string {
 </script>
 
 <template>
-  <div class="session-page" :class="{ 'chat-collapsed': isChatCollapsed }">
+  <div class="session-page" :class="{ 'chat-collapsed': isChatCollapsed, 'chat-resizing': isChatResizing }">
     <!-- Left: Video area (60%) -->
     <div ref="sessionVideoShellRef" class="session-video-shell">
       <BaiduXilingPlayer
@@ -621,7 +751,7 @@ function formatTime(s: number): string {
       </div>
 
       <!-- Local mic input level (Web Audio analyser, not avatar state) -->
-      <div v-if="shouldUseMediaPeer" class="absolute bottom-14 left-5 z-10 max-w-[min(100%,28rem)]">
+      <div v-if="hasAudioInputCapability" class="absolute bottom-14 left-5 z-10 max-w-[min(100%,28rem)]">
         <VoiceWaveform
           type="user"
           :label="t('session.micInput')"
@@ -704,7 +834,7 @@ function formatTime(s: number): string {
         </button>
 
         <!-- Mic button -->
-        <button v-if="shouldUseMediaPeer"
+        <button v-if="hasAudioInputCapability"
                 @click="toggleMute()"
                 class="w-12 h-12 rounded-full flex items-center justify-center transition-colors cursor-pointer"
                 :class="isMuted ? 'bg-cv-danger' : 'bg-cv-accent shadow-[0_2px_8px_rgba(59,130,246,0.3)]'">
@@ -732,7 +862,21 @@ function formatTime(s: number): string {
     </div>
 
     <!-- Right: Chat panel (40%) -->
-    <div class="session-chat-sidebar" :aria-hidden="isChatCollapsed" :inert="isChatCollapsed">
+    <div
+      ref="chatSidebarRef"
+      class="session-chat-sidebar"
+      :style="chatSidebarStyle"
+      :aria-hidden="isChatCollapsed"
+      :inert="isChatCollapsed"
+    >
+      <div
+        class="chat-resize-handle"
+        role="separator"
+        aria-orientation="vertical"
+        :title="t('session.resizeChat')"
+        :aria-label="t('session.resizeChat')"
+        @pointerdown="handleChatSidebarPointerDown"
+      />
       <div class="session-chat-inner">
         <!-- Chat header -->
         <div class="h-[52px] shrink-0 flex items-center justify-between px-5 border-b border-cv-border-subtle">
@@ -786,6 +930,11 @@ function formatTime(s: number): string {
   background: #000;
 }
 
+.session-page.chat-resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+
 .session-video-shell {
   position: relative;
   flex: 1 1 auto;
@@ -797,8 +946,9 @@ function formatTime(s: number): string {
 }
 
 .session-chat-sidebar {
-  flex: 0 0 clamp(360px, 40vw, 560px);
-  width: clamp(360px, 40vw, 560px);
+  position: relative;
+  flex: 0 0 var(--chat-sidebar-width, clamp(360px, 40vw, 560px));
+  width: var(--chat-sidebar-width, clamp(360px, 40vw, 560px));
   min-width: 0;
   display: flex;
   flex-direction: column;
@@ -813,8 +963,15 @@ function formatTime(s: number): string {
     border-color 220ms ease;
 }
 
+.chat-resizing .session-chat-sidebar {
+  transition:
+    opacity 160ms ease,
+    border-color 220ms ease;
+}
+
 .session-chat-inner {
-  width: clamp(360px, 40vw, 560px);
+  width: 100%;
+  min-width: 0;
   height: 100%;
   display: flex;
   flex-direction: column;
@@ -827,6 +984,52 @@ function formatTime(s: number): string {
   border-left-color: transparent;
   opacity: 0;
   pointer-events: none;
+}
+
+.chat-resize-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -6px;
+  z-index: 6;
+  width: 12px;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.chat-resize-handle::before,
+.chat-resize-handle::after {
+  content: "";
+  position: absolute;
+  pointer-events: none;
+}
+
+.chat-resize-handle::before {
+  top: 0;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: rgba(37, 99, 235, 0);
+  transition: background-color 120ms ease;
+}
+
+.chat-resize-handle::after {
+  top: 0;
+  bottom: 0;
+  left: 5px;
+  width: 2px;
+  background: transparent;
+  transition: background-color 120ms ease;
+}
+
+.chat-resize-handle:hover::before,
+.chat-resizing .chat-resize-handle::before {
+  background: rgba(37, 99, 235, 0.14);
+}
+
+.chat-resize-handle:hover::after,
+.chat-resizing .chat-resize-handle::after {
+  background: var(--color-cv-accent);
 }
 
 .chat-toggle-button,
@@ -921,13 +1124,9 @@ function formatTime(s: number): string {
 }
 
 @media (max-width: 900px) {
-  .session-chat-sidebar,
-  .session-chat-inner {
-    width: min(82vw, 420px);
-  }
-
   .session-chat-sidebar {
-    flex-basis: min(82vw, 420px);
+    flex-basis: var(--chat-sidebar-width, min(82vw, 420px));
+    width: var(--chat-sidebar-width, min(82vw, 420px));
   }
 
   .visual-preview {
