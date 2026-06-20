@@ -31,7 +31,7 @@ func TestStandardSystemPromptUsesGlobalWithoutCharacter(t *testing.T) {
 	}
 }
 
-func TestBuildVoiceLLMSessionConfigUsesPersonaAndOnlyOmniRolePrompt(t *testing.T) {
+func TestBuildVoiceLLMSessionConfigPreservesCharacterProviderAndOnlyOmniRolePrompt(t *testing.T) {
 	store, err := character.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -53,8 +53,8 @@ func TestBuildVoiceLLMSessionConfigUsesPersonaAndOnlyOmniRolePrompt(t *testing.T
 	session := NewSession("s1", ModeOmni, char.ID)
 
 	got := orch.buildVoiceLLMSessionConfig(session, "s1")
-	if got.Provider != "persona" {
-		t.Fatalf("expected persona provider, got %q", got.Provider)
+	if got.Provider != "qwen_omni" {
+		t.Fatalf("expected character voice provider, got %q", got.Provider)
 	}
 	if got.BotName != "晴天" || got.SpeakingStyle != "自然、简洁" {
 		t.Fatalf("expected voice-specific fields to stay separate, got %+v", got)
@@ -142,8 +142,8 @@ func TestVoiceStartupGreetingUsesUnderlyingProviderAndNoFixedWelcome(t *testing.
 	session := NewSession("s1", ModeOmni, char.ID)
 
 	normal := orch.buildVoiceLLMSessionConfig(session, "s1")
-	if normal.Provider != "persona" {
-		t.Fatalf("expected normal omni config to use persona, got %q", normal.Provider)
+	if normal.Provider != "qwen_omni" {
+		t.Fatalf("expected normal omni config to preserve character provider, got %q", normal.Provider)
 	}
 	if normal.WelcomeMessage != "" {
 		t.Fatalf("expected fixed welcome to be withheld from normal voice config, got %q", normal.WelcomeMessage)
@@ -222,7 +222,7 @@ func TestBuildVoiceStartupGreetingPromptIntroducesSelfWithoutHistory(t *testing.
 	}
 }
 
-func TestBuildVoiceLLMSessionConfigUsesPersonaWhenAgentEnabled(t *testing.T) {
+func TestBuildVoiceLLMSessionConfigPreservesCharacterProviderWhenAgentEnabled(t *testing.T) {
 	store, err := character.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -249,11 +249,41 @@ func TestBuildVoiceLLMSessionConfigUsesPersonaWhenAgentEnabled(t *testing.T) {
 	session := NewSession("s1", ModeOmni, char.ID)
 
 	got := orch.buildVoiceLLMSessionConfig(session, "s1")
-	if got.Provider != "persona" {
-		t.Fatalf("expected persona provider, got %q", got.Provider)
+	if got.Provider != "qwen_omni" {
+		t.Fatalf("expected character voice provider, got %q", got.Provider)
 	}
 	if !orch.sessionSupportsVisualInput(session) {
 		t.Fatal("expected qwen_omni visual support to use the underlying character provider")
+	}
+}
+
+func TestBuildVoiceLLMSessionConfigPreservesDoubaoProvider(t *testing.T) {
+	store, err := character.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	char, err := store.Create(&character.Character{
+		Name:          "小熙",
+		VoiceProvider: "doubao",
+		VoiceType:     "温柔文雅",
+		SystemPrompt:  "你和用户自然聊天。",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	orch := New(nil, nil, nil, nil, store)
+	session := NewSession("s1", ModeOmni, char.ID)
+
+	got := orch.buildVoiceLLMSessionConfig(session, "s1")
+	if got.Provider != "doubao" {
+		t.Fatalf("expected doubao provider from character config, got %q", got.Provider)
+	}
+	if got.Voice != "温柔文雅" {
+		t.Fatalf("expected doubao voice from character config, got %q", got.Voice)
+	}
+	if orch.sessionSupportsVisualInput(session) {
+		t.Fatal("did not expect doubao omni sessions to expose qwen_omni visual input")
 	}
 }
 

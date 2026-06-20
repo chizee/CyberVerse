@@ -210,6 +210,8 @@ class TestDoubaoRealtimePlugin:
                     results.append(event)
 
         assert len(results) >= 1
+        mod_websockets.connect.assert_called_once()
+        assert mod_websockets.connect.call_args.kwargs["proxy"] is None
         sent_events = [decode_frame(call.args[0]).event for call in mock_ws.send.await_args_list]
         assert DoubaoEvent.SAY_HELLO not in sent_events
         assert results[0].audio.data == audio_payload
@@ -526,6 +528,8 @@ class TestDoubaoRealtimePlugin:
                     VoiceLLMSessionConfig(voice="可爱女生")
                 )
 
+        mod_websockets.connect.assert_called_once()
+        assert mod_websockets.connect.call_args.kwargs["proxy"] is None
         sent_frames = [decode_frame(call.args[0]) for call in mock_ws.send.await_args_list]
         sent_events = [frame.event for frame in sent_frames]
         assert sent_events == [

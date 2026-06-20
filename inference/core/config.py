@@ -28,6 +28,34 @@ def _load_yaml_file(config_path: Path) -> dict:
     return data
 
 
+def load_dotenv(path: str | Path) -> None:
+    """Load KEY=VALUE pairs from a dotenv file into the process environment."""
+    env_path = Path(path)
+    if not env_path.exists():
+        return
+    if not env_path.is_file():
+        raise FileNotFoundError(f"Dotenv path is not a file: {env_path}")
+
+    with open(env_path, encoding="utf-8") as f:
+        for raw_line in f:
+            line = raw_line.strip()
+            if not line or line.startswith("#"):
+                continue
+            key, sep, value = line.partition("=")
+            if not sep:
+                continue
+            key = key.strip()
+            value = value.strip()
+            if not key:
+                continue
+            if len(value) >= 2 and (
+                (value[0] == '"' and value[-1] == '"')
+                or (value[0] == "'" and value[-1] == "'")
+            ):
+                value = value[1:-1]
+            os.environ[key] = value
+
+
 def _avatar_model_config_files(model_config_dir: Path) -> list[Path]:
     files: list[Path] = []
     for pattern in _AVATAR_MODEL_CONFIG_GLOBS:
@@ -89,6 +117,7 @@ def load_config(config_path: str | Path) -> dict:
     Unmatched patterns are left as-is.
     """
     config_path = Path(config_path)
+    load_dotenv(config_path.parent / ".env")
     config = _load_yaml_file(config_path)
 
     return _merge_avatar_model_configs(config, config_path)

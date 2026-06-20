@@ -9,10 +9,12 @@ const props = defineProps<{
   displayMode?: 'webrtc' | 'standby' | 'placeholder'
   standbySrc?: string
   standbySources?: string[]
+  standbyImageSrc?: string
 }>()
 
 const videoRef = ref<HTMLVideoElement | null>(null)
 const standbyVideoRef = ref<HTMLVideoElement | null>(null)
+const standbyImageRef = ref<HTMLImageElement | null>(null)
 const containerRef = ref<HTMLDivElement | null>(null)
 const currentIndex = ref(0)
 const currentDisplayMode = computed(() => props.displayMode || 'placeholder')
@@ -66,7 +68,7 @@ function onStandbyEnded() {
 
 function onStandbyError(ev: Event) {
   const el = ev.target
-  if (el instanceof HTMLVideoElement) {
+  if (el instanceof HTMLVideoElement || el instanceof HTMLImageElement) {
     emit('standbyFailed')
   }
 }
@@ -77,9 +79,13 @@ function syncContainerSize() {
   containerHeight.value = el?.clientHeight ?? 0
 }
 
-function getIntrinsicAspectRatio(videoEl: HTMLVideoElement | null): number | null {
-  if (!videoEl) return null
-  const { videoWidth, videoHeight } = videoEl
+function getIntrinsicAspectRatio(el: HTMLVideoElement | HTMLImageElement | null): number | null {
+  if (!el) return null
+  if (el instanceof HTMLImageElement) {
+    if (!el.naturalWidth || !el.naturalHeight) return null
+    return el.naturalWidth / el.naturalHeight
+  }
+  const { videoWidth, videoHeight } = el
   if (!videoWidth || !videoHeight) return null
   return videoWidth / videoHeight
 }
@@ -87,7 +93,7 @@ function getIntrinsicAspectRatio(videoEl: HTMLVideoElement | null): number | nul
 function syncActiveAspectRatio() {
   const primary =
     currentDisplayMode.value === 'standby'
-      ? standbyVideoRef.value
+      ? (standbyVideoRef.value || standbyImageRef.value)
       : videoRef.value
 
   const fallback =
@@ -182,7 +188,7 @@ defineExpose({ videoRef })
         autoplay
         playsinline
         class="video-element"
-        :class="{ 'video-hidden': currentDisplayMode === 'standby' }"
+        :class="{ 'video-hidden': currentDisplayMode !== 'webrtc' }"
       />
       <video
         v-if="currentStandbySrc"
@@ -196,6 +202,15 @@ defineExpose({ videoRef })
         class="video-element"
         :class="{ 'video-hidden': currentDisplayMode !== 'standby' }"
         @ended="onStandbyEnded"
+        @error="onStandbyError"
+      />
+      <img
+        v-else-if="standbyImageSrc"
+        ref="standbyImageRef"
+        :src="standbyImageSrc"
+        class="video-element"
+        :class="{ 'video-hidden': currentDisplayMode !== 'standby' }"
+        @load="handleVideoIntrinsicSizeChange"
         @error="onStandbyError"
       />
     </div>

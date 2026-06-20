@@ -123,6 +123,44 @@ async def test_converse_serializes_task_event_json():
     }
 
 
+@pytest.mark.asyncio
+async def test_converse_uses_persona_wrapper_with_character_provider():
+    reg = MagicMock()
+    persona = MagicMock()
+    captured = {}
+
+    async def fake_converse(_stream, session_config=None):
+        captured["session_config"] = session_config
+        yield VoiceLLMOutputEvent(transcript="ok", is_final=True)
+
+    persona.converse_stream = fake_converse
+
+    def get_plugin(name):
+        if name == "persona.persona":
+            return persona
+        raise KeyError(name)
+
+    reg.get = MagicMock(side_effect=get_plugin)
+    reg.get_by_category = MagicMock()
+    svc = VoiceLLMGRPCService(reg)
+
+    from inference.generated import voice_llm_pb2
+
+    async def requests():
+        yield voice_llm_pb2.VoiceLLMInput(
+            config=voice_llm_pb2.VoiceLLMConfig(provider="doubao", voice="温柔文雅")
+        )
+        yield voice_llm_pb2.VoiceLLMInput(text="hello")
+
+    outs = [o async for o in svc.Converse(requests(), MagicMock())]
+
+    assert outs[0].transcript == "ok"
+    reg.get.assert_called_once_with("persona.persona")
+    reg.get_by_category.assert_not_called()
+    assert captured["session_config"].provider == "doubao"
+    assert captured["session_config"].voice == "温柔文雅"
+
+
 def test_input_event_from_pb_maps_image_frame():
     reg = MagicMock()
     svc = VoiceLLMGRPCService(reg)

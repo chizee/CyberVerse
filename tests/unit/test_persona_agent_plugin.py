@@ -22,6 +22,7 @@ class FakeOmniPlugin(VoiceLLMPlugin):
     name = "omni.fake"
 
     async def initialize(self, config):
+        self.plugin_name = config.plugin_name
         self.scenario = config.params.get("scenario", "chat")
 
     async def shutdown(self):
@@ -294,19 +295,65 @@ async def test_persona_agent_passthrough_chat(tmp_path):
                 VoiceLLMSessionConfig(session_id="session-1"),
             )
         ]
+        selected_plugin = plugin.model_plugin
     finally:
         await plugin.shutdown()
 
     assert outputs[0].user_transcript == "你好"
     assert outputs[1].transcript == "你好，我在。"
     assert outputs[1].audio is not None
-    tool_names = [tool.name for tool in plugin.model_plugin.last_session_config.tools]
+    tool_names = [tool.name for tool in selected_plugin.last_session_config.tools]
     assert tool_names == ["create_task", "get_task_status", "cancel_task", "retrieve_character_knowledge"]
-    assert plugin.model_plugin.last_session_config.defer_response is True
-    assert "PersonaAgent" in plugin.model_plugin.last_session_config.system_prompt
-    assert "wait_for_more_input" not in plugin.model_plugin.last_session_config.system_prompt
+    assert selected_plugin.last_session_config.defer_response is True
+    assert "PersonaAgent" in selected_plugin.last_session_config.system_prompt
+    assert "wait_for_more_input" not in selected_plugin.last_session_config.system_prompt
     assert "JSON" not in PERSONA_AGENT_INSTRUCTIONS
     assert plugin.task_runtime.calls == []
+
+
+@pytest.mark.asyncio
+async def test_persona_agent_uses_session_voice_provider(tmp_path):
+    plugin = PersonaAgentPlugin()
+    await plugin.initialize(
+        PluginConfig(
+            plugin_name="persona.persona",
+            params={
+                "model_provider": "fake",
+                "checkpoint_db_path": str(tmp_path / "persona-provider.db"),
+            },
+            shared={
+                "omni": {
+                    "fake": {
+                        "plugin_class": "tests.unit.test_persona_agent_plugin.FakeOmniPlugin",
+                        "scenario": "chat",
+                    },
+                    "alt": {
+                        "plugin_class": "tests.unit.test_persona_agent_plugin.FakeOmniPlugin",
+                        "scenario": "chat",
+                    },
+                }
+            },
+        )
+    )
+    fake_runtime = FakeTaskClient()
+    plugin.task_runtime = fake_runtime
+    plugin.supervisor.runtime = fake_runtime
+
+    try:
+        outputs = [
+            event
+            async for event in plugin.converse_stream(
+                one_input(),
+                VoiceLLMSessionConfig(session_id="session-1", provider="alt"),
+            )
+        ]
+        selected_plugin = plugin.model_plugins["alt"]
+    finally:
+        await plugin.shutdown()
+
+    assert outputs[1].transcript == "你好，我在。"
+    assert selected_plugin.plugin_name == "omni.alt"
+    assert selected_plugin.last_session_config.provider == "alt"
 
 
 @pytest.mark.asyncio

@@ -94,6 +94,10 @@ class PersonaAgentPlugin(VoiceLLMPlugin):
     def __init__(self) -> None:
         self.model_provider = "doubao"
         self.model_plugin: VoiceLLMPlugin | None = None
+        self.model_plugins: dict[str, VoiceLLMPlugin] = {}
+        self.omni_config: dict[str, Any] = {}
+        self.shared_config: dict[str, Any] = {}
+        self._model_plugin_lock = asyncio.Lock()
         self.task_runtime: LocalTaskRuntime | None = None
         self.supervisor: PersonaSupervisor | None = None
         self.rag_engine: RAGEngine | None = None
@@ -128,26 +132,9 @@ class PersonaAgentPlugin(VoiceLLMPlugin):
         omni_config = config.shared.get("omni", {})
         if not isinstance(omni_config, dict):
             raise ValueError("persona provider requires shared omni config")
-        provider_conf = omni_config.get(self.model_provider)
-        if not isinstance(provider_conf, dict):
-            raise ValueError(f"persona model_provider {self.model_provider!r} is not configured")
-        class_path = provider_conf.get("plugin_class")
-        if not class_path:
-            raise ValueError(f"persona model_provider {self.model_provider!r} has no plugin_class")
-
-        plugin_cls = import_plugin_class(str(class_path))
-        model_plugin = plugin_cls()
-        params = {k: v for k, v in provider_conf.items() if k != "plugin_class"}
-        await model_plugin.initialize(
-            PluginConfig(
-                plugin_name=f"omni.{self.model_provider}",
-                params=params,
-                shared=config.shared,
-            )
-        )
-        if not isinstance(model_plugin, VoiceLLMPlugin):
-            raise TypeError(f"{class_path} is not a VoiceLLMPlugin")
-        self.model_plugin = model_plugin
+        self.shared_config = config.shared
+        self.omni_config = omni_config
+        self.model_plugin = await self._model_plugin_for_provider(self.model_provider)
 
         runtime_config = config.shared.get("runtime_config")
         if not isinstance(runtime_config, dict):
@@ -170,21 +157,65 @@ class PersonaAgentPlugin(VoiceLLMPlugin):
         )
         await self.supervisor.initialize()
 
+    def _provider_from_session(self, session_config: VoiceLLMSessionConfig | None) -> str:
+        provider = str(getattr(session_config, "provider", "") or "").strip()
+        if not provider or provider == "persona":
+            return self.model_provider
+        return provider
+
+    async def _model_plugin_for_provider(self, provider: str) -> VoiceLLMPlugin:
+        provider = provider.strip()
+        if not provider or provider == "persona":
+            provider = self.model_provider
+        async with self._model_plugin_lock:
+            if provider in self.model_plugins:
+                return self.model_plugins[provider]
+            provider_conf = self.omni_config.get(provider)
+            if not isinstance(provider_conf, dict):
+                raise ValueError(f"persona model_provider {provider!r} is not configured")
+            class_path = provider_conf.get("plugin_class")
+            if not class_path:
+                raise ValueError(f"persona model_provider {provider!r} has no plugin_class")
+
+            plugin_cls = import_plugin_class(str(class_path))
+            model_plugin = plugin_cls()
+            params = {k: v for k, v in provider_conf.items() if k != "plugin_class"}
+            await model_plugin.initialize(
+                PluginConfig(
+                    plugin_name=f"omni.{provider}",
+                    params=params,
+                    shared=self.shared_config,
+                )
+            )
+            if not isinstance(model_plugin, VoiceLLMPlugin):
+                raise TypeError(f"{class_path} is not a VoiceLLMPlugin")
+            self.model_plugins[provider] = model_plugin
+            if provider == self.model_provider:
+                self.model_plugin = model_plugin
+            return model_plugin
+
+    async def _model_plugin_for_session(
+        self,
+        session_config: VoiceLLMSessionConfig | None,
+    ) -> VoiceLLMPlugin:
+        return await self._model_plugin_for_provider(self._provider_from_session(session_config))
+
     async def shutdown(self) -> None:
-        if self.model_plugin is not None:
-            await self.model_plugin.shutdown()
+        for plugin in self.model_plugins.values():
+            await plugin.shutdown()
+        self.model_plugins.clear()
+        self.model_plugin = None
         if self.supervisor is not None:
             await self.supervisor.shutdown()
             self.supervisor = None
 
     async def check_voice(self, session_config: VoiceLLMSessionConfig | None = None) -> None:
-        if self.model_plugin is None:
-            raise RuntimeError("persona model plugin is not initialized")
-        await self.model_plugin.check_voice(session_config)
+        model_plugin = await self._model_plugin_for_session(session_config)
+        await model_plugin.check_voice(session_config)
 
     async def interrupt(self) -> None:
-        if self.model_plugin is not None:
-            await self.model_plugin.interrupt()
+        for plugin in self.model_plugins.values():
+            await plugin.interrupt()
 
     async def _retrieve_character_knowledge(
         self,
@@ -478,9 +509,8 @@ class PersonaAgentPlugin(VoiceLLMPlugin):
         input_stream: AsyncIterator[VoiceLLMInputEvent],
         session_config: VoiceLLMSessionConfig | None = None,
     ) -> AsyncIterator[VoiceLLMOutputEvent]:
-        if self.model_plugin is None:
-            raise RuntimeError("persona model plugin is not initialized")
         session_config = session_config or VoiceLLMSessionConfig()
+        model_plugin = await self._model_plugin_for_session(session_config)
         model_session_config = replace(
             session_config,
             system_prompt=self._persona_system_prompt(session_config),
@@ -510,7 +540,7 @@ class PersonaAgentPlugin(VoiceLLMPlugin):
         model_event_task: asyncio.Task[VoiceLLMOutputEvent] | None = None
         task_event_task: asyncio.Task[dict[str, Any]] | None = None
         try:
-            model_events = self.model_plugin.converse_stream(
+            model_events = model_plugin.converse_stream(
                 self._merged_input_stream(input_stream, injected),
                 session_config=model_session_config,
             ).__aiter__()

@@ -37,6 +37,7 @@ export type AvatarBackend = 'local_image' | 'baidu_xiling'
 export interface BaiduXilingCharacterConfig {
   figure_id: string
   figure_name?: string
+  camera_id?: string
   thumbnail_url?: string
   preview_video_url?: string
   source_image_url?: string

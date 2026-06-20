@@ -300,6 +300,24 @@ Then edit the active model file, for example `avatar_models/flash_head.yaml` or
 `avatar_models/live_act.yaml`. The Web UI also edits model parameters in those
 per-model files.
 
+### Baidu Xiling H5 Digital Human
+
+For Baidu Xiling, keep credentials in `.env`:
+
+```env
+BAIDU_XILING_APP_ID="your-app-id"
+BAIDU_XILING_APP_KEY="your-app-key"
+# Optional when the figure needs a fixed camera.
+BAIDU_XILING_CAMERA_ID="0"
+```
+
+Baidu Xiling is selected per character in the Web UI. It is not an avatar
+inference model and should not be configured as `inference.avatar.default`.
+CyberVerse still runs ASR/LLM/TTS/history through the orchestrator, then sends
+16 kHz 16-bit mono PCM chunks to the browser. The frontend embeds the Baidu H5
+iframe and drives it with the official `sendAudioData` / `AUDIO_STREAM_RENDER`
+message format.
+
 ### LiveAct FP4 GEMM (Optional)
 
 FP4 acceleration requires building and installing `lightx2v_kernel` from [LightX2V](https://github.com/ModelTC/LightX2V). Use PyTorch **2.7+** and a CUTLASS checkout on the build machine.

@@ -56,6 +56,14 @@ export interface ChatMessage {
 
 export type AvatarStatus = 'idle' | 'speaking' | 'processing'
 
+export interface BaiduXilingAudioEvent {
+  requestId: string
+  audio: string
+  first: boolean
+  last: boolean
+  turnSeq: number
+}
+
 export function useChat(sessionId: () => string) {
   const ws = ref<WebSocket | null>(null)
   const messages = ref<ChatMessage[]>([])
@@ -87,6 +95,7 @@ export function useChat(sessionId: () => string) {
 
   // Signaling handler for Direct WebRTC mode
   let signalingHandler: ((data: any) => void) | null = null
+  let baiduXilingAudioHandler: ((event: BaiduXilingAudioEvent) => void) | null = null
 
   function resetTransientState() {
     pipelineMode.value = null
@@ -141,6 +150,10 @@ export function useChat(sessionId: () => string) {
 
   function registerSignalingHandler(fn: (data: any) => void) {
     signalingHandler = fn
+  }
+
+  function registerBaiduXilingAudioHandler(fn: (event: BaiduXilingAudioEvent) => void) {
+    baiduXilingAudioHandler = fn
   }
 
   function asRecord(value: unknown): Record<string, unknown> {
@@ -559,6 +572,32 @@ export function useChat(sessionId: () => string) {
           console.warn('[CyberVerse]', data.message || data)
           break
 
+        case 'error': {
+          const message = readString(data.message) || translate('chat.serverErrorFallback')
+          messages.value.push({
+            role: 'system',
+            content: translate('chat.serverError', { message }),
+            timestamp: Date.now(),
+          })
+          resetTransientState()
+          avatarStatus.value = 'idle'
+          break
+        }
+
+        case 'baidu_xiling_audio': {
+          const turnSeq = parseTurnSeq(data)
+          if (isOlderTurn(turnSeq)) break
+          beginTurnSeq(turnSeq)
+          baiduXilingAudioHandler?.({
+            requestId: readString(data.request_id),
+            audio: typeof data.audio === 'string' ? data.audio : '',
+            first: !!data.first,
+            last: !!data.last,
+            turnSeq,
+          })
+          break
+        }
+
         case 'visual_input_error':
         case 'visual_input_unsupported':
           console.warn('[CyberVerse]', data.message || data)
@@ -708,6 +747,7 @@ export function useChat(sessionId: () => string) {
     disconnect,
     loadHistory,
     registerSignalingHandler,
+    registerBaiduXilingAudioHandler,
     sendSignaling,
     sendWSMessage,
   }

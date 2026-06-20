@@ -133,12 +133,46 @@ func TestHandleAVSyncFeedbackUsesJitterDeltaWithoutPresentationLag(t *testing.T)
 	}
 }
 
+func TestResetRTPGapClockForEpochClearsCrossTurnGap(t *testing.T) {
+	t.Parallel()
+	p := &DirectPeer{}
+	now := time.Now()
+	p.lastPublishEpoch = 1
+	p.lastVideoWriteTime = now
+	p.lastAudioWriteTime = now
+
+	p.resetRTPGapClockForEpoch(2)
+
+	if p.lastPublishEpoch != 2 {
+		t.Fatalf("lastPublishEpoch=%d want 2", p.lastPublishEpoch)
+	}
+	if !p.lastVideoWriteTime.IsZero() || !p.lastAudioWriteTime.IsZero() {
+		t.Fatal("expected RTP write times to be reset across turns")
+	}
+}
+
+func TestResetRTPGapClockForEpochKeepsSameTurnGap(t *testing.T) {
+	t.Parallel()
+	p := &DirectPeer{}
+	now := time.Now()
+	p.lastPublishEpoch = 1
+	p.lastVideoWriteTime = now
+	p.lastAudioWriteTime = now
+
+	p.resetRTPGapClockForEpoch(1)
+
+	if !p.lastVideoWriteTime.Equal(now) || !p.lastAudioWriteTime.Equal(now) {
+		t.Fatal("expected RTP write times to be kept within the same turn")
+	}
+}
+
 func TestPrepareMediaPathResetKeepsUserAudioChannelOpen(t *testing.T) {
 	t.Parallel()
 	p := NewDirectPeer("session-test", nil, nil, nil, nil)
 	oldConnected := p.connected
 	p.lastVideoWriteTime = time.Now()
 	p.lastAudioWriteTime = time.Now()
+	p.lastPublishEpoch = 7
 	p.targetBitrateBps.Store(1_200_000)
 	p.audioDelayTargetMS = 320
 	p.audioDelayCurrentMS = 160
@@ -160,6 +194,9 @@ func TestPrepareMediaPathResetKeepsUserAudioChannelOpen(t *testing.T) {
 	}
 	if !p.lastVideoWriteTime.IsZero() || !p.lastAudioWriteTime.IsZero() {
 		t.Fatalf("expected RTP write timestamps to be reset")
+	}
+	if p.lastPublishEpoch != 0 {
+		t.Fatalf("expected publish epoch to be reset")
 	}
 	if got := p.targetBitrateBps.Load(); got != 0 {
 		t.Fatalf("target bitrate=%d want 0", got)

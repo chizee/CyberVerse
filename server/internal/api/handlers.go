@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/cyberverse/server/internal/character"
 	"github.com/cyberverse/server/internal/config"
 	"github.com/cyberverse/server/internal/livekit"
 	"github.com/cyberverse/server/internal/orchestrator"
@@ -23,17 +24,19 @@ type CreateSessionRequest struct {
 }
 
 type CreateSessionResponse struct {
-	SessionID     string               `json:"session_id"`
-	Mode          string               `json:"mode"`
-	StreamingMode string               `json:"streaming_mode"`
-	AvatarEnabled bool                 `json:"avatar_enabled"`
-	IdleStrategy  string               `json:"idle_strategy"`
-	LiveKitURL    string               `json:"livekit_url,omitempty"`
-	Token         string               `json:"livekit_token,omitempty"`
-	IdleVideoURL  string               `json:"idle_video_url,omitempty"`
-	IdleVideoURLs []string             `json:"idle_video_urls,omitempty"`
-	Warnings      []string             `json:"warnings,omitempty"`
-	VisualInput   *VisualInputResponse `json:"visual_input,omitempty"`
+	SessionID     string                    `json:"session_id"`
+	Mode          string                    `json:"mode"`
+	StreamingMode string                    `json:"streaming_mode"`
+	AvatarEnabled bool                      `json:"avatar_enabled"`
+	IdleStrategy  string                    `json:"idle_strategy"`
+	BaiduXiling   *baiduXilingSessionConfig `json:"baidu_xiling,omitempty"`
+	LiveKitURL    string                    `json:"livekit_url,omitempty"`
+	Token         string                    `json:"livekit_token,omitempty"`
+	IdleVideoURL  string                    `json:"idle_video_url,omitempty"`
+	IdleVideoURLs []string                  `json:"idle_video_urls,omitempty"`
+	IdleImageURL  string                    `json:"idle_image_url,omitempty"`
+	Warnings      []string                  `json:"warnings,omitempty"`
+	VisualInput   *VisualInputResponse      `json:"visual_input,omitempty"`
 }
 
 type VisualInputResponse struct {
@@ -181,9 +184,30 @@ func (r *Router) handleCreateSession(w http.ResponseWriter, req *http.Request) {
 		}
 	}
 
-	if r.orch != nil && r.charStore != nil && body.CharacterID != "" && r.orch.AvatarEnabled() {
-		if _, err := r.activeAvatarModel(req.Context()); err != nil {
+	var sessionCharacter *character.Character
+	if r.charStore != nil && body.CharacterID != "" {
+		if ch, err := r.charStore.Get(body.CharacterID); err == nil {
+			sessionCharacter = ch
+		}
+	}
+
+	if sessionCharacter != nil && sessionCharacter.AvatarBackend == character.AvatarBackendBaiduXiling {
+		if sessionCharacter.BaiduXiling == nil || strings.TrimSpace(sessionCharacter.BaiduXiling.FigureID) == "" {
+			writeJSON(w, http.StatusBadRequest, ErrorResponse{Error: "Baidu Xiling figure_id is required"})
+			return
+		}
+	}
+
+	isBaiduXilingCharacter := sessionCharacter != nil && sessionCharacter.AvatarBackend == character.AvatarBackendBaiduXiling
+
+	if r.orch != nil && body.CharacterID != "" && r.orch.AvatarEnabled() && !isBaiduXilingCharacter {
+		activeModel, err := r.activeAvatarModel(req.Context())
+		if err != nil {
 			writeJSON(w, http.StatusServiceUnavailable, ErrorResponse{Error: err.Error()})
+			return
+		}
+		if sessionCharacter != nil && sessionCharacter.AvatarBackend == character.AvatarBackendLocalImage && activeModel == character.AvatarBackendBaiduXiling {
+			writeJSON(w, http.StatusServiceUnavailable, ErrorResponse{Error: "Local image characters require the active avatar model to be flash_head or live_act"})
 			return
 		}
 	}
@@ -209,8 +233,8 @@ func (r *Router) handleCreateSession(w http.ResponseWriter, req *http.Request) {
 
 	// If character uses random image mode, pick a random image
 	if body.CharacterID != "" {
-		if ch, chErr := r.charStore.Get(body.CharacterID); chErr == nil {
-			if ch.ImageMode == "random" && len(ch.Images) > 1 {
+		if ch := sessionCharacter; ch != nil {
+			if ch.AvatarBackend == character.AvatarBackendLocalImage && ch.ImageMode == "random" && len(ch.Images) > 1 {
 				if rErr := r.charStore.RandomizeImage(body.CharacterID); rErr != nil {
 					log.Printf("Failed to randomize image for character %s: %v", body.CharacterID, rErr)
 				}
@@ -237,7 +261,21 @@ func (r *Router) handleCreateSession(w http.ResponseWriter, req *http.Request) {
 	resp.VisualInput = r.visualInputResponseForSession(session)
 
 	useCachedIdleVideo := resp.IdleStrategy != config.AvatarIdleStrategySilentInference
-	if r.orch != nil && body.CharacterID != "" && useCachedIdleVideo {
+	if isBaiduXilingCharacter {
+		baiduConfig, err := buildBaiduXilingSessionConfig(sessionCharacter)
+		if err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, ErrorResponse{Error: err.Error()})
+			return
+		}
+		resp.BaiduXiling = baiduConfig
+		if useCachedIdleVideo {
+			resp.IdleVideoURLs = baiduXilingPreviewVideoURLs(sessionCharacter)
+			if len(resp.IdleVideoURLs) > 0 {
+				resp.IdleVideoURL = resp.IdleVideoURLs[0]
+			}
+			resp.IdleImageURL = baiduXilingPreviewImageURL(sessionCharacter)
+		}
+	} else if r.orch != nil && body.CharacterID != "" && useCachedIdleVideo && (sessionCharacter == nil || sessionCharacter.AvatarBackend == character.AvatarBackendLocalImage) {
 		target := r.currentIdleVideoTarget(req.Context())
 		// Return any already-cached idle video URLs immediately; generation happens in background.
 		if char, err := r.charStore.Get(body.CharacterID); err == nil {
@@ -289,47 +327,70 @@ func (r *Router) handleCreateSession(w http.ResponseWriter, req *http.Request) {
 		streamingMode := r.orch.StreamingMode()
 		resp.StreamingMode = streamingMode
 		resp.AvatarEnabled = r.orch.AvatarEnabled()
-
-		// Generate LiveKit token only in livekit mode
-		if streamingMode == "livekit" && r.roomMgr != nil && r.cfg != nil {
-			roomName := livekit.RoomName(sessionID)
-			token, err := livekit.GenerateToken(
-				r.cfg.LiveKit.APIKey,
-				r.cfg.LiveKit.APISecret,
-				roomName,
-				"user-"+sessionID,
-				true,
-			)
-			if err != nil {
-				log.Printf("Failed to generate LiveKit token: %v", err)
-			} else {
-				resp.LiveKitURL = r.cfg.LiveKit.URL
-				resp.Token = token
-			}
-		}
-
-		// Setup session with media peer.
-		// Important: don't tie this lifecycle to req.Context(), because the browser client
-		// may abort/cancel the HTTP request (navigation, rapid reconnect, etc.).
-		setupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-
-		peer, warnings, err := r.orch.SetupSession(setupCtx, session, r.roomMgr)
-		resp.Warnings = append(resp.Warnings, warnings...)
-		if err != nil {
-			log.Printf("Failed to setup session %s: %v", sessionID, err)
-		} else {
-			// Both omni and standard sessions consume mic audio. The
-			// orchestrator dispatches to the correct pipeline by session mode.
-			go func() {
-				if err := r.orch.HandleAudioStream(context.Background(), sessionID, peer.SubscribeUserAudio()); err != nil {
-					log.Printf("Failed to start audio stream for session %s: %v", sessionID, err)
+		setupMediaPeer := !isBaiduXilingCharacter || mode == orchestrator.ModeOmni
+		if setupMediaPeer {
+			// Generate LiveKit token only in livekit mode.
+			if streamingMode == "livekit" && r.roomMgr != nil && r.cfg != nil {
+				roomName := livekit.RoomName(sessionID)
+				token, err := livekit.GenerateToken(
+					r.cfg.LiveKit.APIKey,
+					r.cfg.LiveKit.APISecret,
+					roomName,
+					"user-"+sessionID,
+					true,
+				)
+				if err != nil {
+					log.Printf("Failed to generate LiveKit token: %v", err)
+				} else {
+					resp.LiveKitURL = r.cfg.LiveKit.URL
+					resp.Token = token
 				}
-			}()
+			}
+
+			// Setup session with media peer.
+			// Important: don't tie this lifecycle to req.Context(), because the browser client
+			// may abort/cancel the HTTP request (navigation, rapid reconnect, etc.).
+			setupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+
+			peer, warnings, err := r.orch.SetupSession(setupCtx, session, r.roomMgr)
+			resp.Warnings = append(resp.Warnings, warnings...)
+			if err != nil {
+				log.Printf("Failed to setup session %s: %v", sessionID, err)
+			} else {
+				// Both omni and standard sessions consume mic audio. The
+				// orchestrator dispatches to the correct pipeline by session mode.
+				go func() {
+					if err := r.orch.HandleAudioStream(context.Background(), sessionID, peer.SubscribeUserAudio()); err != nil {
+						log.Printf("Failed to start audio stream for session %s: %v", sessionID, err)
+					}
+				}()
+			}
 		}
 	}
 
 	writeJSON(w, http.StatusCreated, resp)
+}
+
+func baiduXilingPreviewVideoURLs(c *character.Character) []string {
+	if c == nil || c.BaiduXiling == nil {
+		return nil
+	}
+	url := strings.TrimSpace(c.BaiduXiling.PreviewVideoURL)
+	if url == "" {
+		return nil
+	}
+	return []string{url}
+}
+
+func baiduXilingPreviewImageURL(c *character.Character) string {
+	if c == nil || c.BaiduXiling == nil {
+		return ""
+	}
+	if url := strings.TrimSpace(c.BaiduXiling.ThumbnailURL); url != "" {
+		return url
+	}
+	return strings.TrimSpace(c.BaiduXiling.SourceImageURL)
 }
 
 func (r *Router) handleDeleteSession(w http.ResponseWriter, req *http.Request) {

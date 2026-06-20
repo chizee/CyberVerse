@@ -100,6 +100,7 @@ type DirectPeer struct {
 	// a Duration that advances the RTP timestamp over the idle gap.
 	lastVideoWriteTime     time.Time
 	lastAudioWriteTime     time.Time
+	lastPublishEpoch       uint64
 	playbackEpoch          atomic.Uint64
 	latestSpeechEpoch      atomic.Uint64
 	avCalibrationEnabled   atomic.Bool
@@ -309,6 +310,7 @@ func (p *DirectPeer) prepareMediaPathReset() *webrtc.PeerConnection {
 	p.connected = make(chan struct{})
 	p.lastVideoWriteTime = time.Time{}
 	p.lastAudioWriteTime = time.Time{}
+	p.lastPublishEpoch = 0
 	p.mu.Unlock()
 
 	p.targetBitrateBps.Store(0)
@@ -974,6 +976,7 @@ func (p *DirectPeer) publishAVSegment(seg *mediapeer.AVSegment) {
 		fps = 25
 	}
 	frameDur := time.Second / time.Duration(fps)
+	p.resetRTPGapClockForEpoch(seg.Epoch)
 
 	// Encode entire PCM buffer into Opus frames up-front to avoid
 	// the sample-loss caused by slicing PCM per video frame.
@@ -1121,6 +1124,17 @@ func (p *DirectPeer) publishAVSegment(seg *mediapeer.AVSegment) {
 		p.lastVideoWriteTime = time.Now()
 	}
 	p.lastAudioWriteTime = p.lastVideoWriteTime
+}
+
+func (p *DirectPeer) resetRTPGapClockForEpoch(epoch uint64) {
+	if epoch == 0 {
+		return
+	}
+	if p.lastPublishEpoch != 0 && p.lastPublishEpoch != epoch {
+		p.lastVideoWriteTime = time.Time{}
+		p.lastAudioWriteTime = time.Time{}
+	}
+	p.lastPublishEpoch = epoch
 }
 
 func mediaSampleDuration(sample media.Sample, fallback time.Duration) time.Duration {

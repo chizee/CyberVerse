@@ -105,6 +105,57 @@ func TestIdleVideoFilenameIncludesResolutionVariant(t *testing.T) {
 	}
 }
 
+func TestBaiduXilingAvatarFieldsPersistAcrossStoreReload(t *testing.T) {
+	baseDir := t.TempDir()
+	store, err := NewStore(baseDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	char, err := store.Create(&Character{
+		Name:          "Baidu Role",
+		AvatarBackend: AvatarBackendBaiduXiling,
+		BaiduXiling: &BaiduXiling{
+			FigureID:        " figure-1 ",
+			FigureName:      " Figure One ",
+			ThumbnailURL:    " https://example.com/thumb.png ",
+			PreviewVideoURL: " https://example.com/preview.mp4 ",
+			SourceImageURL:  " https://example.com/source.png ",
+			Status:          " FINISHED ",
+			Width:           720,
+			Height:          406,
+		},
+		VoiceType: "温柔文雅",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	reloaded, err := NewStore(baseDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := reloaded.Get(char.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.AvatarBackend != AvatarBackendBaiduXiling {
+		t.Fatalf("expected baidu backend, got %q", got.AvatarBackend)
+	}
+	if got.BaiduXiling == nil {
+		t.Fatal("expected baidu_xiling config")
+	}
+	if got.BaiduXiling.FigureID != "figure-1" {
+		t.Fatalf("expected trimmed figure_id, got %q", got.BaiduXiling.FigureID)
+	}
+	if got.BaiduXiling.FigureName != "Figure One" {
+		t.Fatalf("expected trimmed figure name, got %q", got.BaiduXiling.FigureName)
+	}
+	if got.BaiduXiling.Width != 720 || got.BaiduXiling.Height != 406 {
+		t.Fatalf("expected persisted dimensions, got %dx%d", got.BaiduXiling.Width, got.BaiduXiling.Height)
+	}
+}
+
 func TestActivateImageMovesImageFirstAndUpdatesAvatarCover(t *testing.T) {
 	store, err := NewStore(t.TempDir())
 	if err != nil {

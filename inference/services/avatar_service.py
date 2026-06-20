@@ -67,10 +67,13 @@ class AvatarGRPCService(avatar_pb2_grpc.AvatarServiceServicer):
     async def SetAvatar(self, request, context):
         try:
             plugin = self._get_plugin()
+            if not request.image_data:
+                raise RuntimeError("image_data is required")
             suffix = f".{request.image_format}" if request.image_format else ".png"
             with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as f:
                 f.write(request.image_data)
                 image_path = f.name
+
             await plugin.set_avatar(image_path, request.use_face_crop)
             return avatar_pb2.SetAvatarResponse(success=True, message="Avatar set")
         except Exception as e:

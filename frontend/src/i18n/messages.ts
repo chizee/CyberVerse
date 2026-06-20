@@ -199,7 +199,6 @@ export const baseMessages = {
       enableSound: '启用声音',
       outputMute: '静音数字人声音',
       outputUnmute: '取消静音数字人声音',
-      baiduRealtimeLoading: '正在加载百度数字人...',
       chatTitle: '对话',
       clear: '清空',
       micInput: '麦克风输入',
@@ -234,6 +233,8 @@ export const baseMessages = {
       send: '发送',
       sendFailedNoSession: '发送失败：会话未初始化，请刷新后重试。',
       sendFailedNetwork: '发送失败：网络异常，请稍后重试。',
+      serverError: '会话处理失败：{message}',
+      serverErrorFallback: '服务端返回错误。',
     },
     controlBar: {
       connect: 'Connect',
@@ -453,7 +454,6 @@ export const baseMessages = {
       enableSound: 'Enable sound',
       outputMute: 'Mute digital human audio',
       outputUnmute: 'Unmute digital human audio',
-      baiduRealtimeLoading: 'Loading Baidu digital human...',
       chatTitle: 'Chat',
       clear: 'Clear',
       micInput: 'Mic input',
@@ -488,6 +488,8 @@ export const baseMessages = {
       send: 'Send',
       sendFailedNoSession: 'Send failed: session is not initialized. Refresh and try again.',
       sendFailedNetwork: 'Send failed: network error. Try again later.',
+      serverError: 'Conversation failed: {message}',
+      serverErrorFallback: 'Server returned an error.',
     },
     controlBar: {
       connect: 'Connect',

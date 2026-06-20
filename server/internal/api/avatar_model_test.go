@@ -18,6 +18,7 @@ import (
 	"github.com/cyberverse/server/internal/inference"
 	"github.com/cyberverse/server/internal/orchestrator"
 	pb "github.com/cyberverse/server/internal/pb"
+	"github.com/cyberverse/server/internal/ws"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -46,6 +47,8 @@ type fakeInferenceService struct {
 	ragDeleteErr              error
 	ragSearchResults          []inference.RAGSearchResult
 	ragSearchErr              error
+	llmChunks                 []*pb.LLMChunk
+	ttsChunks                 []*pb.AudioChunk
 }
 
 func (f *fakeInferenceService) HealthCheck(ctx context.Context) error {
@@ -70,6 +73,7 @@ func (f *fakeInferenceService) SetAvatar(_ context.Context, _ string, imageData 
 	}
 	return f.setAvatarErr
 }
+
 func (f *fakeInferenceService) GenerateAvatarStream(context.Context, <-chan *pb.AudioChunk) (<-chan *pb.VideoChunk, <-chan error) {
 	f.generateAvatarStreamCalls++
 	videoCh := make(chan *pb.VideoChunk)
@@ -93,15 +97,21 @@ func (f *fakeInferenceService) GenerateAvatar(context.Context, []*pb.AudioChunk)
 	return videoCh, errCh
 }
 func (f *fakeInferenceService) GenerateLLMStream(context.Context, string, []inference.ChatMessage, inference.LLMConfig) (<-chan *pb.LLMChunk, <-chan error) {
-	ch := make(chan *pb.LLMChunk)
+	ch := make(chan *pb.LLMChunk, len(f.llmChunks))
 	errCh := make(chan error)
+	for _, chunk := range f.llmChunks {
+		ch <- chunk
+	}
 	close(ch)
 	close(errCh)
 	return ch, errCh
 }
 func (f *fakeInferenceService) SynthesizeSpeechStream(context.Context, <-chan string, inference.TTSConfig) (<-chan *pb.AudioChunk, <-chan error) {
-	ch := make(chan *pb.AudioChunk)
+	ch := make(chan *pb.AudioChunk, len(f.ttsChunks))
 	errCh := make(chan error)
+	for _, chunk := range f.ttsChunks {
+		ch <- chunk
+	}
 	close(ch)
 	close(errCh)
 	return ch, errCh
@@ -801,6 +811,294 @@ func TestCreateSessionWithCharacterUsesActiveRuntimeModelOnly(t *testing.T) {
 
 	if w.Code != http.StatusCreated {
 		t.Fatalf("expected 201, got %d", w.Code)
+	}
+}
+
+func TestCreateSessionBaiduCharacterReturnsH5AudioConfig(t *testing.T) {
+	t.Setenv("BAIDU_XILING_APP_ID", "app-id")
+	t.Setenv("BAIDU_XILING_APP_KEY", "app-key")
+	r, charStore := newAvatarModelTestRouter(t, "flash_head")
+	char, err := charStore.Create(&character.Character{
+		Name:          "Baidu Character",
+		AvatarBackend: character.AvatarBackendBaiduXiling,
+		BaiduXiling: &character.BaiduXiling{
+			FigureID:        "figure-1",
+			CameraID:        "camera-1",
+			ThumbnailURL:    "https://example.com/baidu-thumb.png",
+			PreviewVideoURL: "https://example.com/baidu-preview.mp4",
+			Width:           1920,
+			Height:          1080,
+		},
+		VoiceType: "温柔文雅",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	body := `{"mode":"omni","character_id":"` + char.ID + `"}`
+	req := httptest.NewRequest("POST", "/api/v1/sessions", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.Handler().ServeHTTP(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp CreateSessionResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Mode != "omni" {
+		t.Fatalf("expected Baidu Xiling session to preserve requested omni mode, got %q", resp.Mode)
+	}
+	if resp.StreamingMode != "direct" {
+		t.Fatalf("expected Baidu to reuse direct streaming mode, got %q", resp.StreamingMode)
+	}
+	if resp.IdleVideoURL != "https://example.com/baidu-preview.mp4" {
+		t.Fatalf("expected Baidu preview video as standby, got %q", resp.IdleVideoURL)
+	}
+	if len(resp.IdleVideoURLs) != 1 || resp.IdleVideoURLs[0] != resp.IdleVideoURL {
+		t.Fatalf("expected Baidu preview video URLs, got %+v", resp.IdleVideoURLs)
+	}
+	if resp.IdleImageURL != "https://example.com/baidu-thumb.png" {
+		t.Fatalf("expected Baidu thumbnail as standby image, got %q", resp.IdleImageURL)
+	}
+	if resp.BaiduXiling == nil {
+		t.Fatal("expected Baidu Xiling session config")
+	}
+	if !strings.HasPrefix(resp.BaiduXiling.IframeURL, "https://open.xiling.baidu.com/cloud/realtime?") {
+		t.Fatalf("expected Baidu H5 iframe URL, got %q", resp.BaiduXiling.IframeURL)
+	}
+	if !strings.Contains(resp.BaiduXiling.IframeURL, "figureId=figure-1") {
+		t.Fatalf("expected iframe URL to include figureId, got %q", resp.BaiduXiling.IframeURL)
+	}
+	if !strings.Contains(resp.BaiduXiling.IframeURL, "cameraId=camera-1") {
+		t.Fatalf("expected iframe URL to include cameraId, got %q", resp.BaiduXiling.IframeURL)
+	}
+	if resp.BaiduXiling.Origin != "https://open.xiling.baidu.com" {
+		t.Fatalf("expected Baidu origin, got %q", resp.BaiduXiling.Origin)
+	}
+	if resp.BaiduXiling.FigureID != "figure-1" || resp.BaiduXiling.CameraID != "camera-1" {
+		t.Fatalf("unexpected Baidu figure config: %+v", resp.BaiduXiling)
+	}
+	if resp.BaiduXiling.AudioSampleRate != 16000 || resp.BaiduXiling.AudioMaxPCMBytes != 48000 {
+		t.Fatalf("unexpected Baidu audio limits: %+v", resp.BaiduXiling)
+	}
+}
+
+func TestCreateSessionBaiduCharacterFallsBackToThumbnailStandby(t *testing.T) {
+	t.Setenv("BAIDU_XILING_APP_ID", "app-id")
+	t.Setenv("BAIDU_XILING_APP_KEY", "app-key")
+	r, charStore := newAvatarModelTestRouter(t, "flash_head")
+	char, err := charStore.Create(&character.Character{
+		Name:          "Baidu Character",
+		AvatarBackend: character.AvatarBackendBaiduXiling,
+		BaiduXiling: &character.BaiduXiling{
+			FigureID:     "figure-1",
+			ThumbnailURL: "https://example.com/baidu-thumb.png",
+			Width:        1920,
+			Height:       1080,
+		},
+		VoiceType: "温柔文雅",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	body := `{"mode":"omni","character_id":"` + char.ID + `"}`
+	req := httptest.NewRequest("POST", "/api/v1/sessions", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.Handler().ServeHTTP(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp CreateSessionResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.IdleVideoURL != "" || len(resp.IdleVideoURLs) != 0 {
+		t.Fatalf("expected no Baidu standby video without preview URL, got %q %+v", resp.IdleVideoURL, resp.IdleVideoURLs)
+	}
+	if resp.IdleImageURL != "https://example.com/baidu-thumb.png" {
+		t.Fatalf("expected Baidu thumbnail as standby image, got %q", resp.IdleImageURL)
+	}
+	if resp.BaiduXiling == nil {
+		t.Fatal("expected Baidu Xiling session config")
+	}
+}
+
+func TestCreateSessionBaiduCharacterRequiresH5Credentials(t *testing.T) {
+	t.Setenv("BAIDU_XILING_APP_ID", "")
+	t.Setenv("BAIDU_XILING_APP_KEY", "")
+	charStore, err := character.NewStore(filepath.Join(t.TempDir(), "characters"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	char, err := charStore.Create(&character.Character{
+		Name:          "Baidu Runtime",
+		AvatarBackend: character.AvatarBackendBaiduXiling,
+		BaiduXiling:   &character.BaiduXiling{FigureID: "figure-1", ThumbnailURL: "https://example.com/thumb.png"},
+		VoiceType:     "温柔文雅",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	inf := &fakeInferenceService{
+		avatarInfo: &pb.AvatarInfo{ModelName: "avatar.baidu_xiling", OutputFps: 20, OutputWidth: 720, OutputHeight: 406},
+	}
+	mgr := orchestrator.NewSessionManager(4)
+	orch := orchestrator.New(inf, nil, mgr, nil, charStore)
+	r := NewRouter(mgr, orch, nil, nil, nil, charStore, "", "")
+
+	body := `{"mode":"omni","character_id":"` + char.ID + `"}`
+	req := httptest.NewRequest("POST", "/api/v1/sessions", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.Handler().ServeHTTP(w, req)
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "Baidu Xiling credentials are not configured") {
+		t.Fatalf("expected credential error, got %s", w.Body.String())
+	}
+}
+
+func TestBaiduXilingSessionSendsAudioDataOverWebSocket(t *testing.T) {
+	t.Setenv("BAIDU_XILING_APP_ID", "app-id")
+	t.Setenv("BAIDU_XILING_APP_KEY", "app-key")
+
+	charStore, err := character.NewStore(filepath.Join(t.TempDir(), "characters"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	char, err := charStore.Create(&character.Character{
+		Name:          "Baidu Runtime",
+		AvatarBackend: character.AvatarBackendBaiduXiling,
+		BaiduXiling: &character.BaiduXiling{
+			FigureID:        "figure-1",
+			ThumbnailURL:    "https://example.com/thumb.png",
+			PreviewVideoURL: "https://example.com/standby.mp4",
+		},
+		VoiceType: "温柔文雅",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	inf := &fakeInferenceService{
+		avatarInfo: &pb.AvatarInfo{ModelName: "avatar.flash_head", OutputFps: 25, OutputWidth: 512, OutputHeight: 512},
+		llmChunks: []*pb.LLMChunk{
+			{Token: "你好", AccumulatedText: "你好，我是百度数字人。"},
+			{Token: "，我是百度数字人。", AccumulatedText: "你好，我是百度数字人。", IsFinal: true},
+		},
+		ttsChunks: []*pb.AudioChunk{
+			{
+				Data:       []byte{0, 0, 1, 0, 2, 0, 3, 0},
+				SampleRate: 16000,
+				Channels:   1,
+				Format:     "pcm",
+			},
+		},
+	}
+	hub := ws.NewHub()
+	mgr := orchestrator.NewSessionManager(4)
+	t.Cleanup(mgr.Stop)
+	orch := orchestrator.New(inf, hub, mgr, nil, charStore)
+	r := NewRouter(mgr, orch, hub, nil, nil, charStore, "", "")
+
+	createBody := `{"mode":"standard","character_id":"` + char.ID + `"}`
+	req := httptest.NewRequest("POST", "/api/v1/sessions", strings.NewReader(createBody))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected session create 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var createResp CreateSessionResponse
+	if err := json.NewDecoder(w.Body).Decode(&createResp); err != nil {
+		t.Fatal(err)
+	}
+	if createResp.BaiduXiling == nil {
+		t.Fatal("expected Baidu H5 config")
+	}
+	if createResp.IdleVideoURL != "https://example.com/standby.mp4" {
+		t.Fatalf("expected standby preview video, got %q", createResp.IdleVideoURL)
+	}
+
+	client := &ws.Client{SessionID: createResp.SessionID, Send: make(chan []byte, 20)}
+	hub.Register(client)
+	t.Cleanup(func() {
+		hub.Unregister(client)
+	})
+
+	req = httptest.NewRequest("POST", "/api/v1/sessions/"+createResp.SessionID+"/message", strings.NewReader(`{"text":"请说一句话"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	r.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("expected message 202, got %d: %s", w.Code, w.Body.String())
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	var sawAudio bool
+	var sawSpeaking bool
+	var sawIdle bool
+	for time.Now().Before(deadline) && (!sawAudio || !sawIdle) {
+		select {
+		case raw := <-client.Send:
+			var event map[string]any
+			if err := json.Unmarshal(raw, &event); err != nil {
+				t.Fatalf("invalid websocket event: %v", err)
+			}
+			switch event["type"] {
+			case "webrtc_config", "webrtc_offer", "ice_candidate":
+				t.Fatalf("Baidu Xiling standard session should not emit Direct WebRTC setup event: %+v", event)
+			case "avatar_status":
+				switch event["status"] {
+				case "speaking":
+					sawSpeaking = true
+				case "idle":
+					sawIdle = true
+				}
+			case "baidu_xiling_audio":
+				sawAudio = true
+				if event["request_id"] == "" || event["audio"] == "" {
+					t.Fatalf("expected request_id and audio in Baidu audio event, got %+v", event)
+				}
+				if event["first"] != true || event["last"] != true {
+					t.Fatalf("expected one Baidu audio chunk to be first and last, got %+v", event)
+				}
+			}
+		case <-time.After(200 * time.Millisecond):
+			continue
+		}
+	}
+	if !sawSpeaking {
+		t.Fatal("expected speaking status before Baidu audio playback")
+	}
+	if !sawAudio {
+		t.Fatal("expected baidu_xiling_audio websocket event")
+	}
+	if !sawIdle {
+		t.Fatal("expected session to return to idle after Baidu audio event")
+	}
+	if inf.setAvatarCalls != 0 {
+		t.Fatalf("expected no SetAvatar call for Baidu H5 session, got %d", inf.setAvatarCalls)
+	}
+	if inf.generateAvatarStreamCalls != 0 || inf.generateAvatarCalls != 0 {
+		t.Fatalf("expected no avatar video generation for Baidu H5 session, stream=%d batch=%d", inf.generateAvatarStreamCalls, inf.generateAvatarCalls)
+	}
+	session, err := mgr.Get(createResp.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	session.WaitPipelineDone(2 * time.Second)
+	if got := session.GetState(); got != orchestrator.StateListening {
+		t.Fatalf("expected session to return to listening, got %s", got)
 	}
 }
 

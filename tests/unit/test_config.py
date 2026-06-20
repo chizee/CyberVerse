@@ -66,6 +66,33 @@ def test_env_var_substitution():
             os.unlink(f.name)
 
 
+def test_load_config_loads_dotenv_next_to_config(monkeypatch, tmp_path):
+    monkeypatch.delenv("TEST_CYBERVERSE_DOTENV_VAR", raising=False)
+    monkeypatch.delenv("TEST_CYBERVERSE_DOTENV_QUOTED", raising=False)
+    (tmp_path / ".env").write_text(
+        """
+# ignored
+TEST_CYBERVERSE_DOTENV_VAR=from_dotenv
+TEST_CYBERVERSE_DOTENV_QUOTED='quoted value'
+ignored_line
+""",
+        encoding="utf-8",
+    )
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        """
+key: ${TEST_CYBERVERSE_DOTENV_VAR}
+quoted: ${TEST_CYBERVERSE_DOTENV_QUOTED}
+""",
+        encoding="utf-8",
+    )
+
+    config = load_config(config_path)
+
+    assert config["key"] == "from_dotenv"
+    assert config["quoted"] == "quoted value"
+
+
 def test_unmatched_env_var_preserved():
     with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
         f.write("key: ${NONEXISTENT_CYBERVERSE_VAR_12345}\n")

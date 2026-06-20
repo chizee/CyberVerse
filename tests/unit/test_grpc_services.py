@@ -7,7 +7,7 @@ import pytest
 
 from inference.core.registry import PluginRegistry
 from inference.core.types import AudioChunk, PluginConfig, VideoChunk, LLMResponseChunk, TranscriptEvent
-from inference.generated import asr_pb2, common_pb2, llm_pb2, tts_pb2
+from inference.generated import asr_pb2, avatar_pb2, common_pb2, llm_pb2, tts_pb2
 from inference.plugins.avatar.base import AvatarPlugin
 from inference.plugins.llm.base import LLMPlugin
 from inference.plugins.tts.base import TTSPlugin
@@ -150,7 +150,7 @@ async def test_avatar_reset(registry):
 @pytest.mark.asyncio
 async def test_avatar_set_avatar(registry):
     svc = AvatarGRPCService(registry)
-    request = MagicMock(image_data=b"fake_png", image_format="png", use_face_crop=False)
+    request = avatar_pb2.SetAvatarRequest(image_data=b"fake_png", image_format="png", use_face_crop=False)
     context = MagicMock()
     resp = await svc.SetAvatar(request, context)
     assert resp.success is True

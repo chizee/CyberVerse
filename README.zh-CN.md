@@ -297,6 +297,23 @@ inference:
 `avatar_models/live_act.yaml`。这些模型参数之后也可以在 Web UI 中调整，并会写回
 对应的模型配置文件。
 
+### 百度曦灵 H5 数字人
+
+使用百度曦灵时，把密钥放在 `.env`：
+
+```env
+BAIDU_XILING_APP_ID="your-app-id"
+BAIDU_XILING_APP_KEY="your-app-key"
+# 如果形象需要固定机位，可选配置。
+BAIDU_XILING_CAMERA_ID="0"
+```
+
+百度曦灵在 Web UI 中按角色选择。它不是本地 avatar inference 模型，不应配置为
+`inference.avatar.default`。CyberVerse 仍通过 orchestrator 处理 ASR、LLM、TTS、
+历史上下文和角色设定，然后把 16 kHz、16-bit、单声道 PCM 音频分片发送到浏览器。
+前端嵌入百度 H5 iframe，并按官方 `sendAudioData` / `AUDIO_STREAM_RENDER` 消息格式
+驱动数字人。
+
 ### LiveAct FP4 GEMM（可选）
 
 FP4 加速需从 [LightX2V](https://github.com/ModelTC/LightX2V) 编译安装 `lightx2v_kernel`。环境需 **PyTorch 2.7+**，并在本机准备好 CUTLASS 源码。

@@ -82,6 +82,15 @@ class VoiceLLMGRPCService(voice_llm_pb2_grpc.VoiceLLMServiceServicer):
             raise RuntimeError(f"No omni model plugin initialized{suffix}")
         return plugin
 
+    def _get_converse_plugin(self, provider: str = "") -> VoiceLLMPlugin:
+        provider = provider.strip()
+        if provider and provider != "persona":
+            try:
+                return self.registry.get("persona.persona")
+            except KeyError:
+                pass
+        return self._get_plugin(provider)
+
     @staticmethod
     def _input_event_from_pb(msg: voice_llm_pb2.VoiceLLMInput) -> VoiceLLMInputEvent | None:
         which = msg.WhichOneof("input")
@@ -133,7 +142,7 @@ class VoiceLLMGRPCService(voice_llm_pb2_grpc.VoiceLLMServiceServicer):
             session_config = VoiceLLMSessionConfig()
         if first_input is not None:
             session_config.input_mode = "text" if first_input.text else "keep_alive"
-        plugin = self._get_plugin(session_config.provider)
+        plugin = self._get_converse_plugin(session_config.provider)
 
         # Phase 2: stream remaining messages as unified input events.
         async def input_stream():

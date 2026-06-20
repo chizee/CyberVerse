@@ -3,6 +3,7 @@ import type { PipelineMode } from '../types'
 
 export type SessionVisualInputConfig = NonNullable<CreateSessionResponse['visual_input']>
 export type AvatarIdleStrategy = NonNullable<CreateSessionResponse['idle_strategy']>
+export type BaiduXilingSessionConfig = NonNullable<CreateSessionResponse['baidu_xiling']>
 
 export interface SessionLaunchState {
   session_id: string
@@ -12,10 +13,12 @@ export interface SessionLaunchState {
   return_path?: string
   avatar_enabled?: boolean
   idle_strategy?: AvatarIdleStrategy
+  baidu_xiling?: BaiduXilingSessionConfig
   livekit_url?: string
   livekit_token?: string
   idle_video_url?: string
   idle_video_urls?: string[]
+  idle_image_url?: string
   visual_input?: SessionVisualInputConfig
 }
 
@@ -79,10 +82,12 @@ export function buildSessionLaunchState(
     return_path: returnPath ? normalizeReturnPath(returnPath) : undefined,
     avatar_enabled: response.avatar_enabled,
     idle_strategy: normalizeIdleStrategy(response.idle_strategy || ''),
+    baidu_xiling: response.baidu_xiling,
     livekit_url: response.livekit_url,
     livekit_token: response.livekit_token,
     idle_video_url: response.idle_video_url,
     idle_video_urls: response.idle_video_urls,
+    idle_image_url: response.idle_image_url,
     visual_input: response.visual_input,
   }
 }
@@ -110,10 +115,12 @@ export function loadSessionLaunchState(sessionId: string): SessionLaunchState | 
     return_path: normalizeReturnPath(parsed.return_path || ''),
     avatar_enabled: parsed.avatar_enabled,
     idle_strategy: normalizeIdleStrategy(parsed.idle_strategy || ''),
+    baidu_xiling: parsed.baidu_xiling,
     livekit_url: parsed.livekit_url,
     livekit_token: parsed.livekit_token,
     idle_video_url: parsed.idle_video_url,
     idle_video_urls: Array.isArray(parsed.idle_video_urls) ? parsed.idle_video_urls : undefined,
+    idle_image_url: parsed.idle_image_url,
     visual_input: parsed.visual_input,
   }
 }
@@ -137,10 +144,12 @@ export function sessionLaunchStateFromQuery(
   const livekitToken = firstQueryValue(query.livekit_token)
   const idleVideoUrl = firstQueryValue(query.idle_video_url)
   const idleVideoUrls = parseJSON<string[]>(firstQueryValue(query.idle_video_urls))
+  const idleImageUrl = firstQueryValue(query.idle_image_url)
+  const baiduXiling = parseJSON<BaiduXilingSessionConfig>(firstQueryValue(query.baidu_xiling))
   const visualInput = parseJSON<SessionVisualInputConfig>(firstQueryValue(query.visual_input))
   const returnPath = normalizeReturnPath(firstQueryValue(query.return_path))
 
-  if (!streamingMode && !mode && !avatarEnabled && !idleStrategy && !characterId && !livekitUrl && !livekitToken && !idleVideoUrl && !idleVideoUrls && !visualInput && !returnPath) {
+  if (!streamingMode && !mode && !avatarEnabled && !idleStrategy && !characterId && !livekitUrl && !livekitToken && !idleVideoUrl && !idleVideoUrls && !idleImageUrl && !baiduXiling && !visualInput && !returnPath) {
     return null
   }
 
@@ -152,10 +161,12 @@ export function sessionLaunchStateFromQuery(
     return_path: returnPath,
     avatar_enabled: avatarEnabled ? avatarEnabled === 'true' : undefined,
     idle_strategy: normalizeIdleStrategy(idleStrategy),
+    baidu_xiling: baiduXiling,
     livekit_url: livekitUrl || undefined,
     livekit_token: livekitToken || undefined,
     idle_video_url: idleVideoUrl || undefined,
     idle_video_urls: Array.isArray(idleVideoUrls) ? idleVideoUrls : undefined,
+    idle_image_url: idleImageUrl || undefined,
     visual_input: visualInput,
   }
 }

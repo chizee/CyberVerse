@@ -229,7 +229,7 @@ class DoubaoRealtimePlugin(VoiceLLMPlugin):
         headers = effective_config.build_ws_headers(connect_id)
 
         async with websockets.connect(
-            effective_config.ws_url, additional_headers=headers
+            effective_config.ws_url, additional_headers=headers, proxy=None
         ) as ws:
             speaker = await self._start_session(
                 ws,
@@ -298,7 +298,7 @@ class DoubaoRealtimePlugin(VoiceLLMPlugin):
         headers = config.build_ws_headers(connect_id)
 
         async with websockets.connect(
-            config.ws_url, additional_headers=headers
+            config.ws_url, additional_headers=headers, proxy=None
         ) as ws:
             self._ws = ws
             self._session_id = session_id

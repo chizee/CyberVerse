@@ -3,11 +3,12 @@ import { ref, watch, watchEffect, unref, onUnmounted, computed, onMounted } from
 import { useRouter, useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import VideoPlayer from '../components/VideoPlayer.vue'
+import BaiduXilingPlayer from '../components/BaiduXilingPlayer.vue'
 import ChatPanel from '../components/ChatPanel.vue'
 import VoiceWaveform from '../components/VoiceWaveform.vue'
 import { useWebRTC } from '../composables/useWebRTC'
 import { useDirectWebRTC } from '../composables/useDirectWebRTC'
-import { useChat } from '../composables/useChat'
+import { useChat, type BaiduXilingAudioEvent } from '../composables/useChat'
 import { useVisualInput, type VisualInputConfig } from '../composables/useVisualInput'
 import { deleteSession } from '../services/api'
 import {
@@ -23,6 +24,8 @@ const { t } = useI18n()
 const sessionId = computed(() => route.params.id as string)
 
 const videoPlayerRef = ref<InstanceType<typeof VideoPlayer> | null>(null)
+const baiduPlayerRef = ref<InstanceType<typeof BaiduXilingPlayer> | null>(null)
+const pendingBaiduAudioEvents: BaiduXilingAudioEvent[] = []
 const sessionVideoShellRef = ref<HTMLElement | null>(null)
 const visualPreviewShellRef = ref<HTMLElement | null>(null)
 const visualPreviewRef = ref<HTMLVideoElement | null>(null)
@@ -40,6 +43,10 @@ if (queryLaunchState) {
 }
 const launchState = ref(loadSessionLaunchState(sessionId.value) || queryLaunchState)
 const streamingMode = launchState.value?.streaming_mode || 'direct'
+const baiduXilingConfig = computed(() => launchState.value?.baidu_xiling)
+const isBaiduXilingSession = computed(() => !!baiduXilingConfig.value)
+const isOmniSession = computed(() => launchState.value?.mode === 'omni')
+const shouldUseMediaPeer = computed(() => !isBaiduXilingSession.value || isOmniSession.value)
 
 function truthyDebugFlag(value: unknown): boolean {
   const raw = Array.isArray(value) ? value[0] : value
@@ -84,12 +91,22 @@ const toggleOutputMute = isDirectMode ? dp.toggleOutputMute : lk.toggleOutputMut
 const webrtcDisconnect = isDirectMode ? dp.disconnect : lk.disconnect
 const setAVSyncLoggingEnabled = isDirectMode ? dp.setAVSyncLoggingEnabled : lk.setAVSyncLoggingEnabled
 
-const outputMutedVisual = computed(() => isOutputMuted.value)
+const baiduOutputMuted = ref(false)
+const outputMutedVisual = computed(() => isBaiduXilingSession.value ? baiduOutputMuted.value : isOutputMuted.value)
 const outputButtonTitle = computed(() => {
-  return isOutputMuted.value ? t('session.outputUnmute') : t('session.outputMute')
+  return outputMutedVisual.value ? t('session.outputUnmute') : t('session.outputMute')
+})
+const mediaConnected = computed(() => {
+  if (!isBaiduXilingSession.value) return connectionState.value === 'connected'
+  if (isOmniSession.value) return chatConnected.value && connectionState.value === 'connected'
+  return chatConnected.value
 })
 
 watchEffect(() => {
+  if (isBaiduXilingSession.value) {
+    videoElement.value = null
+    return
+  }
   const inst = videoPlayerRef.value
   const inner = inst?.videoRef
   videoElement.value = inner ? unref(inner) : null
@@ -111,10 +128,28 @@ const {
   disconnect: chatDisconnect,
   loadHistory,
   registerSignalingHandler,
+  registerBaiduXilingAudioHandler,
   sendSignaling,
   sendWSMessage,
   isConnected: chatConnected,
 } = useChat(() => sessionId.value)
+
+registerBaiduXilingAudioHandler((event) => {
+  const player = baiduPlayerRef.value
+  if (!player) {
+    pendingBaiduAudioEvents.push(event)
+    return
+  }
+  player.sendAudioEvent(event)
+})
+
+watch(baiduPlayerRef, (player) => {
+  if (!player || pendingBaiduAudioEvents.length === 0) return
+  const events = pendingBaiduAudioEvents.splice(0)
+  for (const event of events) {
+    player.sendAudioEvent(event)
+  }
+})
 
 const visualInput = useVisualInput(
   (msg) => sendWSMessage(msg),
@@ -136,6 +171,7 @@ const visualPreviewStyle = computed(() => {
 })
 
 const VISUAL_PREVIEW_MARGIN = 12
+const BAIDU_ACTIVE_SESSION_PREFIX = 'cyberverse.baidu_xiling.active.'
 
 type VisualPreviewDragState = {
   pointerId: number
@@ -147,6 +183,7 @@ type VisualPreviewDragState = {
 let visualPreviewDragState: VisualPreviewDragState | null = null
 
 watch([chatConnected, connectionState], ([chatReady, mediaState]) => {
+  if (!shouldUseMediaPeer.value || isBaiduXilingSession.value) return
   if (startupGreetingReadySent.value) return
   if (idleStrategy.value !== 'silent_inference') return
   if (!chatReady || mediaState !== 'connected') return
@@ -154,6 +191,34 @@ watch([chatConnected, connectionState], ([chatReady, mediaState]) => {
     startupGreetingReadySent.value = true
   }
 })
+
+function baiduActiveSessionKey(): string {
+  return `${BAIDU_ACTIVE_SESSION_PREFIX}${characterId.value}`
+}
+
+function markBaiduSessionActive() {
+  if (!isBaiduXilingSession.value || !characterId.value || !sessionId.value) return
+  try {
+    localStorage.setItem(baiduActiveSessionKey(), sessionId.value)
+  } catch {}
+}
+
+function clearBaiduSessionActive() {
+  if (!isBaiduXilingSession.value || !characterId.value || !sessionId.value) return
+  try {
+    const key = baiduActiveSessionKey()
+    if (localStorage.getItem(key) === sessionId.value) {
+      localStorage.removeItem(key)
+    }
+  } catch {}
+}
+
+function handleBaiduActiveSessionChange(event: StorageEvent) {
+  if (!isBaiduXilingSession.value || !characterId.value || !sessionId.value) return
+  if (event.key !== baiduActiveSessionKey()) return
+  if (!event.newValue || event.newValue === sessionId.value) return
+  void handleDisconnect()
+}
 
 function clampValue(value: number, min: number, max: number): number {
   if (max < min) return min
@@ -262,6 +327,7 @@ watchEffect(() => {
 // Initialize idle video URLs from route query (if already cached at session creation)
 const launchIdleUrls = launchState.value?.idle_video_urls
 const launchIdleUrl = launchState.value?.idle_video_url || ''
+const idleImageUrl = ref(launchState.value?.idle_image_url || '')
 if (idleStrategy.value === 'cached_video' && launchIdleUrls && launchIdleUrls.length > 0) {
   idleVideoUrls.value = launchIdleUrls
 } else if (idleStrategy.value === 'cached_video' && launchIdleUrl) {
@@ -287,6 +353,7 @@ const displayMode = computed<'webrtc' | 'standby' | 'placeholder'>(() => {
   const lastFrameAt = debugState.value.lastVideoFrameAtMs
   const hasFreshRealtimeFrame = !!lastFrameAt && clockMs.value - lastFrameAt < 3000
   const hasRealtimeSize = !!videoElement.value?.videoWidth || !!debugState.value.network?.frameWidth
+  const hasStandbyVisual = !standbyDecodeFailed.value && (!!idleVideoUrl.value || !!idleImageUrl.value)
 
   if (idleStrategy.value === 'silent_inference') {
     const result = connectionState.value === 'connected' && (hasFreshRealtimeFrame || hasRealtimeSize)
@@ -302,13 +369,13 @@ const displayMode = computed<'webrtc' | 'standby' | 'placeholder'>(() => {
 
   let result: 'webrtc' | 'standby' | 'placeholder'
   let reason = ''
-  if (idleVideoUrl.value && !standbyDecodeFailed.value && avatarStatus.value !== 'speaking') {
+  if (hasStandbyVisual && avatarStatus.value !== 'speaking') {
     result = 'standby'
     reason = `avatarStatus=${avatarStatus.value}`
   } else if (hasFreshRealtimeFrame) {
     result = 'webrtc'
     reason = `fresh frame (${lastFrameAt ? (Date.now() - lastFrameAt) + 'ms ago' : ''})`
-  } else if (idleVideoUrl.value && !standbyDecodeFailed.value) {
+  } else if (hasStandbyVisual) {
     result = 'standby'
     reason = `fallback (speaking but no fresh frame yet)`
   } else if (standbyDecodeFailed.value && connectionState.value === 'connected') {
@@ -340,6 +407,11 @@ onMounted(async () => {
     void router.replace({ path: route.path })
   }
 
+  if (isBaiduXilingSession.value) {
+    window.addEventListener('storage', handleBaiduActiveSessionChange)
+    markBaiduSessionActive()
+  }
+
   window.addEventListener('resize', keepVisualPreviewInBounds)
 
   const startedAt = Date.now()
@@ -351,7 +423,9 @@ onMounted(async () => {
     loadHistory(characterId.value)
   }
 
-  if (isDirectMode) {
+  if (!shouldUseMediaPeer.value) {
+    // Baidu Xiling standard sessions render in the H5 iframe and receive audio through chat WS events.
+  } else if (isDirectMode) {
     // Direct P2P WebRTC: register signaling handler then connect
     registerSignalingHandler((data: any) => dp.handleSignaling(data))
     await dp.connect(
@@ -380,13 +454,17 @@ onMounted(async () => {
 onUnmounted(() => {
   if (timer) clearInterval(timer)
   stopVisualPreviewDragging()
+  clearBaiduSessionActive()
+  window.removeEventListener('storage', handleBaiduActiveSessionChange)
   window.removeEventListener('resize', keepVisualPreviewInBounds)
   visualInput.stop(undefined, true)
 })
 
 async function handleDisconnect() {
   visualInput.stop(undefined, true)
-  webrtcDisconnect()
+  if (shouldUseMediaPeer.value) {
+    webrtcDisconnect()
+  }
   chatDisconnect()
   const returnPath = launchState.value?.return_path || '/characters'
   if (sessionId.value) {
@@ -407,6 +485,11 @@ function toggleChatPanel() {
 }
 
 async function handleOutputButtonClick() {
+  if (isBaiduXilingSession.value) {
+    baiduOutputMuted.value = !baiduOutputMuted.value
+    baiduPlayerRef.value?.muteAudio(baiduOutputMuted.value)
+    return
+  }
   await toggleOutputMute()
 }
 
@@ -421,11 +504,19 @@ function formatTime(s: number): string {
   <div class="session-page" :class="{ 'chat-collapsed': isChatCollapsed }">
     <!-- Left: Video area (60%) -->
     <div ref="sessionVideoShellRef" class="session-video-shell">
+      <BaiduXilingPlayer
+        v-if="isBaiduXilingSession && baiduXilingConfig"
+        ref="baiduPlayerRef"
+        :config="baiduXilingConfig"
+        class="w-full flex-1 min-h-0"
+      />
       <VideoPlayer
+        v-else
         ref="videoPlayerRef"
         :display-mode="displayMode"
         :standby-src="idleVideoUrl"
         :standby-sources="idleVideoUrls"
+        :standby-image-src="idleImageUrl"
         class="w-full flex-1 min-h-0"
         @standby-failed="onStandbyMp4Failed"
       />
@@ -437,7 +528,7 @@ function formatTime(s: number): string {
       </button>
 
       <!-- FPS indicator (top-right, glass) — click to toggle diagnostics -->
-      <button v-if="connectionState === 'connected'"
+      <button v-if="!isBaiduXilingSession && connectionState === 'connected'"
               @click="showDiag = !showDiag"
               class="absolute top-5 right-5 px-2.5 py-1.5 bg-black/70 backdrop-blur-sm rounded-cv-md text-xs font-mono text-cv-text z-10 cursor-pointer hover:bg-black/90 transition-colors">
         {{ debugState.fps }} FPS
@@ -460,7 +551,7 @@ function formatTime(s: number): string {
       </button>
 
       <!-- Diagnostics panel -->
-      <div v-if="showDiag && connectionState === 'connected'"
+      <div v-if="!isBaiduXilingSession && showDiag && connectionState === 'connected'"
            class="absolute top-14 right-5 w-80 max-h-[70vh] overflow-y-auto bg-black/85 backdrop-blur-md rounded-lg border border-white/10 p-3 text-[11px] font-mono text-cv-text z-20 space-y-2">
         <div class="text-xs font-semibold text-cv-accent mb-1">{{ t('session.frameJitter') }}</div>
         <div class="grid grid-cols-2 gap-x-3 gap-y-0.5">
@@ -530,7 +621,7 @@ function formatTime(s: number): string {
       </div>
 
       <!-- Local mic input level (Web Audio analyser, not avatar state) -->
-      <div class="absolute bottom-14 left-5 z-10 max-w-[min(100%,28rem)]">
+      <div v-if="shouldUseMediaPeer" class="absolute bottom-14 left-5 z-10 max-w-[min(100%,28rem)]">
         <VoiceWaveform
           type="user"
           :label="t('session.micInput')"
@@ -613,7 +704,8 @@ function formatTime(s: number): string {
         </button>
 
         <!-- Mic button -->
-        <button @click="toggleMute()"
+        <button v-if="shouldUseMediaPeer"
+                @click="toggleMute()"
                 class="w-12 h-12 rounded-full flex items-center justify-center transition-colors cursor-pointer"
                 :class="isMuted ? 'bg-cv-danger' : 'bg-cv-accent shadow-[0_2px_8px_rgba(59,130,246,0.3)]'">
           <svg class="w-5 h-5 text-white" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -625,7 +717,7 @@ function formatTime(s: number): string {
 
         <!-- Timer -->
         <div class="flex items-center gap-2">
-          <span class="w-1.5 h-1.5 rounded-full" :class="connectionState === 'connected' ? 'bg-cv-success' : 'bg-cv-danger'" />
+          <span class="w-1.5 h-1.5 rounded-full" :class="mediaConnected ? 'bg-cv-success' : 'bg-cv-danger'" />
           <span class="text-[11px] text-cv-text-muted font-mono">{{ formatTime(elapsed) }}</span>
         </div>
 

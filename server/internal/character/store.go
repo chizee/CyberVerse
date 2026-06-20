@@ -25,25 +25,27 @@ type ImageInfo struct {
 }
 
 type Character struct {
-	ID             string      `json:"id"`
-	Name           string      `json:"name"`
-	Description    string      `json:"description"`
-	AvatarImage    string      `json:"avatar_image"`
-	UseFaceCrop    bool        `json:"use_face_crop"`
-	Mode           string      `json:"mode"`
-	VoiceProvider  string      `json:"voice_provider"`
-	VoiceType      string      `json:"voice_type"`
-	Components     Components  `json:"components"`
-	SpeakingStyle  string      `json:"speaking_style"`
-	Personality    string      `json:"personality"`
-	WelcomeMessage string      `json:"welcome_message"`
-	SystemPrompt   string      `json:"system_prompt"`
-	Tags           []string    `json:"tags"`
-	Images         []ImageInfo `json:"images"`
-	ActiveImage    string      `json:"active_image"`
-	ImageMode      string      `json:"image_mode"`
-	CreatedAt      string      `json:"created_at"`
-	UpdatedAt      string      `json:"updated_at"`
+	ID             string       `json:"id"`
+	Name           string       `json:"name"`
+	Description    string       `json:"description"`
+	AvatarImage    string       `json:"avatar_image"`
+	AvatarBackend  string       `json:"avatar_backend"`
+	BaiduXiling    *BaiduXiling `json:"baidu_xiling,omitempty"`
+	UseFaceCrop    bool         `json:"use_face_crop"`
+	Mode           string       `json:"mode"`
+	VoiceProvider  string       `json:"voice_provider"`
+	VoiceType      string       `json:"voice_type"`
+	Components     Components   `json:"components"`
+	SpeakingStyle  string       `json:"speaking_style"`
+	Personality    string       `json:"personality"`
+	WelcomeMessage string       `json:"welcome_message"`
+	SystemPrompt   string       `json:"system_prompt"`
+	Tags           []string     `json:"tags"`
+	Images         []ImageInfo  `json:"images"`
+	ActiveImage    string       `json:"active_image"`
+	ImageMode      string       `json:"image_mode"`
+	CreatedAt      string       `json:"created_at"`
+	UpdatedAt      string       `json:"updated_at"`
 }
 
 type Components struct {
@@ -52,7 +54,21 @@ type Components struct {
 	TTS string `json:"tts"`
 }
 
+type BaiduXiling struct {
+	FigureID        string `json:"figure_id"`
+	FigureName      string `json:"figure_name"`
+	CameraID        string `json:"camera_id,omitempty"`
+	ThumbnailURL    string `json:"thumbnail_url"`
+	PreviewVideoURL string `json:"preview_video_url"`
+	SourceImageURL  string `json:"source_image_url"`
+	Status          string `json:"status"`
+	Width           int    `json:"width"`
+	Height          int    `json:"height"`
+}
+
 const DefaultIdleVideoProfile = "breathing10s_v1"
+const AvatarBackendLocalImage = "local_image"
+const AvatarBackendBaiduXiling = "baidu_xiling"
 
 func DefaultComponents() Components {
 	return Components{LLM: "qwen", ASR: "qwen", TTS: "qwen"}
@@ -92,6 +108,48 @@ func NormalizeComponents(components Components, defaults Components) Components 
 		components.TTS = defaults.TTS
 	}
 	return components
+}
+
+func normalizeAvatarBackend(backend string) string {
+	switch strings.TrimSpace(backend) {
+	case AvatarBackendBaiduXiling:
+		return AvatarBackendBaiduXiling
+	default:
+		return AvatarBackendLocalImage
+	}
+}
+
+func normalizeBaiduXilingConfig(cfg *BaiduXiling) *BaiduXiling {
+	if cfg == nil {
+		return nil
+	}
+	out := *cfg
+	out.FigureID = strings.TrimSpace(out.FigureID)
+	out.FigureName = strings.TrimSpace(out.FigureName)
+	out.CameraID = strings.TrimSpace(out.CameraID)
+	out.ThumbnailURL = strings.TrimSpace(out.ThumbnailURL)
+	out.PreviewVideoURL = strings.TrimSpace(out.PreviewVideoURL)
+	out.SourceImageURL = strings.TrimSpace(out.SourceImageURL)
+	out.Status = strings.TrimSpace(out.Status)
+	if out.Width < 0 {
+		out.Width = 0
+	}
+	if out.Height < 0 {
+		out.Height = 0
+	}
+	return &out
+}
+
+func normalizeAvatarFields(c *Character, fallback *Character) {
+	c.AvatarBackend = normalizeAvatarBackend(c.AvatarBackend)
+	if c.AvatarBackend == AvatarBackendBaiduXiling {
+		c.BaiduXiling = normalizeBaiduXilingConfig(c.BaiduXiling)
+		if c.BaiduXiling == nil && fallback != nil && fallback.AvatarBackend == AvatarBackendBaiduXiling {
+			c.BaiduXiling = normalizeBaiduXilingConfig(fallback.BaiduXiling)
+		}
+		return
+	}
+	c.BaiduXiling = nil
 }
 
 type Store struct {
@@ -161,6 +219,7 @@ func (s *Store) Create(c *Character) (*Character, error) {
 	}
 	c.Mode = normalizeMode(c.Mode, "standard")
 	c.Components = NormalizeComponents(c.Components, DefaultComponents())
+	normalizeAvatarFields(c, nil)
 	if c.VoiceProvider == "" {
 		c.VoiceProvider = c.Components.TTS
 	}
@@ -218,6 +277,7 @@ func (s *Store) Update(id string, c *Character) (*Character, error) {
 	if c.ImageMode == "" {
 		c.ImageMode = existing.ImageMode
 	}
+	normalizeAvatarFields(c, existing)
 	c.Mode = normalizeMode(c.Mode, normalizeMode(existing.Mode, "standard"))
 	c.Components = NormalizeComponents(c.Components, existing.Components)
 	if c.VoiceProvider == "" {
@@ -632,6 +692,7 @@ func (s *Store) load() error {
 		if c.ImageMode == "" {
 			c.ImageMode = "fixed"
 		}
+		normalizeAvatarFields(&c, nil)
 		// Legacy character.json files had no mode field; default to omni (prior voice_llm behavior).
 		c.Mode = normalizeMode(c.Mode, "omni")
 		c.Components = NormalizeComponents(c.Components, DefaultComponents())

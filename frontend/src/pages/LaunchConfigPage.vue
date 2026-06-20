@@ -35,6 +35,17 @@ const runtimeConfigMismatch = computed(() =>
   activeAvatarModel.value !== configuredDefaultModel.value
 )
 const isBaiduXilingCharacter = computed(() => store.current?.avatar_backend === 'baidu_xiling')
+const launchRuntimeModelLabel = computed(() =>
+  isBaiduXilingCharacter.value
+    ? t('characterCard.baiduDigitalHuman')
+    : activeAvatarModel.value || t('common.notConnected')
+)
+const canLaunch = computed(() => {
+  if (isBaiduXilingCharacter.value) {
+    return !!store.current?.baidu_xiling?.figure_id
+  }
+  return !!activeAvatarModel.value
+})
 const characterCoverImage = computed(() => {
   const character = store.current
   if (!character) return ''
@@ -92,18 +103,19 @@ onMounted(async () => {
     serviceConnected.value = false
   }
 
-  // Fetch real config
-  try {
-    avatarModelInfo.value = await getAvatarModelInfo()
-    const config = await getLaunchConfig()
-    configSections.value = config.sections.map(s => ({ ...s, collapsed: false }))
-    originalSections.value = cloneSections(configSections.value)
-  } catch (e) {
-    errorMessage.value = e instanceof Error ? e.message : t('launch.loadConfigFailed')
-    console.error('Failed to load launch config:', e)
-  } finally {
-    loading.value = false
+  if (!isBaiduXilingCharacter.value) {
+    // Fetch local avatar model config only for local-avatar characters.
+    try {
+      avatarModelInfo.value = await getAvatarModelInfo()
+      const config = await getLaunchConfig()
+      configSections.value = config.sections.map(s => ({ ...s, collapsed: false }))
+      originalSections.value = cloneSections(configSections.value)
+    } catch (e) {
+      errorMessage.value = e instanceof Error ? e.message : t('launch.loadConfigFailed')
+      console.error('Failed to load launch config:', e)
+    }
   }
+  loading.value = false
 })
 
 async function saveConfig() {
@@ -150,7 +162,7 @@ async function saveConfig() {
 }
 
 async function launch() {
-  if (!activeAvatarModel.value) return
+  if (!canLaunch.value) return
   connecting.value = true
   try {
     const launchMode = store.current?.mode || 'standard'
@@ -268,7 +280,7 @@ async function launch() {
         <div>
           <h1 class="text-[28px] font-extrabold text-[#fbf6ef]">{{ t('launch.title') }}</h1>
           <p class="text-sm text-[#6e7682] mt-2">
-            {{ t('launch.subtitle', { model: activeAvatarModel || t('common.notConnected') }) }}
+            {{ t('launch.subtitle', { model: launchRuntimeModelLabel }) }}
           </p>
         </div>
 
@@ -379,7 +391,7 @@ async function launch() {
                   class="h-12 px-6 bg-[#0f1218] border border-[rgba(72,80,92,0.4)] text-[#969eaa] text-[14px] font-medium hover:border-cyber-cyan/40 transition-colors cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed">
             {{ saving ? t('common.saving') : t('launch.saveConfig') }}
           </button>
-          <button @click="launch" :disabled="connecting || !activeAvatarModel"
+          <button @click="launch" :disabled="connecting || !canLaunch"
                   class="h-12 px-8 bg-gradient-to-b from-cyber-cyan to-[#14a0ac] text-cyber-base text-[15px] font-extrabold shadow-[0_0_20px_rgba(52,230,243,0.2)] hover:shadow-[0_0_30px_rgba(52,230,243,0.35)] transition-shadow cursor-pointer disabled:opacity-50">
             {{ connecting ? t('launch.launching') : t('launch.launch') }}
           </button>

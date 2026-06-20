@@ -37,10 +37,21 @@ export interface CreateSessionResponse {
   streaming_mode: string  // "direct" or "livekit"
   avatar_enabled?: boolean
   idle_strategy?: 'cached_video' | 'silent_inference'
+  baidu_xiling?: {
+    iframe_url: string
+    origin: string
+    figure_id: string
+    camera_id?: string
+    width: number
+    height: number
+    audio_sample_rate: number
+    audio_max_pcm_bytes: number
+  }
   livekit_url?: string
   livekit_token?: string
   idle_video_url?: string
   idle_video_urls?: string[]
+  idle_image_url?: string
   warnings?: string[]
   visual_input?: {
     enabled: boolean

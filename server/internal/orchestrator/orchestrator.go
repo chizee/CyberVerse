@@ -60,6 +60,8 @@ const (
 	doubaoDialogContextLoadLimit = doubaoDialogContextMaxPairs * 4
 	startupGreetingHistoryItems  = 6
 	qwenOmniMaxVisualFrameBytes  = 500 * 1024
+	baiduXilingAudioSampleRate   = 16000
+	baiduXilingAudioMaxPCMBytes  = 48000
 )
 
 const standardGlobalSystemPrompt = `你需要遵守以下通用回复规范，这些规范优先于角色设定。
@@ -228,6 +230,9 @@ type voicePipelineTurn struct {
 	firstAvatarAudioAt  time.Time
 	avatarInputClosedAt time.Time
 	firstVideoAt        time.Time
+	baiduAudioRequestID string
+	baiduAudioPending   []byte
+	baiduAudioStarted   bool
 	syncBuf             *voiceAVSyncBuffer
 	avatarStarted       bool
 	audioOnlyStarted    bool
@@ -884,9 +889,6 @@ func qwenOmniVisualInputConfig(cfg config.VisualInputConfig) config.VisualInputC
 }
 
 func (o *Orchestrator) voiceLLMProviderForSession(session *Session) string {
-	if o.personaAgentEnabled(session) {
-		return "persona"
-	}
 	return o.characterVoiceLLMProviderForSession(session)
 }
 
@@ -1316,6 +1318,100 @@ func audioChunkToPCM16(chunk *pb.AudioChunk) ([]byte, int) {
 	}
 }
 
+func resamplePCM16Linear(pcm []byte, fromSampleRate, toSampleRate int) []byte {
+	if len(pcm) == 0 || fromSampleRate <= 0 || toSampleRate <= 0 || fromSampleRate == toSampleRate {
+		out := make([]byte, len(pcm))
+		copy(out, pcm)
+		return out
+	}
+	if len(pcm)%2 != 0 {
+		pcm = pcm[:len(pcm)-1]
+	}
+	inSamples := len(pcm) / 2
+	if inSamples == 0 {
+		return nil
+	}
+	outSamples := int(math.Round(float64(inSamples) * float64(toSampleRate) / float64(fromSampleRate)))
+	if outSamples <= 0 {
+		return nil
+	}
+	out := make([]byte, outSamples*2)
+	if inSamples == 1 {
+		sample := binary.LittleEndian.Uint16(pcm)
+		for i := 0; i < outSamples; i++ {
+			binary.LittleEndian.PutUint16(out[i*2:], sample)
+		}
+		return out
+	}
+	for i := 0; i < outSamples; i++ {
+		pos := float64(i) * float64(fromSampleRate) / float64(toSampleRate)
+		left := int(math.Floor(pos))
+		if left >= inSamples-1 {
+			left = inSamples - 2
+			pos = float64(inSamples - 1)
+		}
+		frac := pos - float64(left)
+		a := int16(binary.LittleEndian.Uint16(pcm[left*2:]))
+		b := int16(binary.LittleEndian.Uint16(pcm[(left+1)*2:]))
+		v := float64(a) + (float64(b)-float64(a))*frac
+		if v > 32767 {
+			v = 32767
+		} else if v < -32768 {
+			v = -32768
+		}
+		binary.LittleEndian.PutUint16(out[i*2:], uint16(int16(math.Round(v))))
+	}
+	return out
+}
+
+func splitPCM16Chunks(pcm []byte, maxBytes int) [][]byte {
+	if len(pcm) == 0 || maxBytes <= 0 {
+		return nil
+	}
+	if maxBytes%2 != 0 {
+		maxBytes--
+	}
+	if maxBytes <= 0 {
+		return nil
+	}
+	chunks := make([][]byte, 0, (len(pcm)+maxBytes-1)/maxBytes)
+	for offset := 0; offset < len(pcm); offset += maxBytes {
+		end := offset + maxBytes
+		if end > len(pcm) {
+			end = len(pcm)
+		}
+		if (end-offset)%2 != 0 {
+			end--
+		}
+		if end > offset {
+			chunks = append(chunks, pcm[offset:end])
+		}
+	}
+	return chunks
+}
+
+func (o *Orchestrator) isBaiduXilingSession(session *Session) bool {
+	if o == nil || o.charStore == nil || session == nil || session.CharacterID == "" {
+		return false
+	}
+	c, err := o.charStore.Get(session.CharacterID)
+	return err == nil && c.AvatarBackend == character.AvatarBackendBaiduXiling
+}
+
+func (o *Orchestrator) broadcastBaiduXilingAudioChunk(sessionID string, turnSeq uint64, requestID string, audio []byte, first bool, last bool) {
+	if len(audio) == 0 && !last {
+		return
+	}
+	o.broadcastJSON(sessionID, map[string]any{
+		"type":       "baidu_xiling_audio",
+		"request_id": requestID,
+		"audio":      base64.StdEncoding.EncodeToString(audio),
+		"first":      first,
+		"last":       last,
+		"turn_seq":   turnSeq,
+	})
+}
+
 func (o *Orchestrator) setAvatarFromCharacterImage(ctx context.Context, sessionID, characterID, imageFilename string) error {
 	if o == nil || o.inference == nil {
 		return errors.New("inference service is not configured")
@@ -1483,14 +1579,19 @@ func (o *Orchestrator) SetupSession(ctx context.Context, session *Session, roomM
 	// avatar inference is enabled. Pure voice sessions keep cached idle videos
 	// but do not touch the avatar model.
 	if o.AvatarEnabled() && session != nil && session.CharacterID != "" {
-		_, imageFilename, err := o.activeCharacterImage(session.CharacterID)
+		characterRecord, err := o.charStore.Get(session.CharacterID)
 		if err != nil {
-			log.Printf("SetupSession: could not resolve active image for character %s: %v", session.CharacterID, err)
-		} else if imageFilename != "" {
-			if err := o.setAvatarFromCharacterImage(ctx, session.ID, session.CharacterID, imageFilename); err != nil {
-				warning := AvatarSetupWarning(err)
-				warnings = append(warnings, warning)
-				log.Printf("SetupSession: %s character=%s image=%s details=%v", warning, session.CharacterID, imageFilename, err)
+			log.Printf("SetupSession: could not resolve character %s: %v", session.CharacterID, err)
+		} else if characterRecord.AvatarBackend != character.AvatarBackendBaiduXiling {
+			_, imageFilename, err := o.activeCharacterImage(session.CharacterID)
+			if err != nil {
+				log.Printf("SetupSession: could not resolve active image for character %s: %v", session.CharacterID, err)
+			} else if imageFilename != "" {
+				if err := o.setAvatarFromCharacterImage(ctx, session.ID, session.CharacterID, imageFilename); err != nil {
+					warning := AvatarSetupWarning(err)
+					warnings = append(warnings, warning)
+					log.Printf("SetupSession: %s character=%s image=%s details=%v", warning, session.CharacterID, imageFilename, err)
+				}
 			}
 		}
 	}
@@ -1566,7 +1667,7 @@ func (o *Orchestrator) HydrateVoiceDialogContext(session *Session) error {
 	if o == nil || o.charStore == nil || session == nil {
 		return nil
 	}
-	if session.Mode != ModeOmni || session.CharacterID == "" {
+	if session.CharacterID == "" {
 		return nil
 	}
 	var messages []map[string]any
@@ -1661,9 +1762,6 @@ func (o *Orchestrator) buildVoiceLLMSessionConfigExcludingTurn(session *Session,
 			voiceConfig.CharacterID = session.CharacterID
 			voiceConfig.CharacterDir = o.charStore.CharDir(session.CharacterID)
 			voiceConfig.Provider = voiceLLMProviderOrDefault(char.VoiceProvider)
-			if o.personaAgentEnabled(session) {
-				voiceConfig.Provider = "persona"
-			}
 			voiceConfig.SystemPrompt = char.SystemPrompt
 			voiceConfig.Voice = char.VoiceType
 			voiceConfig.BotName = char.Name
@@ -1671,9 +1769,6 @@ func (o *Orchestrator) buildVoiceLLMSessionConfigExcludingTurn(session *Session,
 		} else {
 			log.Printf("buildVoiceLLMSessionConfig: could not fetch character %s: %v", session.CharacterID, err)
 		}
-	}
-	if o.personaAgentEnabled(session) {
-		voiceConfig.Provider = "persona"
 	}
 	for _, item := range buildVoiceDialogContextFromSession(session, excludeTurnSeq, doubaoDialogContextMaxPairs, time.Now().UTC()) {
 		voiceConfig.DialogContext = append(voiceConfig.DialogContext, inference.VoiceLLMDialogContextItem{
@@ -1965,6 +2060,76 @@ func (o *Orchestrator) handleStandardTextInput(ctx context.Context, session *Ses
 	session.AddMessage(ChatMessage{Role: "user", Content: text, TurnSeq: turnSeq})
 	pipelineSeq := session.MarkPipelineRunning()
 	go o.runStandardPipeline(pipeCtx, session, sessionID, pipelineSeq, turnSeq)
+	return nil
+}
+
+func (o *Orchestrator) runBaiduXilingSpeechAudio(
+	ctx context.Context,
+	session *Session,
+	sessionID string,
+	turnSeq uint64,
+	ttsAudioCh <-chan *pb.AudioChunk,
+	ttsErrCh <-chan error,
+	appendRecAudio func([]byte, int),
+) error {
+	requestID := fmt.Sprintf("cv-%s-%d-%d", sessionID, turnSeq, time.Now().UnixMilli())
+	first := true
+	var pending []byte
+	sendPart := func(part []byte, last bool) {
+		if len(part) == 0 {
+			return
+		}
+		if first {
+			session.SetState(StateSpeaking)
+			o.broadcastStatusTurn(sessionID, "speaking", turnSeq)
+		}
+		o.broadcastBaiduXilingAudioChunk(sessionID, turnSeq, requestID, part, first, last)
+		first = false
+	}
+	for ttsAudioCh != nil || ttsErrCh != nil {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case chunk, ok := <-ttsAudioCh:
+			if !ok {
+				ttsAudioCh = nil
+				continue
+			}
+			pcm, sampleRate := audioChunkToPCM16(chunk)
+			if len(pcm) == 0 {
+				continue
+			}
+			if appendRecAudio != nil {
+				appendRecAudio(pcm, sampleRate)
+			}
+			if sampleRate <= 0 {
+				sampleRate = baiduXilingAudioSampleRate
+			}
+			if sampleRate != baiduXilingAudioSampleRate {
+				pcm = resamplePCM16Linear(pcm, sampleRate, baiduXilingAudioSampleRate)
+			}
+			for _, part := range splitPCM16Chunks(pcm, baiduXilingAudioMaxPCMBytes) {
+				if len(part) == 0 {
+					continue
+				}
+				if pending != nil {
+					sendPart(pending, false)
+				}
+				pending = append(pending[:0], part...)
+			}
+		case err, ok := <-ttsErrCh:
+			if !ok {
+				ttsErrCh = nil
+				continue
+			}
+			if err != nil {
+				return err
+			}
+		}
+	}
+	if pending != nil {
+		sendPart(pending, true)
+	}
 	return nil
 }
 
@@ -2361,7 +2526,8 @@ func (o *Orchestrator) runStandardPipeline(ctx context.Context, session *Session
 
 	// Prepare LLM messages
 	history := session.HistorySnapshot()
-	messages := make([]inference.ChatMessage, 0, len(history)+1)
+	dialogContext := session.DialogContextSnapshot()
+	messages := make([]inference.ChatMessage, 0, len(dialogContext)+len(history)+1)
 	ragContext := ""
 	if query := latestUserText(history); query != "" {
 		results, err := o.searchKnowledge(ctx, session.CharacterID, query)
@@ -2373,6 +2539,14 @@ func (o *Orchestrator) runStandardPipeline(ctx context.Context, session *Session
 	}
 	if systemPrompt := o.standardSystemPromptWithRAG(session, ragContext); systemPrompt != "" {
 		messages = append(messages, inference.ChatMessage{Role: "system", Content: systemPrompt})
+	}
+	for _, item := range dialogContext {
+		role := strings.TrimSpace(item.Role)
+		content := strings.TrimSpace(item.Text)
+		if role == "" || content == "" {
+			continue
+		}
+		messages = append(messages, inference.ChatMessage{Role: role, Content: content})
 	}
 	for _, m := range history {
 		messages = append(messages, inference.ChatMessage{Role: m.Role, Content: m.Content})
@@ -2492,6 +2666,18 @@ func (o *Orchestrator) runStandardPipeline(ctx context.Context, session *Session
 		o.mu.RLock()
 		defer o.mu.RUnlock()
 		return o.peers[sessionID]
+	}
+
+	if o.isBaiduXilingSession(session) {
+		if err := o.runBaiduXilingSpeechAudio(ctx, session, sessionID, turnSeq, ttsAudioCh, ttsErrCh, appendRecAudio); err != nil {
+			if errors.Is(err, context.Canceled) || ctx.Err() != nil {
+				return
+			}
+			log.Printf("Baidu Xiling audio stream error for session %s: %v", sessionID, err)
+			o.broadcastError(sessionID, "Baidu Xiling audio render failed")
+			return
+		}
+		return
 	}
 
 	if !o.AvatarEnabled() {
@@ -2614,7 +2800,8 @@ func (o *Orchestrator) runStandardPipeline(ctx context.Context, session *Session
 
 	// Serialize with concurrent avatar operations (see runVoiceLLMPipeline comment).
 	o.avatarMu.Lock()
-	videoCh, videoErrCh := o.inference.GenerateAvatarStream(ctx, avatarAudioCh)
+	avatarCtx := inference.WithTraceContext(ctx, inference.TraceContext{SessionID: sessionID})
+	videoCh, videoErrCh := o.inference.GenerateAvatarStream(avatarCtx, avatarAudioCh)
 
 	// 5. Publish paced AV segments. The standard/Qwen chain receives audio
 	// before video, so PCM is buffered and sliced to match each video segment.
@@ -3019,6 +3206,53 @@ func (o *Orchestrator) runVoiceLLMPipelineWithConfig(
 		}
 		session.SetState(StateListening)
 		o.broadcastStatusTurn(sessionID, "idle", turnSeq)
+	}
+
+	sendBaiduVoiceAudioPart := func(turn *voicePipelineTurn, part []byte, last bool) {
+		if turn == nil || len(part) == 0 {
+			return
+		}
+		if !session.IsCurrentPipeline(pipelineSeq) || !session.IsCurrentTurn(turn.seq) {
+			return
+		}
+		if turn.baiduAudioRequestID == "" {
+			turn.baiduAudioRequestID = fmt.Sprintf("cv-%s-%d-%d", sessionID, turn.seq, time.Now().UnixMilli())
+		}
+		first := !turn.baiduAudioStarted
+		if first {
+			turn.baiduAudioStarted = true
+			session.SetState(StateSpeaking)
+			o.broadcastStatusTurn(sessionID, "speaking", turn.seq)
+		}
+		o.broadcastBaiduXilingAudioChunk(sessionID, turn.seq, turn.baiduAudioRequestID, part, first, last)
+	}
+
+	sendBaiduVoiceAudio := func(turn *voicePipelineTurn, audio *pb.AudioChunk, final bool) {
+		if turn == nil {
+			return
+		}
+		if audio != nil && len(audio.GetData()) > 0 {
+			pcm, sampleRate := audioChunkToPCM16(audio)
+			if sampleRate <= 0 {
+				sampleRate = baiduXilingAudioSampleRate
+			}
+			if sampleRate != baiduXilingAudioSampleRate {
+				pcm = resamplePCM16Linear(pcm, sampleRate, baiduXilingAudioSampleRate)
+			}
+			for _, part := range splitPCM16Chunks(pcm, baiduXilingAudioMaxPCMBytes) {
+				if len(part) == 0 {
+					continue
+				}
+				if turn.baiduAudioPending != nil {
+					sendBaiduVoiceAudioPart(turn, turn.baiduAudioPending, false)
+				}
+				turn.baiduAudioPending = append(turn.baiduAudioPending[:0], part...)
+			}
+		}
+		if final && turn.baiduAudioPending != nil {
+			sendBaiduVoiceAudioPart(turn, turn.baiduAudioPending, true)
+			turn.baiduAudioPending = nil
+		}
 	}
 
 	startTurn := func(key string) *voicePipelineTurn {
@@ -3621,7 +3855,9 @@ func (o *Orchestrator) runVoiceLLMPipelineWithConfig(
 						currentTurn.recAudioSR = pcmSampleRate
 					}
 				}
-				if !o.AvatarEnabled() {
+				if o.isBaiduXilingSession(session) {
+					sendBaiduVoiceAudio(currentTurn, audio, false)
+				} else if !o.AvatarEnabled() {
 					if len(pcm) > 0 {
 						if !currentTurn.audioOnlyStarted && session.IsCurrentPipeline(pipelineSeq) && session.IsCurrentTurn(currentTurn.seq) {
 							currentTurn.audioOnlyStarted = true
@@ -3676,6 +3912,10 @@ func (o *Orchestrator) runVoiceLLMPipelineWithConfig(
 			saveTurnRawAudio(currentTurn)
 			saveTurnTranscript(currentTurn)
 			saveTurnConversation(currentTurn)
+
+			if o.isBaiduXilingSession(session) {
+				sendBaiduVoiceAudio(currentTurn, nil, true)
+			}
 
 			if currentTurn.avatarStarted {
 				closeTurnInput(currentTurn)
@@ -3980,6 +4220,18 @@ func (o *Orchestrator) runAssistantSpeechPipeline(ctx context.Context, session *
 		return o.peers[sessionID]
 	}
 
+	if o.isBaiduXilingSession(session) {
+		if err := o.runBaiduXilingSpeechAudio(ctx, session, sessionID, turnSeq, ttsAudioCh, ttsErrCh, nil); err != nil {
+			if errors.Is(err, context.Canceled) || ctx.Err() != nil {
+				return
+			}
+			log.Printf("Baidu Xiling assistant speech error for session %s: %v", sessionID, err)
+			o.broadcastError(sessionID, "Baidu Xiling audio render failed")
+			return
+		}
+		return
+	}
+
 	if !o.AvatarEnabled() {
 		speakingBroadcasted := false
 		for ttsAudioCh != nil || ttsErrCh != nil {
@@ -4078,7 +4330,8 @@ func (o *Orchestrator) runAssistantSpeechPipeline(ctx context.Context, session *
 
 	o.avatarMu.Lock()
 	defer o.avatarMu.Unlock()
-	videoCh, videoErrCh := o.inference.GenerateAvatarStream(ctx, avatarAudioCh)
+	avatarCtx := inference.WithTraceContext(ctx, inference.TraceContext{SessionID: sessionID})
+	videoCh, videoErrCh := o.inference.GenerateAvatarStream(avatarCtx, avatarAudioCh)
 
 	var (
 		segVideo        []byte
