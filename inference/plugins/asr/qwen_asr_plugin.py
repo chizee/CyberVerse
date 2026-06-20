@@ -1,5 +1,6 @@
 import asyncio
 import base64
+from contextlib import suppress
 import json
 import logging
 import time
@@ -10,6 +11,9 @@ from inference.plugins.asr.base import ASRPlugin
 from inference.plugins.qwen_endpoint import dashscope_realtime_ws_url
 
 logger = logging.getLogger(__name__)
+
+_SEND_EOF = "eof"
+_SEND_ROLLOVER = "rollover"
 
 
 class QwenASRPlugin(ASRPlugin):
@@ -25,6 +29,9 @@ class QwenASRPlugin(ASRPlugin):
         self.sample_rate = 16000
         self.vad_threshold = 0.5
         self.vad_silence_duration_ms = 1000
+        self.max_session_seconds = 540.0
+        self.rollover_drain_seconds = 5.0
+        self.audio_queue_maxsize = 64
 
     async def initialize(self, config: PluginConfig) -> None:
         self.api_key = config.params.get("api_key", "")
@@ -40,6 +47,17 @@ class QwenASRPlugin(ASRPlugin):
                 "vad_silence_duration_ms", self.vad_silence_duration_ms
             )
         )
+        self.max_session_seconds = float(
+            config.params.get("max_session_seconds", self.max_session_seconds)
+        )
+        self.rollover_drain_seconds = float(
+            config.params.get(
+                "rollover_drain_seconds", self.rollover_drain_seconds
+            )
+        )
+        self.audio_queue_maxsize = int(
+            config.params.get("audio_queue_maxsize", self.audio_queue_maxsize)
+        )
 
     async def transcribe_stream(
         self,
@@ -48,49 +66,233 @@ class QwenASRPlugin(ASRPlugin):
     ) -> AsyncIterator[TranscriptEvent]:
         import websockets
 
+        connection_closed_error = websockets.exceptions.ConnectionClosedError
         language = (request_config.language if request_config else "") or self.language
         session_id = (request_config.session_id if request_config else "") or ""
         transcription_params: dict[str, Any] = {}
         if language and language != "auto":
             transcription_params["language"] = language
 
-        ws = await self._connect(websockets)
-        sender_task: asyncio.Task | None = None
+        audio_queue: asyncio.Queue[bytes | None] = asyncio.Queue(
+            maxsize=max(self.audio_queue_maxsize, 1)
+        )
+        producer_task = asyncio.create_task(
+            self._queue_audio(audio_stream, audio_queue)
+        )
         try:
-            await self._send_json(
-                ws,
-                {
-                    "type": "session.update",
-                    "event_id": self._event_id(session_id, "session"),
-                    "session": {
-                        "input_audio_format": "pcm",
-                        "sample_rate": self.sample_rate,
-                        "input_audio_transcription": transcription_params,
-                        "turn_detection": {
-                            "type": "server_vad",
-                            "threshold": self.vad_threshold,
-                            "silence_duration_ms": self.vad_silence_duration_ms,
-                        },
-                    },
-                },
-            )
-
-            sender_task = asyncio.create_task(
-                self._send_audio(ws, audio_stream, session_id)
-            )
-
-            async for message in ws:
-                event = json.loads(message)
-                event_type = event.get("type", "")
-                if event_type == "error":
-                    raise RuntimeError(f"Qwen ASR error: {event}")
-
-                transcript = self._extract_transcript(event)
-                if not transcript:
+            while True:
+                first_chunk = await audio_queue.get()
+                if first_chunk is None:
+                    break
+                if not first_chunk:
                     continue
 
-                is_final = self._is_final_event(event)
-                yield TranscriptEvent(
+                ws = None
+                sender_task: asyncio.Task | None = None
+                receiver_task: asyncio.Task | None = None
+                try:
+                    ws = await self._connect(websockets)
+                    await self._configure_session(
+                        ws, session_id, transcription_params
+                    )
+                    event_queue: asyncio.Queue[TranscriptEvent] = asyncio.Queue()
+                    sender_task = asyncio.create_task(
+                        self._send_session_audio(
+                            ws,
+                            audio_queue,
+                            session_id,
+                            first_chunk,
+                            time.monotonic() + self.max_session_seconds,
+                        )
+                    )
+                    receiver_task = asyncio.create_task(
+                        self._receive_transcript_events(
+                            ws, language, event_queue
+                        )
+                    )
+
+                    send_result = ""
+                    while not send_result:
+                        if not event_queue.empty():
+                            yield event_queue.get_nowait()
+                            continue
+
+                        event_task = asyncio.create_task(event_queue.get())
+                        done, _ = await asyncio.wait(
+                            {event_task, sender_task, receiver_task},
+                            return_when=asyncio.FIRST_COMPLETED,
+                        )
+
+                        if event_task in done:
+                            yield event_task.result()
+                        else:
+                            event_task.cancel()
+                            with suppress(asyncio.CancelledError):
+                                await event_task
+
+                        if sender_task in done:
+                            send_result = await sender_task
+
+                        if receiver_task in done:
+                            await receiver_task
+                            if sender_task.done():
+                                send_result = send_result or await sender_task
+                            else:
+                                raise RuntimeError(
+                                    "Qwen ASR WebSocket closed before audio stream ended"
+                                )
+
+                    drain_timeout = (
+                        self.rollover_drain_seconds
+                        if send_result == _SEND_ROLLOVER
+                        else None
+                    )
+                    async for event in self._drain_session_events(
+                        receiver_task, event_queue, drain_timeout
+                    ):
+                        yield event
+
+                    if send_result == _SEND_EOF:
+                        break
+                except connection_closed_error as exc:
+                    raise RuntimeError(
+                        f"Qwen ASR WebSocket closed unexpectedly: {exc}"
+                    ) from exc
+                finally:
+                    if sender_task and not sender_task.done():
+                        sender_task.cancel()
+                        with suppress(asyncio.CancelledError):
+                            await sender_task
+                    if receiver_task and not receiver_task.done():
+                        receiver_task.cancel()
+                        with suppress(asyncio.CancelledError):
+                            await receiver_task
+                    if ws is not None:
+                        await ws.close()
+        finally:
+            if producer_task.done():
+                await producer_task
+            else:
+                producer_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await producer_task
+
+    async def _queue_audio(
+        self,
+        audio_stream: AsyncIterator[bytes],
+        audio_queue: asyncio.Queue[bytes | None],
+    ) -> None:
+        cancelled = False
+        try:
+            async for chunk in audio_stream:
+                await audio_queue.put(chunk)
+        except asyncio.CancelledError:
+            cancelled = True
+            raise
+        finally:
+            if cancelled:
+                with suppress(asyncio.QueueFull):
+                    audio_queue.put_nowait(None)
+            else:
+                await audio_queue.put(None)
+
+    async def _configure_session(
+        self,
+        ws: Any,
+        session_id: str,
+        transcription_params: dict[str, Any],
+    ) -> None:
+        await self._send_json(
+            ws,
+            {
+                "type": "session.update",
+                "event_id": self._event_id(session_id, "session"),
+                "session": {
+                    "input_audio_format": "pcm",
+                    "sample_rate": self.sample_rate,
+                    "input_audio_transcription": transcription_params,
+                    "turn_detection": {
+                        "type": "server_vad",
+                        "threshold": self.vad_threshold,
+                        "silence_duration_ms": self.vad_silence_duration_ms,
+                    },
+                },
+            },
+        )
+
+    async def _send_session_audio(
+        self,
+        ws: Any,
+        audio_queue: asyncio.Queue[bytes | None],
+        session_id: str,
+        first_chunk: bytes,
+        deadline: float,
+    ) -> str:
+        await self._send_audio_chunk(ws, first_chunk, session_id)
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                await self._finish_session(ws, session_id)
+                return _SEND_ROLLOVER
+
+            try:
+                chunk = await asyncio.wait_for(
+                    audio_queue.get(), timeout=remaining
+                )
+            except asyncio.TimeoutError:
+                await self._finish_session(ws, session_id)
+                return _SEND_ROLLOVER
+
+            if chunk is None:
+                await self._finish_session(ws, session_id)
+                return _SEND_EOF
+            if not chunk:
+                continue
+            await self._send_audio_chunk(ws, chunk, session_id)
+
+    async def _send_audio_chunk(
+        self,
+        ws: Any,
+        chunk: bytes,
+        session_id: str,
+    ) -> None:
+        await self._send_json(
+            ws,
+            {
+                "type": "input_audio_buffer.append",
+                "event_id": self._event_id(session_id, "audio"),
+                "audio": base64.b64encode(chunk).decode("ascii"),
+            },
+        )
+
+    async def _finish_session(self, ws: Any, session_id: str) -> None:
+        await self._send_json(
+            ws,
+            {
+                "type": "session.finish",
+                "event_id": self._event_id(session_id, "finish"),
+            },
+        )
+
+    async def _receive_transcript_events(
+        self,
+        ws: Any,
+        language: str,
+        event_queue: asyncio.Queue[TranscriptEvent],
+    ) -> None:
+        async for message in ws:
+            event = json.loads(message)
+            event_type = event.get("type", "")
+            if event_type == "error":
+                raise RuntimeError(f"Qwen ASR error: {event}")
+
+            transcript = self._extract_transcript(event)
+            if not transcript:
+                continue
+
+            is_final = self._is_final_event(event)
+            await event_queue.put(
+                TranscriptEvent(
                     text=transcript,
                     is_final=is_final,
                     language=event.get(
@@ -98,14 +300,54 @@ class QwenASRPlugin(ASRPlugin):
                     ),
                     confidence=float(event.get("confidence", 0.0) or 0.0),
                 )
-        finally:
-            if sender_task and not sender_task.done():
-                sender_task.cancel()
-                try:
-                    await sender_task
-                except asyncio.CancelledError:
-                    pass
-            await ws.close()
+            )
+
+    async def _drain_session_events(
+        self,
+        receiver_task: asyncio.Task,
+        event_queue: asyncio.Queue[TranscriptEvent],
+        timeout_seconds: float | None,
+    ) -> AsyncIterator[TranscriptEvent]:
+        deadline = (
+            time.monotonic() + max(timeout_seconds, 0.0)
+            if timeout_seconds is not None
+            else None
+        )
+        while True:
+            while not event_queue.empty():
+                yield event_queue.get_nowait()
+
+            if receiver_task.done():
+                await receiver_task
+                while not event_queue.empty():
+                    yield event_queue.get_nowait()
+                return
+
+            event_task = asyncio.create_task(event_queue.get())
+            if deadline is None:
+                done, _ = await asyncio.wait(
+                    {event_task, receiver_task},
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+            else:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    event_task.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await event_task
+                    return
+                done, _ = await asyncio.wait(
+                    {event_task, receiver_task},
+                    timeout=remaining,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+
+            if event_task in done:
+                yield event_task.result()
+            else:
+                event_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await event_task
 
     async def _connect(self, websockets: Any):
         headers = {"Authorization": f"Bearer {self.api_key}"}
@@ -118,37 +360,6 @@ class QwenASRPlugin(ASRPlugin):
             return await websockets.connect(
                 self.ws_url,
                 extra_headers=headers,
-            )
-
-    async def _send_audio(
-        self,
-        ws: Any,
-        audio_stream: AsyncIterator[bytes],
-        session_id: str,
-    ) -> None:
-        async for chunk in audio_stream:
-            if not chunk:
-                continue
-            await self._send_json(
-                ws,
-                {
-                    "type": "input_audio_buffer.append",
-                    "event_id": self._event_id(session_id, "audio"),
-                    "audio": base64.b64encode(chunk).decode("ascii"),
-                },
-            )
-
-        try:
-            await self._send_json(
-                ws,
-                {
-                    "type": "session.finish",
-                    "event_id": self._event_id(session_id, "finish"),
-                },
-            )
-        except Exception:
-            logger.debug(
-                "Qwen ASR finish failed after audio stream ended", exc_info=True
             )
 
     @staticmethod
