@@ -16,6 +16,16 @@ _SEND_EOF = "eof"
 _SEND_ROLLOVER = "rollover"
 
 
+def _connection_closed_error_type(websockets_module: Any) -> type[BaseException]:
+    exceptions = getattr(websockets_module, "exceptions", None)
+    if exceptions is not None and hasattr(exceptions, "ConnectionClosedError"):
+        return exceptions.ConnectionClosedError
+
+    from websockets.exceptions import ConnectionClosedError
+
+    return ConnectionClosedError
+
+
 class QwenASRPlugin(ASRPlugin):
     """DashScope Qwen realtime ASR plugin."""
 
@@ -66,7 +76,7 @@ class QwenASRPlugin(ASRPlugin):
     ) -> AsyncIterator[TranscriptEvent]:
         import websockets
 
-        connection_closed_error = websockets.exceptions.ConnectionClosedError
+        connection_closed_error = _connection_closed_error_type(websockets)
         language = (request_config.language if request_config else "") or self.language
         session_id = (request_config.session_id if request_config else "") or ""
         transcription_params: dict[str, Any] = {}

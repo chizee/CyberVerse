@@ -1,13 +1,16 @@
 import asyncio
 import json
 import sys
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 from unittest.mock import patch
 
 import pytest
 
 from inference.core.types import ASRRequestConfig, PluginConfig
-from inference.plugins.asr.qwen_asr_plugin import QwenASRPlugin
+from inference.plugins.asr.qwen_asr_plugin import (
+    QwenASRPlugin,
+    _connection_closed_error_type,
+)
 
 
 class FakeConnectionClosedError(Exception):
@@ -128,6 +131,22 @@ async def test_transcribe_stream_wraps_connection_closed_error(plugin):
                     ASRRequestConfig(language="zh", session_id="session-1"),
                 )
             ]
+
+
+def test_connection_closed_error_type_supports_submodule_only_websockets():
+    fake_websockets = ModuleType("websockets")
+    fake_websockets.__path__ = []
+    fake_exceptions = ModuleType("websockets.exceptions")
+    fake_exceptions.ConnectionClosedError = FakeConnectionClosedError
+
+    with patch.dict(
+        sys.modules,
+        {
+            "websockets": fake_websockets,
+            "websockets.exceptions": fake_exceptions,
+        },
+    ):
+        assert _connection_closed_error_type(fake_websockets) is FakeConnectionClosedError
 
 
 async def test_initialize_reads_session_rollover_config():
