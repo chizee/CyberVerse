@@ -54,6 +54,18 @@ const characterCoverImage = computed(() => {
   }
   return character.avatar_image || ''
 })
+const baiduXilingConfig = computed(() => store.current?.baidu_xiling || null)
+const baiduXilingResolution = computed(() => {
+  const width = baiduXilingConfig.value?.width || 0
+  const height = baiduXilingConfig.value?.height || 0
+  if (width <= 0 || height <= 0) return t('common.emptyDash')
+  return `${width} × ${height}`
+})
+const baiduXilingInfoRows = computed(() => {
+  return [
+    { label: t('launch.baiduResolution'), value: baiduXilingResolution.value },
+  ]
+})
 
 // Input width auto-sizing (in ch units)
 const INPUT_MIN_WIDTH_CH = 16
@@ -299,6 +311,23 @@ async function launch() {
         <!-- Save message -->
         <div v-if="saveMessage" class="text-[13px] text-[#8fe8ef] bg-[rgba(52,230,243,0.08)] border border-[rgba(52,230,243,0.2)] px-4 py-2.5">
           {{ saveMessage }}
+        </div>
+
+        <!-- Baidu Xiling character info -->
+        <div v-if="isBaiduXilingCharacter && store.current"
+             class="bg-cyber-surface border border-white/6 overflow-hidden">
+          <div class="grid grid-cols-1 md:grid-cols-2">
+            <div
+              v-for="row in baiduXilingInfoRows"
+              :key="row.label"
+              class="min-w-0 border-b border-r border-white/4 px-6 py-4"
+            >
+              <p class="text-[11px] font-medium uppercase tracking-[0.6px] text-[#505864]">{{ row.label }}</p>
+              <p class="mt-1 min-h-[20px] truncate text-[13px] font-medium text-[#c8d0dc]" :title="row.value">
+                {{ row.value }}
+              </p>
+            </div>
+          </div>
         </div>
 
         <!-- Config sections -->
