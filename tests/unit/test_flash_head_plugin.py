@@ -290,12 +290,15 @@ def test_config_loading():
     from inference.core.config import load_config
 
     config = load_config("cyberverse_config.yaml")
-    assert config["inference"]["avatar"]["default"] in {"flash_head", "live_act"}
+    default_avatar = config["inference"]["avatar"]["default"]
+    assert default_avatar in {"flash_head", "live_act", "baidu_xiling"}
     assert set(config["inference"]["avatar"]["runtime"].keys()) == {
         "cuda_visible_devices",
         "world_size",
     }
     assert set(config["warmup"].keys()) == {"enabled", "distributed"}
+    if default_avatar == "baidu_xiling":
+        assert config["inference"]["avatar"]["baidu_xiling"]["plugin_class"]
     fh = config["inference"]["avatar"]["flash_head"]
     assert fh["model_type"] in {"lite", "pro", "pretrained"}
     assert fh["models_dir"] == "models"
