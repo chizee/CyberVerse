@@ -46,6 +46,7 @@ let pollTimer: ReturnType<typeof setInterval> | null = null
 let highlightTimer: ReturnType<typeof setTimeout> | null = null
 
 const JOBS_PER_PAGE = 8
+const BAIDU_XILING_COMMON_ASSETS_URL = 'https://xiling.cloud.baidu.com/open/commonAssets/list'
 
 interface OfflineVideoSettings {
   inputType?: 'text' | 'audio'
@@ -115,10 +116,15 @@ const audioHint = computed(() =>
 const audioAccept = computed(() =>
   isBaiduXilingCharacter.value ? '.wav,.mp3,.m4a,.wma,audio/*' : '.wav,.pcm,.s16le,audio/*',
 )
+const isTTSPersonRequired = computed(() => isBaiduXilingCharacter.value && inputType.value === 'text')
+const isMissingTTSPerson = computed(() => isTTSPersonRequired.value && !ttsPerson.value.trim())
 const canGenerate = computed(() => {
   if (submitting.value) return false
   if (isBaiduXilingCharacter.value && (!outputWidth.value || !outputHeight.value)) return false
-  if (inputType.value === 'text') return scriptText.value.trim().length > 0
+  if (inputType.value === 'text') {
+    if (isMissingTTSPerson.value) return false
+    return scriptText.value.trim().length > 0
+  }
   return !!audioFile.value
 })
 
@@ -238,7 +244,7 @@ function loadOutputSettings() {
   outputWidth.value = numberSetting(settings.outputWidth, outputWidth.value)
   outputHeight.value = numberSetting(settings.outputHeight, outputHeight.value)
   transparentBackground.value = boolSetting(settings.transparentBackground, false)
-  outputSettingsExpanded.value = boolSetting(settings.outputSettingsExpanded, false)
+  outputSettingsExpanded.value = boolSetting(settings.outputSettingsExpanded, isTTSPersonRequired.value)
   ttsPerson.value = stringSetting(settings.ttsPerson, '')
   ttsLan.value = stringSetting(settings.ttsLan, 'auto')
   ttsSpeed.value = numberSetting(settings.ttsSpeed, 5)
@@ -469,7 +475,6 @@ onUnmounted(() => {
                     <span class="settings-chevron" :class="{ expanded: outputSettingsExpanded }" aria-hidden="true" />
                   </button>
                 </div>
-
                 <template v-if="outputSettingsExpanded">
                   <div class="settings-grid">
                     <label class="settings-field">
@@ -498,10 +503,36 @@ onUnmounted(() => {
                   <div v-if="inputType === 'text'" class="settings-section">
                     <h4 class="settings-section-title">{{ t('offlineVideo.ttsSettings') }}</h4>
                     <div class="settings-grid">
-                      <label class="settings-field">
-                        <span>{{ t('offlineVideo.ttsPerson') }}</span>
-                        <input v-model="ttsPerson" class="number-input" type="text" :placeholder="t('offlineVideo.ttsPersonPlaceholder')">
-                      </label>
+                      <div class="settings-field">
+                        <div class="field-label-row">
+                          <label for="offline-tts-person">{{ t('offlineVideo.ttsPerson') }}</label>
+                          <span v-if="isTTSPersonRequired" class="required-mark" aria-hidden="true">*</span>
+                          <span class="field-help">
+                            <button
+                              class="field-help-button"
+                              type="button"
+                              :aria-label="t('offlineVideo.ttsPersonHelpLabel')"
+                            >
+                              ?
+                            </button>
+                            <span class="field-tooltip" role="tooltip">
+                              {{ t('offlineVideo.ttsPersonHelpPrefix') }}
+                              <a :href="BAIDU_XILING_COMMON_ASSETS_URL" target="_blank" rel="noreferrer">
+                                {{ t('offlineVideo.ttsPersonHelpLink') }}
+                              </a>
+                              {{ t('offlineVideo.ttsPersonHelpSuffix') }}
+                            </span>
+                          </span>
+                        </div>
+                        <input
+                          id="offline-tts-person"
+                          v-model="ttsPerson"
+                          class="number-input"
+                          type="text"
+                          :required="isTTSPersonRequired"
+                          :placeholder="t('offlineVideo.ttsPersonPlaceholder')"
+                        >
+                      </div>
                       <label class="settings-field">
                         <span>{{ t('offlineVideo.ttsLan') }}</span>
                         <select v-model="ttsLan" class="number-input">
@@ -860,11 +891,85 @@ onUnmounted(() => {
 .settings-field {
   display: flex;
   min-width: 0;
+  position: relative;
   flex-direction: column;
   gap: 8px;
   color: #c4ccd8;
   font-size: 12px;
   font-weight: 800;
+}
+
+.field-label-row {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+}
+
+.required-mark {
+  color: #fca5a5;
+}
+
+.field-help {
+  position: relative;
+  display: inline-flex;
+}
+
+.field-help-button {
+  display: inline-flex;
+  width: 18px;
+  height: 18px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #303a49;
+  border-radius: 999px;
+  color: #c4ccd8;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1;
+  transition: border-color 160ms ease, color 160ms ease, background 160ms ease;
+}
+
+.field-help-button:hover,
+.field-help-button:focus-visible {
+  border-color: #34e6f3;
+  background: rgba(52, 230, 243, 0.08);
+  color: #f4f7fb;
+  outline: none;
+}
+
+.field-tooltip {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 8px);
+  z-index: 30;
+  width: min(320px, calc(100vw - 48px));
+  padding: 10px 12px;
+  border: 1px solid #303a49;
+  background: #151920;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+  color: #c4ccd8;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 18px;
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, 4px);
+  transition: opacity 120ms ease, transform 120ms ease;
+}
+
+.field-help:hover .field-tooltip,
+.field-help:focus-within .field-tooltip {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translate(-50%, 0);
+}
+
+.field-tooltip a {
+  color: #34e6f3;
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 
 .number-input {
