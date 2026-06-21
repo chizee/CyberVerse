@@ -170,6 +170,7 @@ export const baseMessages = {
       welcomeMessage: '欢迎语',
       editCharacter: '编辑角色 →',
       title: 'Live 实时对话',
+      workspaceTitle: 'workspace',
       subtitle: '调整实时推理参数并启动数字人。当前运行模型：{model}',
       loadingConfig: '加载配置中...',
       restartHint: '保存当前配置，然后重启 inference 推理服务，使配置生效',
@@ -192,7 +193,6 @@ export const baseMessages = {
     },
     offlineVideo: {
       title: '离线视频生成',
-      subtitle: '手动输入脚本或上传语音，生成可管理、可回看的数字人视频；实时对话仍从 Live 模式进入。',
       liveMode: 'Live',
       offlineMode: 'Offline',
       noAvatar: '暂无头像',
@@ -480,6 +480,7 @@ export const baseMessages = {
       welcomeMessage: 'Welcome Message',
       editCharacter: 'Edit Character →',
       title: 'Live Conversation',
+      workspaceTitle: 'workspace',
       subtitle: 'Tune realtime inference parameters and launch the digital human. Current runtime model: {model}',
       loadingConfig: 'Loading configuration...',
       restartHint: 'Save the current configuration, then restart the inference service for changes to take effect.',
@@ -502,7 +503,6 @@ export const baseMessages = {
     },
     offlineVideo: {
       title: 'Offline Video Generation',
-      subtitle: 'Enter a script or upload voice audio to generate manageable digital-human videos. Realtime conversation stays in Live mode.',
       liveMode: 'Live',
       offlineMode: 'Offline',
       noAvatar: 'No avatar',

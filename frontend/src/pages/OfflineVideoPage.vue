@@ -2,7 +2,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import LanguageSwitcher from '../components/LanguageSwitcher.vue'
+import AppHeader from '../components/AppHeader.vue'
 import { useCharacterStore } from '../stores/characters'
 import { createOfflineVideo, deleteOfflineVideo, listOfflineVideos, renameOfflineVideo } from '../services/api'
 import type { OfflineVideoJob } from '../types'
@@ -15,6 +15,9 @@ const { t, locale } = useI18n()
 const store = useCharacterStore()
 
 const characterId = computed(() => route.params.id as string)
+const pageTitle = computed(() => t('launch.workspaceTitle'))
+const hasCurrentCharacter = computed(() => store.current?.id === characterId.value)
+const showLoading = computed(() => loading.value && !hasCurrentCharacter.value)
 const inputType = ref<'text' | 'audio'>('text')
 const scriptText = ref('')
 const audioFile = ref<File | null>(null)
@@ -307,41 +310,29 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="offline-page min-h-screen bg-cv-bg text-cv-text">
-    <header class="flex items-center justify-between border-b border-cv-border-subtle px-8 py-4">
-      <button
-        class="text-sm font-medium text-cv-text-secondary transition-colors hover:text-cv-text"
-        @click="router.push('/characters')"
-      >
-        {{ t('common.back') }}
-      </button>
-      <LanguageSwitcher />
-    </header>
+  <div class="offline-page flex min-h-screen flex-col bg-cv-base text-cv-text">
+    <AppHeader showBack :title="pageTitle" />
 
-    <main class="mx-auto flex w-full max-w-[1320px] flex-col gap-7 px-8 py-8">
-      <div class="flex flex-wrap items-start justify-between gap-5">
-        <div>
-          <p class="text-xs font-semibold uppercase text-cv-text-muted">CyberVerse Studio</p>
-          <h1 class="mt-2 text-[28px] font-extrabold text-[#fbf6ef]">{{ t('offlineVideo.title') }}</h1>
-          <p class="mt-2 max-w-2xl text-sm leading-6 text-[#8d96a6]">{{ t('offlineVideo.subtitle') }}</p>
-        </div>
-        <div class="inline-flex border border-cv-border-subtle bg-[#101217] p-1">
-          <button class="mode-tab active">
-            {{ t('offlineVideo.offlineMode') }}
-          </button>
-          <button
-            class="mode-tab"
-            @click="router.push(`/launch/${characterId}/live`)"
-          >
-            {{ t('offlineVideo.liveMode') }}
-          </button>
-        </div>
+    <div class="py-6 text-center">
+      <div class="cv-pi-segment mx-auto h-11 w-[260px] grid-cols-2">
+        <button class="cv-pi-segment-item cv-pi-segment-item--active" type="button">
+          {{ t('offlineVideo.offlineMode') }}
+        </button>
+        <button
+          class="cv-pi-segment-item"
+          type="button"
+          @click="router.push(`/launch/${characterId}/live`)"
+        >
+          {{ t('offlineVideo.liveMode') }}
+        </button>
       </div>
+    </div>
 
-      <div v-if="loading" class="py-24 text-center text-cv-text-secondary">{{ t('common.loading') }}</div>
+    <main class="mx-auto flex w-full max-w-[1100px] flex-1 flex-col gap-8 px-12 pb-24">
+      <div v-if="showLoading" class="py-24 text-center text-cv-text-secondary">{{ t('common.loading') }}</div>
 
       <template v-else-if="store.current">
-        <div class="grid gap-6 lg:grid-cols-[340px_minmax(0,1fr)]">
+        <div class="grid gap-8 lg:grid-cols-[300px_minmax(0,1fr)]">
           <aside class="character-panel">
             <div class="avatar-shell">
               <img
@@ -364,25 +355,32 @@ onUnmounted(() => {
               <span>{{ t('offlineVideo.avatarSource') }}</span>
               <strong>{{ store.current.avatar_backend }}</strong>
             </div>
+            <button
+              class="cv-pi-button cv-pi-button--compact"
+              type="button"
+              @click="router.push(`/characters/${characterId}/edit`)"
+            >
+              {{ t('launch.editCharacter') }}
+            </button>
           </aside>
 
           <section class="production-panel">
             <form class="generator-form" @submit.prevent="submitJob">
               <div v-if="errorMessage" class="notice error">{{ errorMessage }}</div>
 
-              <div class="input-mode-row" role="tablist" :aria-label="t('offlineVideo.inputMode')">
+              <div class="cv-pi-segment h-[42px] w-[260px] grid-cols-2" role="tablist" :aria-label="t('offlineVideo.inputMode')">
                 <button
                   type="button"
-                  class="input-mode-btn"
-                  :class="{ active: inputType === 'text' }"
+                  class="cv-pi-segment-item"
+                  :class="{ 'cv-pi-segment-item--active': inputType === 'text' }"
                   @click="inputType = 'text'"
                 >
                   {{ t('offlineVideo.textInput') }}
                 </button>
                 <button
                   type="button"
-                  class="input-mode-btn"
-                  :class="{ active: inputType === 'audio' }"
+                  class="cv-pi-segment-item"
+                  :class="{ 'cv-pi-segment-item--active': inputType === 'audio' }"
                   @click="inputType = 'audio'"
                 >
                   {{ t('offlineVideo.audioInput') }}
@@ -488,7 +486,7 @@ onUnmounted(() => {
               </section>
 
               <div class="flex justify-end">
-                <button class="generate-btn" type="submit" :disabled="!canGenerate">
+                <button class="cv-pi-button cv-pi-button--primary" type="submit" :disabled="!canGenerate">
                   {{ submitting ? t('offlineVideo.submitting') : t('offlineVideo.generate') }}
                 </button>
               </div>
@@ -518,20 +516,20 @@ onUnmounted(() => {
                         @keydown.esc.prevent="cancelRename"
                       >
                       <button
-                        class="inline-action primary"
+                        class="cv-pi-button cv-pi-button--primary cv-pi-button--compact"
                         type="button"
                         :disabled="renaming || !editingTitle.trim()"
                         @click="submitRename(job)"
                       >
                         {{ t('common.save') }}
                       </button>
-                      <button class="inline-action" type="button" @click="cancelRename">
+                      <button class="cv-pi-button cv-pi-button--compact" type="button" @click="cancelRename">
                         {{ t('common.cancel') }}
                       </button>
                     </template>
                     <template v-else>
                       <h3>{{ job.title }}</h3>
-                      <button class="inline-action" type="button" @click="startRename(job)">
+                      <button class="cv-pi-button cv-pi-button--compact" type="button" @click="startRename(job)">
                         {{ t('offlineVideo.rename') }}
                       </button>
                     </template>
@@ -549,7 +547,7 @@ onUnmounted(() => {
                 <div class="job-actions">
                   <a
                     v-if="job.video_url"
-                    class="job-link primary"
+                    class="cv-pi-button cv-pi-button--primary cv-pi-button--compact"
                     :href="job.video_url"
                     target="_blank"
                     rel="noreferrer"
@@ -557,7 +555,7 @@ onUnmounted(() => {
                     {{ t('offlineVideo.openVideo') }}
                   </a>
                   <button
-                    class="job-link"
+                    class="cv-pi-button cv-pi-button--compact"
                     type="button"
                     :disabled="job.status === 'queued' || job.status === 'running'"
                     @click="removeJob(job)"
@@ -573,30 +571,13 @@ onUnmounted(() => {
     </main>
   </div>
 </template>
-
 <style scoped>
-.mode-tab,
-.input-mode-btn {
-  min-width: 116px;
-  height: 38px;
-  padding: 0 16px;
-  color: #9da6b5;
-  font-size: 13px;
-  font-weight: 700;
-  transition: background 160ms ease, color 160ms ease;
-}
-
-.mode-tab.active,
-.input-mode-btn.active {
-  background: #34e6f3;
-  color: #06070a;
-}
-
 .character-panel,
 .production-panel,
 .jobs-section {
-  border: 1px solid #242b36;
-  background: #11141a;
+  border: 1px solid var(--color-cv-border);
+  border-radius: 8px;
+  background: var(--color-cv-surface);
 }
 
 .character-panel {
@@ -678,14 +659,6 @@ onUnmounted(() => {
 .script-input:focus,
 .file-input:focus {
   border-color: #34e6f3;
-}
-
-.input-mode-row {
-  display: inline-flex;
-  width: fit-content;
-  border: 1px solid #303a49;
-  background: #0b0d12;
-  padding: 4px;
 }
 
 .field-hint {
@@ -812,50 +785,6 @@ onUnmounted(() => {
   accent-color: #34e6f3;
 }
 
-.reset-btn {
-  min-height: 32px;
-  flex: 0 0 auto;
-  border: 1px solid #303a49;
-  padding: 0 10px;
-  color: #9da6b5;
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.reset-btn:hover {
-  border-color: #34e6f3;
-  color: #f4f7fb;
-}
-
-.generate-btn,
-.job-link {
-  min-height: 38px;
-  border: 1px solid #303a49;
-  padding: 0 16px;
-  color: #c4ccd8;
-  font-size: 13px;
-  font-weight: 700;
-  transition: border-color 160ms ease, color 160ms ease, background 160ms ease;
-}
-
-.generate-btn {
-  min-width: 136px;
-  border-color: transparent;
-  background: #34e6f3;
-  color: #06070a;
-}
-
-.generate-btn:disabled,
-.job-link:disabled {
-  cursor: not-allowed;
-  opacity: 0.45;
-}
-
-.job-link:hover:not(:disabled) {
-  border-color: #34e6f3;
-  color: #f4f7fb;
-}
-
 .notice {
   border: 1px solid;
   padding: 10px 12px;
@@ -978,33 +907,6 @@ onUnmounted(() => {
   border-color: #34e6f3;
 }
 
-.inline-action {
-  min-height: 32px;
-  flex: 0 0 auto;
-  border: 1px solid #303a49;
-  padding: 0 10px;
-  color: #9da6b5;
-  font-size: 12px;
-  font-weight: 700;
-  transition: border-color 160ms ease, color 160ms ease, background 160ms ease;
-}
-
-.inline-action:hover:not(:disabled) {
-  border-color: #34e6f3;
-  color: #f4f7fb;
-}
-
-.inline-action.primary {
-  border-color: transparent;
-  background: #34e6f3;
-  color: #06070a;
-}
-
-.inline-action:disabled {
-  cursor: not-allowed;
-  opacity: 0.45;
-}
-
 @keyframes job-spin {
   to {
     transform: rotate(360deg);
@@ -1065,12 +967,6 @@ onUnmounted(() => {
   align-items: flex-end;
   justify-content: space-between;
   gap: 12px;
-}
-
-.job-link.primary {
-  border-color: transparent;
-  background: #2563eb;
-  color: #f8fbff;
 }
 
 @media (max-width: 860px) {

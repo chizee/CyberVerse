@@ -596,24 +596,19 @@ async function handleDelete() {
 
 const promptLength = computed(() => form.value.system_prompt.length)
 
-const breadcrumb = computed(() =>
+const pageTitle = computed(() =>
   isEdit.value
-    ? [t('characterEdit.breadcrumbs.list'), t('characterEdit.breadcrumbs.edit')]
-    : [t('characterEdit.breadcrumbs.list'), t('characterEdit.breadcrumbs.create')]
+    ? t('characterEdit.pageTitleEdit')
+    : t('characterEdit.pageTitleCreate')
 )
 </script>
 
 <template>
   <div class="min-h-screen bg-cv-base flex flex-col">
-    <AppHeader showBack :breadcrumb="breadcrumb" />
-
-    <!-- Page title -->
-    <div class="text-center py-8">
-      <h1 class="cv-display-title text-2xl text-cv-text">{{ isEdit ? t('characterEdit.pageTitleEdit') : t('characterEdit.pageTitleCreate') }}</h1>
-    </div>
+    <AppHeader showBack :title="pageTitle" />
 
     <!-- Content -->
-    <main class="flex-1 max-w-[1100px] mx-auto w-full px-12 pb-24 flex gap-8">
+    <main class="flex-1 max-w-[1100px] mx-auto w-full px-12 pt-8 pb-24 flex gap-8">
       <!-- Left column: Avatar -->
       <div class="w-[300px] shrink-0">
         <div class="mb-4 rounded-cv-lg border border-cv-border bg-cv-surface p-3">

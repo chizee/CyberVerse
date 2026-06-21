@@ -3,9 +3,9 @@ import { ref, onMounted, computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useCharacterStore } from '../stores/characters'
-import { createSession, getAvatarModelInfo, getHealth, getLaunchConfig, updateLaunchConfig } from '../services/api'
+import { createSession, getAvatarModelInfo, getLaunchConfig, updateLaunchConfig } from '../services/api'
+import AppHeader from '../components/AppHeader.vue'
 import CvSelect from '../components/CvSelect.vue'
-import LanguageSwitcher from '../components/LanguageSwitcher.vue'
 import type { AvatarModelInfo, ConfigSection, ConfigParam } from '../types'
 import { saveLaunchWorkspaceMode } from '../utils/launchModePreference'
 import { formatVoiceTypeDisplay } from '../utils/voice'
@@ -16,8 +16,10 @@ const route = useRoute()
 const store = useCharacterStore()
 const { t, locale } = useI18n()
 const characterId = computed(() => route.params.id as string)
+const pageTitle = computed(() => t('launch.workspaceTitle'))
+const hasCurrentCharacter = computed(() => store.current?.id === characterId.value)
+const showLoading = computed(() => loading.value && !hasCurrentCharacter.value)
 const connecting = ref(false)
-const serviceConnected = ref(false)
 
 // Config state
 const configSections = ref<ConfigSection[]>([])
@@ -36,11 +38,6 @@ const runtimeConfigMismatch = computed(() =>
   activeAvatarModel.value !== configuredDefaultModel.value
 )
 const isBaiduXilingCharacter = computed(() => store.current?.avatar_backend === 'baidu_xiling')
-const launchRuntimeModelLabel = computed(() =>
-  isBaiduXilingCharacter.value
-    ? t('characterCard.baiduDigitalHuman')
-    : activeAvatarModel.value || t('common.notConnected')
-)
 const canLaunch = computed(() => {
   if (isBaiduXilingCharacter.value) {
     return !!store.current?.baidu_xiling?.figure_id
@@ -110,12 +107,6 @@ function launchSectionTitle(section: ConfigSection): string {
 onMounted(async () => {
   saveLaunchWorkspaceMode('live')
   await store.fetchOne(characterId.value).catch(() => {})
-  try {
-    const health = await getHealth()
-    serviceConnected.value = health.inference_connected
-  } catch {
-    serviceConnected.value = false
-  }
 
   if (!isBaiduXilingCharacter.value) {
     // Fetch local avatar model config only for local-avatar characters.
@@ -197,40 +188,25 @@ async function launch() {
 </script>
 
 <template>
-  <div class="launch-workspace min-h-screen bg-cv-bg text-cv-text">
-    <header class="flex items-center justify-between border-b border-cv-border-subtle px-8 py-4">
-      <button
-        class="text-sm font-medium text-cv-text-secondary transition-colors hover:text-cv-text"
-        @click="router.push('/characters')"
-      >
-        {{ t('common.back') }}
-      </button>
-      <LanguageSwitcher />
-    </header>
+  <div class="launch-workspace flex min-h-screen flex-col bg-cv-base text-cv-text">
+    <AppHeader showBack :title="pageTitle" />
 
-    <main class="mx-auto flex w-full max-w-[1320px] flex-col gap-7 px-8 py-8">
-      <div class="flex flex-wrap items-start justify-between gap-5">
-        <div>
-          <p class="text-xs font-semibold uppercase text-cv-text-muted">CyberVerse Studio</p>
-          <h1 class="mt-2 text-[28px] font-extrabold text-[#fbf6ef]">{{ t('launch.title') }}</h1>
-          <p class="mt-2 max-w-2xl text-sm leading-6 text-[#8d96a6]">
-            {{ t('launch.subtitle', { model: launchRuntimeModelLabel }) }}
-          </p>
-        </div>
-        <div class="inline-flex border border-cv-border-subtle bg-[#101217] p-1">
-          <button class="mode-tab" @click="router.push(`/launch/${characterId}/offline`)">
-            {{ t('offlineVideo.offlineMode') }}
-          </button>
-          <button class="mode-tab active">
-            {{ t('offlineVideo.liveMode') }}
-          </button>
-        </div>
+    <div class="py-6 text-center">
+      <div class="cv-pi-segment mx-auto h-11 w-[260px] grid-cols-2">
+        <button class="cv-pi-segment-item" type="button" @click="router.push(`/launch/${characterId}/offline`)">
+          {{ t('offlineVideo.offlineMode') }}
+        </button>
+        <button class="cv-pi-segment-item cv-pi-segment-item--active" type="button">
+          {{ t('offlineVideo.liveMode') }}
+        </button>
       </div>
+    </div>
 
-      <div v-if="loading" class="py-24 text-center text-cv-text-secondary">{{ t('launch.loadingConfig') }}</div>
+    <main class="mx-auto flex w-full max-w-[1100px] flex-1 flex-col gap-8 px-12 pb-24">
+      <div v-if="showLoading" class="py-24 text-center text-cv-text-secondary">{{ t('launch.loadingConfig') }}</div>
 
       <template v-else-if="store.current">
-        <div class="grid gap-6 lg:grid-cols-[340px_minmax(0,1fr)]">
+        <div class="grid gap-8 lg:grid-cols-[300px_minmax(0,1fr)]">
           <aside class="character-panel">
             <div class="avatar-shell">
               <img
@@ -256,7 +232,7 @@ async function launch() {
               <strong>{{ store.current.avatar_backend }}</strong>
             </div>
             <button
-              class="edit-link"
+              class="cv-pi-button cv-pi-button--compact"
               type="button"
               @click="router.push(`/characters/${characterId}/edit`)"
             >
@@ -265,16 +241,6 @@ async function launch() {
           </aside>
 
           <section class="production-panel">
-            <div class="service-status">
-              <span
-                class="service-dot"
-                :class="serviceConnected ? 'connected' : 'disconnected'"
-              />
-              <span :class="serviceConnected ? 'text-[#8fe8ef]' : 'text-[#ff9b9b]'">
-                {{ serviceConnected ? t('common.serviceConnected') : t('common.serviceDisconnected') }}
-              </span>
-            </div>
-
             <div v-if="errorMessage" class="notice error">{{ errorMessage }}</div>
             <div v-if="runtimeConfigMismatch" class="notice warning">
               {{ t('launch.runtimeMismatch', { configured: configuredDefaultModel, active: activeAvatarModel }) }}
@@ -360,10 +326,10 @@ async function launch() {
             </div>
 
             <div class="action-row">
-              <button class="secondary-btn" type="button" :disabled="!hasChanges || saving" @click="saveConfig">
+              <button class="cv-pi-button" type="button" :disabled="!hasChanges || saving" @click="saveConfig">
                 {{ saving ? t('common.saving') : t('launch.saveConfig') }}
               </button>
-              <button class="launch-btn" type="button" :disabled="connecting || !canLaunch" @click="launch">
+              <button class="cv-pi-button cv-pi-button--primary" type="button" :disabled="connecting || !canLaunch" @click="launch">
                 {{ connecting ? t('launch.launching') : t('launch.launch') }}
               </button>
             </div>
@@ -375,25 +341,11 @@ async function launch() {
 </template>
 
 <style scoped>
-.mode-tab {
-  min-width: 116px;
-  height: 38px;
-  padding: 0 16px;
-  color: #9da6b5;
-  font-size: 13px;
-  font-weight: 700;
-  transition: background 160ms ease, color 160ms ease;
-}
-
-.mode-tab.active {
-  background: #34e6f3;
-  color: #06070a;
-}
-
 .character-panel,
 .production-panel {
-  border: 1px solid #242b36;
-  background: #11141a;
+  border: 1px solid var(--color-cv-border);
+  border-radius: 8px;
+  background: var(--color-cv-surface);
 }
 
 .character-panel {
@@ -430,47 +382,11 @@ async function launch() {
   white-space: nowrap;
 }
 
-.edit-link {
-  width: fit-content;
-  color: #619ef5;
-  font-size: 13px;
-  font-weight: 600;
-  transition: color 160ms ease;
-}
-
-.edit-link:hover {
-  color: #34e6f3;
-}
-
 .production-panel {
   display: flex;
   flex-direction: column;
   gap: 16px;
   padding: 22px;
-}
-
-.service-status {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: #9da6b5;
-  font-size: 13px;
-}
-
-.service-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 999px;
-}
-
-.service-dot.connected {
-  background: #34e6f3;
-  box-shadow: 0 0 6px rgba(52, 230, 243, 0.5);
-}
-
-.service-dot.disconnected {
-  background: #ff6b6b;
-  box-shadow: 0 0 6px rgba(255, 107, 107, 0.35);
 }
 
 .notice {
@@ -650,42 +566,6 @@ async function launch() {
   justify-content: flex-end;
   gap: 14px;
   padding-top: 4px;
-}
-
-.secondary-btn,
-.launch-btn {
-  min-height: 46px;
-  padding: 0 24px;
-  font-size: 14px;
-  font-weight: 800;
-  transition: border-color 160ms ease, box-shadow 160ms ease, opacity 160ms ease;
-}
-
-.secondary-btn {
-  border: 1px solid #303a49;
-  background: #0f1218;
-  color: #969eaa;
-}
-
-.secondary-btn:hover:not(:disabled) {
-  border-color: rgba(52, 230, 243, 0.5);
-}
-
-.launch-btn {
-  border: 1px solid transparent;
-  background: linear-gradient(180deg, #34e6f3 0%, #14a0ac 100%);
-  color: #06070a;
-  box-shadow: 0 0 20px rgba(52, 230, 243, 0.2);
-}
-
-.launch-btn:hover:not(:disabled) {
-  box-shadow: 0 0 30px rgba(52, 230, 243, 0.35);
-}
-
-.secondary-btn:disabled,
-.launch-btn:disabled {
-  cursor: not-allowed;
-  opacity: 0.45;
 }
 
 @media (max-width: 860px) {

@@ -1,5 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { loadLaunchWorkspaceMode } from '../utils/launchModePreference'
+import LaunchConfigPage from '../pages/LaunchConfigPage.vue'
+import OfflineVideoPage from '../pages/OfflineVideoPage.vue'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -47,12 +49,12 @@ const router = createRouter({
     {
       path: '/launch/:id/offline',
       name: 'launch-offline',
-      component: () => import('../pages/OfflineVideoPage.vue'),
+      component: OfflineVideoPage,
     },
     {
       path: '/launch/:id/live',
       name: 'launch-live',
-      component: () => import('../pages/LaunchConfigPage.vue'),
+      component: LaunchConfigPage,
     },
     {
       path: '/characters/:id/offline-videos',

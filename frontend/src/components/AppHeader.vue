@@ -22,6 +22,7 @@ onMounted(async () => {
 withDefaults(defineProps<{
   showBack?: boolean
   breadcrumb?: string[]
+  title?: string
   logoTo?: string
 }>(), {
   logoTo: '/characters',
@@ -45,7 +46,7 @@ withDefaults(defineProps<{
       </div>
 
       <!-- Center: Search -->
-      <div class="flex-1 flex justify-center" v-if="!breadcrumb">
+      <div class="flex-1 flex justify-center" v-if="!breadcrumb && !title">
         <div class="relative w-[280px]">
           <input
             v-model="search"
@@ -56,8 +57,15 @@ withDefaults(defineProps<{
         </div>
       </div>
 
+      <!-- Center: Page title -->
+      <div class="flex-1 flex justify-center" v-if="title">
+        <div class="cv-display-title text-[22px] leading-none text-cv-text">
+          {{ title }}
+        </div>
+      </div>
+
       <!-- Center: Breadcrumb -->
-      <div class="flex-1 flex justify-center" v-if="breadcrumb">
+      <div class="flex-1 flex justify-center" v-if="breadcrumb && !title">
         <div class="flex items-center gap-2 text-sm">
           <template v-for="(item, i) in breadcrumb" :key="i">
             <span v-if="i < breadcrumb.length - 1"
