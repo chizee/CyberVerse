@@ -7,6 +7,7 @@ import { createSession, getAvatarModelInfo, getHealth, getLaunchConfig, updateLa
 import CvSelect from '../components/CvSelect.vue'
 import LanguageSwitcher from '../components/LanguageSwitcher.vue'
 import type { AvatarModelInfo, ConfigSection, ConfigParam } from '../types'
+import { saveLaunchWorkspaceMode } from '../utils/launchModePreference'
 import { formatVoiceTypeDisplay } from '../utils/voice'
 import { buildSessionLaunchState, saveSessionLaunchState } from '../utils/sessionLaunchState'
 
@@ -107,6 +108,7 @@ function launchSectionTitle(section: ConfigSection): string {
 }
 
 onMounted(async () => {
+  saveLaunchWorkspaceMode('live')
   await store.fetchOne(characterId.value).catch(() => {})
   try {
     const health = await getHealth()
@@ -195,237 +197,506 @@ async function launch() {
 </script>
 
 <template>
-  <div class="min-h-screen bg-cyber-base text-cyber-text">
-    <!-- Header -->
-    <header class="h-16 bg-[rgba(6,7,10,0.95)] border-b border-white/5 flex items-center justify-between px-8">
-      <div class="flex items-center gap-4">
-        <button @click="router.back()"
-                class="h-[34px] px-3 bg-[#0f1218] border border-[rgba(72,80,92,0.4)] text-[#969eaa] text-[13px] hover:border-cyber-cyan/40 transition-colors cursor-pointer">
-          {{ t('common.back') }}
-        </button>
-        <span class="text-sm font-bold tracking-[1.68px] uppercase text-[#f6efe8]">CyberVerse</span>
-        <LanguageSwitcher />
-      </div>
-      <span class="text-[13px] text-[#505864]">{{ t('launch.breadcrumb') }}</span>
-      <div class="flex items-center gap-2">
-        <span
-          class="w-[7px] h-[7px] rounded-full"
-          :class="serviceConnected ? 'bg-cyber-cyan shadow-[0_0_6px_rgba(52,230,243,0.5)]' : 'bg-[#ff6b6b] shadow-[0_0_6px_rgba(255,107,107,0.35)]'"
-        />
-        <span class="text-[13px]" :class="serviceConnected ? 'text-[#8fe8ef]' : 'text-[#ff9b9b]'">
-          {{ serviceConnected ? t('common.serviceConnected') : t('common.serviceDisconnected') }}
-        </span>
-      </div>
+  <div class="launch-workspace min-h-screen bg-cv-bg text-cv-text">
+    <header class="flex items-center justify-between border-b border-cv-border-subtle px-8 py-4">
+      <button
+        class="text-sm font-medium text-cv-text-secondary transition-colors hover:text-cv-text"
+        @click="router.push('/characters')"
+      >
+        {{ t('common.back') }}
+      </button>
+      <LanguageSwitcher />
     </header>
 
-    <div class="flex">
-      <!-- Left sidebar: Character summary -->
-      <aside class="w-[380px] shrink-0 p-8 pt-10 ml-16">
-        <div v-if="store.current" class="bg-cv-surface border border-cv-border rounded-cv-lg overflow-hidden shadow-[0_4px_16px_-2px_rgba(0,0,0,0.25)]">
-          <!-- Avatar image -->
-          <div class="relative h-[220px] bg-gradient-to-b from-[#142659] to-[#2e1a66] rounded-t-cv-lg ">
-            <img v-if="characterCoverImage" :src="characterCoverImage" class="w-full h-full object-cover" :alt="store.current.name" />
-            <div
-              v-else-if="isBaiduXilingCharacter"
-              class="flex h-full flex-col items-center justify-center gap-2 px-6 text-center"
-            >
-              <span class="rounded-cv-sm border border-cv-accent/30 bg-cv-accent/10 px-2 py-1 text-[11px] text-cv-accent">
-                {{ t('characterCard.baiduDigitalHuman') }}
-              </span>
-              <span class="break-all text-[12px] leading-5 text-cv-text/70">
-                {{ store.current.baidu_xiling?.figure_id }}
-              </span>
-            </div>
-            <span
-              v-if="isBaiduXilingCharacter"
-              class="absolute left-3 top-3 rounded-cv-sm border border-cv-accent/30 bg-black/55 px-2 py-1 text-[11px] text-cv-accent backdrop-blur-sm"
-            >
-              {{ t('characterCard.baiduDigitalHuman') }}
-            </span>
-          </div>
-
-          <div class="p-5 flex flex-col gap-4">
-            <h2 class="text-[22px] font-bold text-cv-text tracking-[-0.2px]">{{ store.current.name }}</h2>
-            <p class="text-sm text-[#80808c] leading-[22px]">{{ store.current.description }}</p>
-
-            <div class="h-px bg-cv-border-subtle" />
-
-            <!-- Info rows -->
-            <div class="flex justify-between text-xs font-medium">
-              <span class="text-[#80808c]">{{ t('launch.voice') }}</span>
-              <span
-                class="max-w-[200px] truncate text-right text-cv-text"
-                :title="formatVoiceTypeDisplay(store.current.voice_type, t, locale)"
-              >
-                {{ formatVoiceTypeDisplay(store.current.voice_type, t, locale) }}
-              </span>
-            </div>
-            <div class="flex justify-between text-xs font-medium">
-              <span class="text-[#80808c]">{{ t('launch.speakingStyle') }}</span>
-              <span class="text-cv-text">{{ store.current.speaking_style || t('common.emptyDash') }}</span>
-            </div>
-            <div v-if="store.current.personality" class="flex justify-between text-xs">
-              <span class="font-medium text-[#80808c]">{{ t('launch.personality') }}</span>
-              <span class="text-cv-text truncate max-w-[200px]">{{ store.current.personality }}</span>
-            </div>
-            <div v-if="store.current.welcome_message" class="flex justify-between text-xs">
-              <span class="font-medium text-[#80808c]">{{ t('launch.welcomeMessage') }}</span>
-              <span class="text-cv-text truncate max-w-[200px]">{{ store.current.welcome_message }}</span>
-            </div>
-
-            <!-- Role prompt -->
-            <div class="bg-[#131317] border border-[#24242b] rounded-cv-md px-3 py-2.5">
-              <p class="text-[10px] font-semibold text-cv-text-muted tracking-[0.8px] uppercase mb-1.5">Role Prompt</p>
-              <p class="text-xs text-cv-text-secondary leading-[18px] line-clamp-4">{{ store.current.system_prompt }}</p>
-            </div>
-
-            <button @click="router.push(`/characters/${characterId}/edit`)"
-                    class="text-[13px] font-medium text-[#619ef5] hover:text-cv-accent-hover transition-colors cursor-pointer self-start">
-              {{ t('launch.editCharacter') }}
-            </button>
-          </div>
-        </div>
-      </aside>
-
-      <!-- Right: Config area -->
-      <main class="flex-1 pl-4 pr-12 py-10 flex flex-col gap-7">
+    <main class="mx-auto flex w-full max-w-[1320px] flex-col gap-7 px-8 py-8">
+      <div class="flex flex-wrap items-start justify-between gap-5">
         <div>
-          <h1 class="text-[28px] font-extrabold text-[#fbf6ef]">{{ t('launch.title') }}</h1>
-          <p class="text-sm text-[#6e7682] mt-2">
+          <p class="text-xs font-semibold uppercase text-cv-text-muted">CyberVerse Studio</p>
+          <h1 class="mt-2 text-[28px] font-extrabold text-[#fbf6ef]">{{ t('launch.title') }}</h1>
+          <p class="mt-2 max-w-2xl text-sm leading-6 text-[#8d96a6]">
             {{ t('launch.subtitle', { model: launchRuntimeModelLabel }) }}
           </p>
         </div>
-
-        <!-- Loading -->
-        <div v-if="loading" class="text-[#6e7682] text-sm py-8">{{ t('launch.loadingConfig') }}</div>
-
-        <!-- Error -->
-        <div v-if="errorMessage" class="text-[13px] text-[#ff9b9b] bg-[rgba(255,107,107,0.08)] border border-[rgba(255,107,107,0.2)] px-4 py-2.5">
-          {{ errorMessage }}
+        <div class="inline-flex border border-cv-border-subtle bg-[#101217] p-1">
+          <button class="mode-tab" @click="router.push(`/launch/${characterId}/offline`)">
+            {{ t('offlineVideo.offlineMode') }}
+          </button>
+          <button class="mode-tab active">
+            {{ t('offlineVideo.liveMode') }}
+          </button>
         </div>
+      </div>
 
-        <div v-if="runtimeConfigMismatch" class="text-[13px] text-[#ffb36b] bg-[rgba(255,147,70,0.08)] border border-[rgba(255,147,70,0.2)] px-4 py-2.5">
-          {{ t('launch.runtimeMismatch', { configured: configuredDefaultModel, active: activeAvatarModel }) }}
-        </div>
+      <div v-if="loading" class="py-24 text-center text-cv-text-secondary">{{ t('launch.loadingConfig') }}</div>
 
-        <!-- Save message -->
-        <div v-if="saveMessage" class="text-[13px] text-[#8fe8ef] bg-[rgba(52,230,243,0.08)] border border-[rgba(52,230,243,0.2)] px-4 py-2.5">
-          {{ saveMessage }}
-        </div>
-
-        <!-- Baidu Xiling character info -->
-        <div v-if="isBaiduXilingCharacter && store.current"
-             class="bg-cyber-surface border border-white/6 overflow-hidden">
-          <div class="grid grid-cols-1 md:grid-cols-2">
-            <div
-              v-for="row in baiduXilingInfoRows"
-              :key="row.label"
-              class="min-w-0 border-b border-r border-white/4 px-6 py-4"
-            >
-              <p class="text-[11px] font-medium uppercase tracking-[0.6px] text-[#505864]">{{ row.label }}</p>
-              <p class="mt-1 min-h-[20px] truncate text-[13px] font-medium text-[#c8d0dc]" :title="row.value">
-                {{ row.value }}
+      <template v-else-if="store.current">
+        <div class="grid gap-6 lg:grid-cols-[340px_minmax(0,1fr)]">
+          <aside class="character-panel">
+            <div class="avatar-shell">
+              <img
+                v-if="characterCoverImage"
+                :src="characterCoverImage"
+                :alt="store.current.name"
+                class="h-full w-full object-cover"
+              >
+              <div v-else class="flex h-full items-center justify-center text-sm text-cv-text-muted">
+                {{ t('offlineVideo.noAvatar') }}
+              </div>
+            </div>
+            <div>
+              <h2 class="truncate text-xl font-bold text-[#fbf6ef]">{{ store.current.name }}</h2>
+              <p class="mt-2 text-sm leading-6 text-[#8d96a6]">
+                {{ store.current.description || t('characterCard.noDescription') }}
               </p>
             </div>
-          </div>
-        </div>
-
-        <!-- Config sections -->
-        <div v-for="section in configSections" :key="section.title"
-             class="bg-cyber-surface border border-white/6 overflow-hidden">
-          <!-- Section header -->
-          <div class="bg-[#0b0e14] border-b border-white/6 px-6 py-4 flex items-center justify-between">
-            <div class="flex items-center gap-3">
-              <span class="text-[10px] text-[#505a6e]" @click="section.collapsed = !section.collapsed" style="cursor:pointer">
-                {{ section.collapsed ? '▶' : '▼' }}
-              </span>
-              <span class="text-sm font-bold text-[#c8d0dc]">{{ launchSectionTitle(section) }}</span>
+            <div class="info-grid">
+              <span>{{ t('launch.voice') }}</span>
+              <strong>{{ formatVoiceTypeDisplay(store.current.voice_type, t, locale) }}</strong>
+              <span>{{ t('offlineVideo.avatarSource') }}</span>
+              <strong>{{ store.current.avatar_backend }}</strong>
             </div>
-            <div
-              v-if="sectionHasRestartPending(section)"
-              class="group relative flex items-center gap-1"
+            <button
+              class="edit-link"
+              type="button"
+              @click="router.push(`/characters/${characterId}/edit`)"
             >
-              <span class="px-2 py-0.5 text-[11px] bg-[rgba(255,147,70,0.12)] border border-[rgba(255,147,70,0.4)] text-[#ff9346]">
-                {{ t('launch.restartRequired') }}
+              {{ t('launch.editCharacter') }}
+            </button>
+          </aside>
+
+          <section class="production-panel">
+            <div class="service-status">
+              <span
+                class="service-dot"
+                :class="serviceConnected ? 'connected' : 'disconnected'"
+              />
+              <span :class="serviceConnected ? 'text-[#8fe8ef]' : 'text-[#ff9b9b]'">
+                {{ serviceConnected ? t('common.serviceConnected') : t('common.serviceDisconnected') }}
               </span>
-              <button
-                type="button"
-                class="inline-flex h-[18px] min-w-[18px] shrink-0 cursor-help items-center justify-center rounded-full border border-[rgba(255,147,70,0.45)] bg-[rgba(255,147,70,0.06)] px-1 text-[11px] font-semibold leading-none text-[#ff9346] outline-none hover:bg-[rgba(255,147,70,0.12)] focus-visible:ring-2 focus-visible:ring-[rgba(255,147,70,0.45)]"
-                tabindex="0"
-                :aria-label="restartBadgeHint"
-              >
-                ?
-              </button>
+            </div>
+
+            <div v-if="errorMessage" class="notice error">{{ errorMessage }}</div>
+            <div v-if="runtimeConfigMismatch" class="notice warning">
+              {{ t('launch.runtimeMismatch', { configured: configuredDefaultModel, active: activeAvatarModel }) }}
+            </div>
+            <div v-if="saveMessage" class="notice success">{{ saveMessage }}</div>
+
+            <div v-if="isBaiduXilingCharacter" class="config-card">
               <div
-                role="tooltip"
-                class="pointer-events-none invisible absolute right-0 top-[calc(100%+6px)] z-30 w-[min(288px,calc(100vw-3rem))] rounded-md border border-white/10 bg-[#12161c] px-3 py-2 text-left text-[11px] leading-relaxed text-[#b8c0cc] shadow-xl opacity-0 transition-opacity duration-150 group-hover:visible group-hover:opacity-100 group-focus-within:visible group-focus-within:opacity-100"
+                v-for="row in baiduXilingInfoRows"
+                :key="row.label"
+                class="config-row"
               >
-                {{ restartBadgeHint }}
+                <p class="row-label">{{ row.label }}</p>
+                <p class="row-value" :title="row.value">{{ row.value }}</p>
               </div>
             </div>
-          </div>
 
-          <!-- Params -->
-          <div v-if="!section.collapsed">
-            <div v-for="param in section.params" :key="param.name"
-                 class="px-6 py-4 border-b border-white/4 flex items-center justify-between">
-              <div>
-                <p class="text-[13px] font-medium text-[#c8d0dc]">{{ param.name }}</p>
-                <p class="text-[11px] text-[#505864]">{{ param.path }}</p>
+            <div v-for="section in configSections" :key="section.title" class="config-card">
+              <div class="config-header">
+                <button class="collapse-btn" type="button" @click="section.collapsed = !section.collapsed">
+                  {{ section.collapsed ? '▶' : '▼' }}
+                </button>
+                <span class="config-title">{{ launchSectionTitle(section) }}</span>
+                <div
+                  v-if="sectionHasRestartPending(section)"
+                  class="group relative ml-auto flex items-center gap-1"
+                >
+                  <span class="restart-badge">{{ t('launch.restartRequired') }}</span>
+                  <button
+                    type="button"
+                    class="restart-help"
+                    tabindex="0"
+                    :aria-label="restartBadgeHint"
+                  >
+                    ?
+                  </button>
+                  <div role="tooltip" class="restart-tooltip">
+                    {{ restartBadgeHint }}
+                  </div>
+                </div>
               </div>
-              <div class="flex items-center gap-2.5">
-                <!-- Readonly: plain text -->
-                <span v-if="param.readonly" class="text-[13px] text-[#a0a8b4] text-right max-w-[300px] truncate">{{ param.value }}</span>
-                <!-- Select: use CvSelect for params with options -->
-                <CvSelect
-                  v-else-if="param.options && param.options.length > 0"
-                  :modelValue="String(param.value)"
-                  @update:modelValue="param.value = $event"
-                  :options="param.options"
-                  class="w-[200px]"
-                />
-                <!-- Number input (no spinner) -->
-                <input
-                  v-else-if="typeof param.value === 'number'"
-                  type="text"
-                  inputmode="numeric"
-                  :value="param.value"
-                  @input="param.value = Number(($event.target as HTMLInputElement).value) || 0"
-                  :style="{ width: inputWidth(param.value) }"
-                  class="bg-[#0f1218] border border-[rgba(72,80,92,0.4)] text-[#a0a8b4] text-[13px] px-2 py-1 text-right focus:border-cyber-cyan/60 outline-none transition-colors"
-                />
-                <!-- Text input (auto-width based on content) -->
-                <input
-                  v-else
-                  type="text"
-                  v-model="param.value"
-                  :style="{ width: inputWidth(param.value) }"
-                  class="bg-[#0f1218] border border-[rgba(72,80,92,0.4)] text-[#a0a8b4] text-[13px] px-2 py-1 text-right focus:border-cyber-cyan/60 outline-none transition-colors"
-                />
-                <!-- Lock icon for readonly params -->
-                <span v-if="param.readonly && param.requires_restart" class="text-[12px] text-[#505864]">
-                  <svg class="w-3 h-3.5 inline" viewBox="0 0 9 11" fill="none">
-                    <ellipse cx="4.5" cy="3.5" rx="3" ry="3" stroke="#73737d" stroke-width="1.2" />
-                    <rect x="0" y="5" width="9" height="6" rx="1" fill="#73737d" />
-                  </svg>
-                </span>
+
+              <div v-if="!section.collapsed">
+                <div v-for="param in section.params" :key="param.name" class="config-row">
+                  <div class="min-w-0">
+                    <p class="row-label strong">{{ param.name }}</p>
+                    <p class="row-path">{{ param.path }}</p>
+                  </div>
+                  <div class="param-control">
+                    <span v-if="param.readonly" class="readonly-value">{{ param.value }}</span>
+                    <CvSelect
+                      v-else-if="param.options && param.options.length > 0"
+                      :modelValue="String(param.value)"
+                      :options="param.options"
+                      class="w-[200px]"
+                      @update:modelValue="param.value = $event"
+                    />
+                    <input
+                      v-else-if="typeof param.value === 'number'"
+                      type="text"
+                      inputmode="numeric"
+                      :value="param.value"
+                      :style="{ width: inputWidth(param.value) }"
+                      class="param-input"
+                      @input="param.value = Number(($event.target as HTMLInputElement).value) || 0"
+                    >
+                    <input
+                      v-else
+                      v-model="param.value"
+                      type="text"
+                      :style="{ width: inputWidth(param.value) }"
+                      class="param-input"
+                    >
+                    <span v-if="param.readonly && param.requires_restart" class="lock-icon">
+                      <svg class="inline h-3.5 w-3" viewBox="0 0 9 11" fill="none">
+                        <ellipse cx="4.5" cy="3.5" rx="3" ry="3" stroke="#73737d" stroke-width="1.2" />
+                        <rect x="0" y="5" width="9" height="6" rx="1" fill="#73737d" />
+                      </svg>
+                    </span>
+                  </div>
+                </div>
               </div>
             </div>
-          </div>
-        </div>
 
-        <!-- Action buttons -->
-        <div class="flex justify-end gap-4 mt-4">
-          <button @click="saveConfig" :disabled="!hasChanges || saving"
-                  class="h-12 px-6 bg-[#0f1218] border border-[rgba(72,80,92,0.4)] text-[#969eaa] text-[14px] font-medium hover:border-cyber-cyan/40 transition-colors cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed">
-            {{ saving ? t('common.saving') : t('launch.saveConfig') }}
-          </button>
-          <button @click="launch" :disabled="connecting || !canLaunch"
-                  class="h-12 px-8 bg-gradient-to-b from-cyber-cyan to-[#14a0ac] text-cyber-base text-[15px] font-extrabold shadow-[0_0_20px_rgba(52,230,243,0.2)] hover:shadow-[0_0_30px_rgba(52,230,243,0.35)] transition-shadow cursor-pointer disabled:opacity-50">
-            {{ connecting ? t('launch.launching') : t('launch.launch') }}
-          </button>
+            <div class="action-row">
+              <button class="secondary-btn" type="button" :disabled="!hasChanges || saving" @click="saveConfig">
+                {{ saving ? t('common.saving') : t('launch.saveConfig') }}
+              </button>
+              <button class="launch-btn" type="button" :disabled="connecting || !canLaunch" @click="launch">
+                {{ connecting ? t('launch.launching') : t('launch.launch') }}
+              </button>
+            </div>
+          </section>
         </div>
-      </main>
-    </div>
+      </template>
+    </main>
   </div>
 </template>
+
+<style scoped>
+.mode-tab {
+  min-width: 116px;
+  height: 38px;
+  padding: 0 16px;
+  color: #9da6b5;
+  font-size: 13px;
+  font-weight: 700;
+  transition: background 160ms ease, color 160ms ease;
+}
+
+.mode-tab.active {
+  background: #34e6f3;
+  color: #06070a;
+}
+
+.character-panel,
+.production-panel {
+  border: 1px solid #242b36;
+  background: #11141a;
+}
+
+.character-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding: 22px;
+}
+
+.avatar-shell {
+  aspect-ratio: 3 / 4;
+  overflow: hidden;
+  border: 1px solid #2b3542;
+  background: #0b0d12;
+}
+
+.info-grid {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  gap: 10px 14px;
+  font-size: 13px;
+}
+
+.info-grid span {
+  color: #798394;
+}
+
+.info-grid strong {
+  min-width: 0;
+  overflow: hidden;
+  color: #f0f4f8;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.edit-link {
+  width: fit-content;
+  color: #619ef5;
+  font-size: 13px;
+  font-weight: 600;
+  transition: color 160ms ease;
+}
+
+.edit-link:hover {
+  color: #34e6f3;
+}
+
+.production-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 22px;
+}
+
+.service-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #9da6b5;
+  font-size: 13px;
+}
+
+.service-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+}
+
+.service-dot.connected {
+  background: #34e6f3;
+  box-shadow: 0 0 6px rgba(52, 230, 243, 0.5);
+}
+
+.service-dot.disconnected {
+  background: #ff6b6b;
+  box-shadow: 0 0 6px rgba(255, 107, 107, 0.35);
+}
+
+.notice {
+  border: 1px solid;
+  padding: 10px 12px;
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.notice.warning {
+  border-color: rgba(255, 179, 107, 0.3);
+  background: rgba(255, 179, 107, 0.08);
+  color: #ffca9a;
+}
+
+.notice.error {
+  border-color: rgba(239, 68, 68, 0.35);
+  background: rgba(239, 68, 68, 0.1);
+  color: #fca5a5;
+}
+
+.notice.success {
+  border-color: rgba(52, 230, 243, 0.25);
+  background: rgba(52, 230, 243, 0.08);
+  color: #8fe8ef;
+}
+
+.config-card {
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: #0b0d12;
+}
+
+.config-header,
+.config-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.config-header {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  background: #0b0e14;
+  padding: 16px 20px;
+}
+
+.config-row {
+  min-width: 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  padding: 16px 20px;
+}
+
+.config-row:last-child {
+  border-bottom: 0;
+}
+
+.collapse-btn {
+  color: #505a6e;
+  font-size: 10px;
+}
+
+.config-title {
+  color: #c8d0dc;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.restart-badge {
+  border: 1px solid rgba(255, 147, 70, 0.4);
+  background: rgba(255, 147, 70, 0.12);
+  padding: 2px 8px;
+  color: #ff9346;
+  font-size: 11px;
+}
+
+.restart-help {
+  display: inline-flex;
+  height: 18px;
+  min-width: 18px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(255, 147, 70, 0.45);
+  border-radius: 999px;
+  background: rgba(255, 147, 70, 0.06);
+  color: #ff9346;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.restart-tooltip {
+  pointer-events: none;
+  visibility: hidden;
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 30;
+  width: min(288px, calc(100vw - 3rem));
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: #12161c;
+  padding: 8px 12px;
+  color: #b8c0cc;
+  font-size: 11px;
+  line-height: 1.6;
+  opacity: 0;
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.3);
+  transition: opacity 150ms ease;
+}
+
+.group:hover .restart-tooltip,
+.group:focus-within .restart-tooltip {
+  visibility: visible;
+  opacity: 1;
+}
+
+.row-label {
+  color: #505864;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.row-label.strong {
+  color: #c8d0dc;
+  font-size: 13px;
+  text-transform: none;
+}
+
+.row-path {
+  margin-top: 4px;
+  color: #505864;
+  font-size: 11px;
+}
+
+.row-value,
+.readonly-value {
+  min-width: 0;
+  overflow: hidden;
+  color: #c8d0dc;
+  font-size: 13px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.param-control {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+}
+
+.param-input {
+  border: 1px solid rgba(72, 80, 92, 0.4);
+  background: #0f1218;
+  color: #a0a8b4;
+  padding: 4px 8px;
+  text-align: right;
+  font-size: 13px;
+  outline: none;
+  transition: border-color 160ms ease;
+}
+
+.param-input:focus {
+  border-color: rgba(52, 230, 243, 0.6);
+}
+
+.lock-icon {
+  color: #505864;
+  font-size: 12px;
+}
+
+.action-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 14px;
+  padding-top: 4px;
+}
+
+.secondary-btn,
+.launch-btn {
+  min-height: 46px;
+  padding: 0 24px;
+  font-size: 14px;
+  font-weight: 800;
+  transition: border-color 160ms ease, box-shadow 160ms ease, opacity 160ms ease;
+}
+
+.secondary-btn {
+  border: 1px solid #303a49;
+  background: #0f1218;
+  color: #969eaa;
+}
+
+.secondary-btn:hover:not(:disabled) {
+  border-color: rgba(52, 230, 243, 0.5);
+}
+
+.launch-btn {
+  border: 1px solid transparent;
+  background: linear-gradient(180deg, #34e6f3 0%, #14a0ac 100%);
+  color: #06070a;
+  box-shadow: 0 0 20px rgba(52, 230, 243, 0.2);
+}
+
+.launch-btn:hover:not(:disabled) {
+  box-shadow: 0 0 30px rgba(52, 230, 243, 0.35);
+}
+
+.secondary-btn:disabled,
+.launch-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+@media (max-width: 860px) {
+  .config-row {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .param-control {
+    width: 100%;
+    justify-content: flex-start;
+  }
+}
+</style>

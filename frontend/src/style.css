@@ -37,6 +37,10 @@
 }
 
 /* Base styles */
+html {
+  scrollbar-gutter: stable;
+}
+
 body {
   font-family: 'Inter', system-ui, -apple-system, sans-serif;
   background-color: var(--color-cv-base);

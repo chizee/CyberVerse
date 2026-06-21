@@ -195,3 +195,185 @@ func TestHandleGetBaiduXilingFigureMissingCredentials(t *testing.T) {
 		t.Fatalf("expected credentials error, got %q", resp.Error)
 	}
 }
+
+func TestBaiduXilingAdvancedVideoSubmitAndQuery(t *testing.T) {
+	var gotAuth string
+	var submitBody map[string]any
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		gotAuth = req.Header.Get("Authorization")
+		switch req.URL.Path {
+		case baiduXilingAdvancedVideoSubmitPath:
+			if req.Method != http.MethodPost {
+				t.Fatalf("expected POST submit, got %s", req.Method)
+			}
+			if !strings.Contains(req.Header.Get("Content-Type"), "application/json") {
+				t.Fatalf("expected JSON content type, got %q", req.Header.Get("Content-Type"))
+			}
+			if err := json.NewDecoder(req.Body).Decode(&submitBody); err != nil {
+				t.Fatal(err)
+			}
+			return baiduXilingTestJSONResponse(req, `{"code":0,"success":true,"message":"success","result":{"taskId":"adv-1"}}`), nil
+		case baiduXilingAdvancedVideoTaskPath:
+			if req.URL.Query().Get("taskId") != "adv-1" {
+				t.Fatalf("expected taskId adv-1, got %q", req.URL.Query().Get("taskId"))
+			}
+			return baiduXilingTestJSONResponse(req, `{"code":0,"success":true,"message":"success","result":{"taskId":"adv-1","status":"SUCCESS","videoUrl":"https://cdn.example.com/out.mp4","duration":1200}}`), nil
+		default:
+			t.Fatalf("unexpected path %s", req.URL.Path)
+			return nil, nil
+		}
+	})}
+
+	api := baiduXilingAdvancedVideoClient{
+		APIBase: "https://baidu.test",
+		AppID:   "app-id",
+		AppKey:  "app-key",
+		Client:  client,
+	}
+	submission, err := api.submit(context.Background(), baiduXilingAdvancedVideoSubmitInput{
+		FigureID:      "figure-1",
+		TemplateID:    "tpl-1",
+		InputAudioURL: "https://public.example.com/input.wav",
+		Text:          "hello",
+		Title:         "demo",
+		Width:         1080,
+		Height:        1920,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if submission.TaskID != "adv-1" || !submission.Advanced {
+		t.Fatalf("unexpected submission: %#v", submission)
+	}
+	if !strings.HasPrefix(gotAuth, "app-id/") {
+		t.Fatalf("expected Authorization to start with app-id, got %q", gotAuth)
+	}
+	if submitBody["driveType"] != "VOICE" || submitBody["inputAudioUrl"] != "https://public.example.com/input.wav" {
+		t.Fatalf("unexpected submit body: %#v", submitBody)
+	}
+	if submitBody["figureId"] != "figure-1" || submitBody["templateId"] != "tpl-1" {
+		t.Fatalf("unexpected figure/template: %#v", submitBody)
+	}
+
+	task, err := api.queryTask(context.Background(), submission.TaskID, submission.Advanced)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.Status != "SUCCESS" || task.VideoURL != "https://cdn.example.com/out.mp4" || task.DurationMS != 1200 {
+		t.Fatalf("unexpected task response: %#v", task)
+	}
+}
+
+func TestBaiduXilingBasicVideoSubmitAndQuery(t *testing.T) {
+	var submitBody map[string]any
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		switch req.URL.Path {
+		case baiduXilingVideoSubmitPath:
+			if req.Method != http.MethodPost {
+				t.Fatalf("expected POST submit, got %s", req.Method)
+			}
+			if err := json.NewDecoder(req.Body).Decode(&submitBody); err != nil {
+				t.Fatal(err)
+			}
+			return baiduXilingTestJSONResponse(req, `{"code":0,"success":true,"message":"success","result":{"taskId":"basic-1"}}`), nil
+		case baiduXilingVideoTaskPath:
+			if req.URL.Query().Get("taskId") != "basic-1" {
+				t.Fatalf("expected taskId basic-1, got %q", req.URL.Query().Get("taskId"))
+			}
+			return baiduXilingTestJSONResponse(req, `{"code":0,"success":true,"message":"success","result":{"taskId":"basic-1","status":"SUCCESS","videoUrl":"https://cdn.example.com/basic.mp4","duration":900}}`), nil
+		default:
+			t.Fatalf("unexpected path %s", req.URL.Path)
+			return nil, nil
+		}
+	})}
+
+	api := baiduXilingAdvancedVideoClient{
+		APIBase: "https://baidu.test",
+		AppID:   "app-id",
+		AppKey:  "app-key",
+		Client:  client,
+	}
+	submission, err := api.submit(context.Background(), baiduXilingAdvancedVideoSubmitInput{
+		FigureID:           "2646047",
+		DriveType:          "TEXT",
+		Text:               "你好，这是离线视频。",
+		Width:              1920,
+		Height:             1080,
+		Transparent:        true,
+		TTSPerson:          "person-1",
+		TTSLan:             "Chinese",
+		TTSSpeed:           "6",
+		TTSVolume:          "7",
+		TTSPitch:           "4",
+		BackgroundImageURL: "https://public.example.com/background.png",
+		AutoAnimoji:        true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if submission.TaskID != "basic-1" || submission.Advanced {
+		t.Fatalf("unexpected submission: %#v", submission)
+	}
+	if submitBody["figureId"] != "2646047" {
+		t.Fatalf("expected figureId 2646047, got %#v", submitBody)
+	}
+	if _, ok := submitBody["templateId"]; ok {
+		t.Fatalf("basic submit must not send templateId: %#v", submitBody)
+	}
+	if submitBody["driveType"] != "TEXT" || submitBody["text"] != "你好，这是离线视频。" {
+		t.Fatalf("unexpected text drive fields: %#v", submitBody)
+	}
+	if _, ok := submitBody["inputAudioUrl"]; ok {
+		t.Fatalf("TEXT submit must not send inputAudioUrl: %#v", submitBody)
+	}
+	videoParams, ok := submitBody["videoParams"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected videoParams, got %#v", submitBody)
+	}
+	if videoParams["width"] != float64(1920) || videoParams["height"] != float64(1080) || videoParams["transparent"] != true {
+		t.Fatalf("unexpected videoParams: %#v", videoParams)
+	}
+	ttsParams, ok := submitBody["ttsParams"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected ttsParams, got %#v", submitBody)
+	}
+	if ttsParams["person"] != "person-1" || ttsParams["lan"] != "Chinese" || ttsParams["speed"] != "6" || ttsParams["volume"] != "7" || ttsParams["pitch"] != "4" {
+		t.Fatalf("unexpected ttsParams: %#v", ttsParams)
+	}
+	if submitBody["backgroundImageUrl"] != "https://public.example.com/background.png" || submitBody["autoAnimoji"] != true {
+		t.Fatalf("unexpected background/animoji fields: %#v", submitBody)
+	}
+	if _, ok := submitBody["dhParams"]; ok {
+		t.Fatalf("basic submit must not send dhParams: %#v", submitBody)
+	}
+
+	task, err := api.queryTask(context.Background(), submission.TaskID, submission.Advanced)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.Status != "SUCCESS" || task.VideoURL != "https://cdn.example.com/basic.mp4" || task.DurationMS != 900 {
+		t.Fatalf("unexpected task response: %#v", task)
+	}
+}
+
+func TestOfflineVideoPublicBaseURLRejectsLocalhost(t *testing.T) {
+	t.Setenv("OFFLINE_VIDEO_PUBLIC_BASE_URL", "")
+	t.Setenv("CYBERVERSE_PUBLIC_BASE_URL", "")
+	t.Setenv("PUBLIC_BASE_URL", "")
+	req := httptest.NewRequest(http.MethodPost, "http://localhost:8080/api/v1/characters/c/offline-videos", nil)
+	_, err := offlineVideoPublicBaseURL(req)
+	if err == nil || !strings.Contains(err.Error(), "localhost") {
+		t.Fatalf("expected localhost error, got %v", err)
+	}
+}
+
+func TestOfflineVideoPublicBaseURLUsesEnv(t *testing.T) {
+	t.Setenv("OFFLINE_VIDEO_PUBLIC_BASE_URL", "https://public.example.com/")
+	base, err := offlineVideoPublicBaseURL(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if base != "https://public.example.com" {
+		t.Fatalf("expected trimmed public URL, got %q", base)
+	}
+}

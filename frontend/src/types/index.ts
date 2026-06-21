@@ -94,6 +94,36 @@ export interface ComponentsResponse {
   tts: ComponentOption[]
 }
 
+export type OfflineVideoStatus = 'queued' | 'running' | 'completed' | 'failed'
+
+export interface OfflineVideoJob {
+  id: string
+  character_id: string
+  title: string
+  provider?: string
+  input_type: 'text' | 'audio'
+  text?: string
+  status: OfflineVideoStatus
+  stage?: string
+  message?: string
+  progress: number
+  error?: string
+  audio_filename?: string
+  video_filename?: string
+  video_url?: string
+  remote_video_url?: string
+  baidu_task_id?: string
+  duration_ms?: number
+  width?: number
+  height?: number
+  fps?: number
+  frame_count?: number
+  audio_sample_rate?: number
+  created_at: string
+  updated_at: string
+  finished_at?: string
+}
+
 // Settings
 export interface DoubaoSettings {
   access_token: string

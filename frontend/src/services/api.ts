@@ -1,4 +1,4 @@
-import type { AvatarModelInfo, BaiduXilingCharacterConfig, Character, CharacterForm, ComponentsResponse, ImageInfo, KnowledgeSource, KnowledgeUploadSkippedFile, Settings, LaunchConfig, LaunchConfigUpdate, PipelineMode } from '../types'
+import type { AvatarModelInfo, BaiduXilingCharacterConfig, Character, CharacterForm, ComponentsResponse, ImageInfo, KnowledgeSource, KnowledgeUploadSkippedFile, OfflineVideoJob, Settings, LaunchConfig, LaunchConfigUpdate, PipelineMode } from '../types'
 
 const API_BASE = import.meta.env.VITE_API_BASE || '/api/v1'
 
@@ -150,6 +150,76 @@ export async function getTaskEvents(taskId: string, afterSeq = 0): Promise<{ eve
 
 export function getTaskArtifactUrl(taskId: string, artifactId: string): string {
   return `${API_BASE}/tasks/${encodeURIComponent(taskId)}/artifacts/${encodeURIComponent(artifactId)}`
+}
+
+// ── Offline Videos ──
+
+export interface CreateOfflineVideoInput {
+  inputType: 'text' | 'audio'
+  text?: string
+  audio?: File | null
+  width?: number
+  height?: number
+  transparent?: boolean
+  ttsPerson?: string
+  ttsLan?: string
+  ttsSpeed?: number
+  ttsVolume?: number
+  ttsPitch?: number
+  backgroundImageUrl?: string
+  autoAnimoji?: boolean
+}
+
+export async function listOfflineVideos(characterId: string): Promise<{ videos: OfflineVideoJob[] }> {
+  return request(`/characters/${encodeURIComponent(characterId)}/offline-videos`)
+}
+
+export async function createOfflineVideo(characterId: string, input: CreateOfflineVideoInput): Promise<OfflineVideoJob> {
+  const form = new FormData()
+  form.append('input_type', input.inputType)
+  if (input.text) form.append('text', input.text)
+  if (input.audio) form.append('audio', input.audio)
+  if (input.width) form.append('width', String(input.width))
+  if (input.height) form.append('height', String(input.height))
+  if (typeof input.transparent === 'boolean') form.append('transparent', String(input.transparent))
+  if (input.ttsPerson) form.append('tts_person', input.ttsPerson)
+  if (input.ttsLan) form.append('tts_lan', input.ttsLan)
+  if (typeof input.ttsSpeed === 'number') form.append('tts_speed', String(input.ttsSpeed))
+  if (typeof input.ttsVolume === 'number') form.append('tts_volume', String(input.ttsVolume))
+  if (typeof input.ttsPitch === 'number') form.append('tts_pitch', String(input.ttsPitch))
+  if (input.backgroundImageUrl) form.append('background_image_url', input.backgroundImageUrl)
+  if (typeof input.autoAnimoji === 'boolean') form.append('auto_animoji', String(input.autoAnimoji))
+  const res = await fetch(`${API_BASE}/characters/${encodeURIComponent(characterId)}/offline-videos`, {
+    method: 'POST',
+    body: form,
+    credentials: 'same-origin',
+  })
+  if (!res.ok) {
+    let message = `API error ${res.status}: offline video`
+    try {
+      const data = await res.json() as { error?: string }
+      if (data?.error) message = data.error
+    } catch {
+      // keep default message
+    }
+    throw new Error(message)
+  }
+  return res.json()
+}
+
+export async function renameOfflineVideo(characterId: string, jobId: string, title: string): Promise<OfflineVideoJob> {
+  return request(`/characters/${encodeURIComponent(characterId)}/offline-videos/${encodeURIComponent(jobId)}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ title }),
+  })
+}
+
+export async function deleteOfflineVideo(characterId: string, jobId: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/characters/${encodeURIComponent(characterId)}/offline-videos/${encodeURIComponent(jobId)}`, {
+    method: 'DELETE',
+    credentials: 'same-origin',
+  })
+  if (!res.ok && res.status !== 404) throw new Error(`Failed to delete offline video: ${res.status}`)
 }
 
 // ── Conversation History ──
