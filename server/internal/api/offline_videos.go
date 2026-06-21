@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"mime"
-	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -85,8 +84,6 @@ type baiduXilingOfflineVideoRunInput struct {
 	InputType       string
 	Text            string
 	Title           string
-	AudioFilename   string
-	AudioPublicURL  string
 	OutputPath      string
 	Width           int
 	Height          int
@@ -256,24 +253,13 @@ func (r *Router) handleCreateBaiduXilingOfflineVideo(w http.ResponseWriter, req 
 		return
 	}
 
-	audioFilename := ""
-	audioPublicURL := ""
+	inputAudioURL := ""
 	if inputType == "audio" {
-		publicBase, err := offlineVideoPublicBaseURL(req)
-		if err != nil {
-			writeJSON(w, http.StatusServiceUnavailable, ErrorResponse{Error: err.Error()})
-			return
-		}
-		audioFilename, err = saveBaiduXilingOfflineAudio(req, jobDir)
+		inputAudioURL, err = baiduXilingInputAudioURLFromRequest(req)
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, ErrorResponse{Error: err.Error()})
 			return
 		}
-		audioPublicURL = publicBase + fmt.Sprintf(
-			"/api/v1/characters/%s/offline-videos/%s/audio",
-			url.PathEscape(ch.ID),
-			url.PathEscape(jobID),
-		)
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339)
@@ -283,21 +269,20 @@ func (r *Router) handleCreateBaiduXilingOfflineVideo(w http.ResponseWriter, req 
 	}
 	videoOptions := baiduXilingOfflineVideoOptionsFromRequest(req, ch)
 	job := &offlineVideoJob{
-		ID:            jobID,
-		CharacterID:   ch.ID,
-		Title:         title,
-		Provider:      character.AvatarBackendBaiduXiling,
-		InputType:     inputType,
-		Text:          text,
-		Status:        "queued",
-		Stage:         "queued",
-		Message:       "Queued for Baidu Xiling cloud synthesis",
-		Progress:      0,
-		AudioFilename: audioFilename,
-		Width:         videoOptions.Width,
-		Height:        videoOptions.Height,
-		CreatedAt:     now,
-		UpdatedAt:     now,
+		ID:          jobID,
+		CharacterID: ch.ID,
+		Title:       title,
+		Provider:    character.AvatarBackendBaiduXiling,
+		InputType:   inputType,
+		Text:        text,
+		Status:      "queued",
+		Stage:       "queued",
+		Message:     "Queued for Baidu Xiling cloud synthesis",
+		Progress:    0,
+		Width:       videoOptions.Width,
+		Height:      videoOptions.Height,
+		CreatedAt:   now,
+		UpdatedAt:   now,
 	}
 	if err := writeOfflineVideoJob(jobDir, job); err != nil {
 		writeJSON(w, http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
@@ -305,23 +290,21 @@ func (r *Router) handleCreateBaiduXilingOfflineVideo(w http.ResponseWriter, req 
 	}
 
 	runInput := baiduXilingOfflineVideoRunInput{
-		JobID:          jobID,
-		CharacterID:    ch.ID,
-		FigureID:       strings.TrimSpace(ch.BaiduXiling.FigureID),
-		TemplateID:     templateID,
-		InputType:      inputType,
-		Text:           text,
-		Title:          title,
-		AudioFilename:  audioFilename,
-		AudioPublicURL: audioPublicURL,
-		OutputPath:     filepath.Join(jobDir, baiduXilingOfflineOutputFilename(videoOptions.Transparent)),
-		Width:          videoOptions.Width,
-		Height:         videoOptions.Height,
+		JobID:       jobID,
+		CharacterID: ch.ID,
+		FigureID:    strings.TrimSpace(ch.BaiduXiling.FigureID),
+		TemplateID:  templateID,
+		InputType:   inputType,
+		Text:        text,
+		Title:       title,
+		OutputPath:  filepath.Join(jobDir, baiduXilingOfflineOutputFilename(videoOptions.Transparent)),
+		Width:       videoOptions.Width,
+		Height:      videoOptions.Height,
 		BaiduVideoInput: baiduXilingAdvancedVideoSubmitInput{
 			FigureID:           strings.TrimSpace(ch.BaiduXiling.FigureID),
 			TemplateID:         templateID,
 			DriveType:          driveType,
-			InputAudioURL:      audioPublicURL,
+			InputAudioURL:      inputAudioURL,
 			Text:               text,
 			Title:              title,
 			Width:              videoOptions.Width,
@@ -396,25 +379,6 @@ func (r *Router) handleGetOfflineVideoFile(w http.ResponseWriter, req *http.Requ
 		w.Header().Set("Content-Type", "application/octet-stream")
 	}
 	http.ServeFile(w, req, videoPath)
-}
-
-func (r *Router) handleGetOfflineVideoAudio(w http.ResponseWriter, req *http.Request) {
-	job, jobDir, err := r.readOfflineVideoJob(req.PathValue("id"), req.PathValue("job_id"))
-	if err != nil || job.AudioFilename == "" {
-		http.NotFound(w, req)
-		return
-	}
-	audioPath := filepath.Join(jobDir, filepath.Base(job.AudioFilename))
-	if _, err := os.Stat(audioPath); err != nil {
-		http.NotFound(w, req)
-		return
-	}
-	if contentType := mime.TypeByExtension(filepath.Ext(audioPath)); contentType != "" {
-		w.Header().Set("Content-Type", contentType)
-	} else {
-		w.Header().Set("Content-Type", "application/octet-stream")
-	}
-	http.ServeFile(w, req, audioPath)
 }
 
 func (r *Router) handleDeleteOfflineVideo(w http.ResponseWriter, req *http.Request) {
@@ -706,47 +670,25 @@ func offlineVideoTTSNumber(raw, envRaw string) string {
 	return strconv.Itoa(n)
 }
 
-func offlineVideoPublicBaseURL(req *http.Request) (string, error) {
-	for _, key := range []string{"OFFLINE_VIDEO_PUBLIC_BASE_URL", "CYBERVERSE_PUBLIC_BASE_URL", "PUBLIC_BASE_URL"} {
-		if value := strings.TrimRight(strings.TrimSpace(os.Getenv(key)), "/"); value != "" {
-			if _, err := url.ParseRequestURI(value); err != nil {
-				return "", fmt.Errorf("%s is not a valid URL", key)
-			}
-			return value, nil
-		}
-	}
+func baiduXilingInputAudioURLFromRequest(req *http.Request) (string, error) {
 	if req == nil {
-		return "", errors.New("OFFLINE_VIDEO_PUBLIC_BASE_URL is required for Baidu Xiling offline video audio input")
+		return "", errors.New("Baidu Xiling inputAudioUrl is required for VOICE driveType")
 	}
-	host := req.Header.Get("X-Forwarded-Host")
-	if host == "" {
-		host = req.Host
+	inputAudioURL := strings.TrimSpace(req.FormValue("input_audio_url"))
+	if inputAudioURL == "" {
+		inputAudioURL = strings.TrimSpace(req.FormValue("inputAudioUrl"))
 	}
-	if isLocalHost(host) {
-		return "", errors.New("OFFLINE_VIDEO_PUBLIC_BASE_URL is required because Baidu Xiling cannot fetch localhost audio")
+	if inputAudioURL == "" {
+		return "", errors.New("Baidu Xiling inputAudioUrl is required for VOICE driveType")
 	}
-	scheme := req.Header.Get("X-Forwarded-Proto")
-	if scheme == "" {
-		if req.TLS != nil {
-			scheme = "https"
-		} else {
-			scheme = "http"
-		}
+	parsed, err := url.Parse(inputAudioURL)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" || strings.ContainsAny(inputAudioURL, " \t\r\n") {
+		return "", errors.New("Baidu Xiling inputAudioUrl must be a valid absolute URL")
 	}
-	return strings.TrimRight(scheme+"://"+host, "/"), nil
-}
-
-func isLocalHost(host string) bool {
-	host = strings.TrimSpace(host)
-	if host == "" {
-		return true
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return "", errors.New("Baidu Xiling inputAudioUrl must use http or https")
 	}
-	if h, _, err := net.SplitHostPort(host); err == nil {
-		host = h
-	}
-	host = strings.Trim(host, "[]")
-	host = strings.ToLower(host)
-	return host == "localhost" || host == "0.0.0.0" || host == "::1" || strings.HasPrefix(host, "127.")
+	return inputAudioURL, nil
 }
 
 func (r *Router) readOfflineVideoJob(characterID, jobID string) (*offlineVideoJob, string, error) {
@@ -850,36 +792,6 @@ func writeOfflineVideoJob(jobDir string, job *offlineVideoJob) error {
 
 func defaultOfflineVideoTitle() string {
 	return time.Now().Format("2006-01-02 15:04:05")
-}
-
-func saveBaiduXilingOfflineAudio(req *http.Request, jobDir string) (string, error) {
-	file, header, err := req.FormFile("audio")
-	if err != nil {
-		return "", errors.New("audio file is required")
-	}
-	defer file.Close()
-
-	ext := strings.ToLower(filepath.Ext(header.Filename))
-	switch ext {
-	case ".wav", ".mp3", ".wma", ".m4a":
-	default:
-		return "", errors.New("Baidu Xiling audio input must be wav, mp3, wma, or m4a")
-	}
-	filename := "input" + ext
-	path := filepath.Join(jobDir, filename)
-	out, err := os.Create(path)
-	if err != nil {
-		return "", err
-	}
-	defer out.Close()
-	written, err := io.Copy(out, file)
-	if err != nil {
-		return "", err
-	}
-	if written == 0 {
-		return "", errors.New("audio file is empty")
-	}
-	return filename, nil
 }
 
 func downloadOfflineVideo(ctx context.Context, remoteURL, outputPath string) error {

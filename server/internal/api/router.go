@@ -90,7 +90,6 @@ func (r *Router) registerRoutes() {
 	r.mux.HandleFunc("POST /api/v1/characters/{id}/offline-videos", r.handleCreateOfflineVideo)
 	r.mux.HandleFunc("GET /api/v1/characters/{id}/offline-videos/{job_id}", r.handleGetOfflineVideo)
 	r.mux.HandleFunc("PATCH /api/v1/characters/{id}/offline-videos/{job_id}", r.handleUpdateOfflineVideo)
-	r.mux.HandleFunc("GET /api/v1/characters/{id}/offline-videos/{job_id}/audio", r.handleGetOfflineVideoAudio)
 	r.mux.HandleFunc("GET /api/v1/characters/{id}/offline-videos/{job_id}/video", r.handleGetOfflineVideoFile)
 	r.mux.HandleFunc("DELETE /api/v1/characters/{id}/offline-videos/{job_id}", r.handleDeleteOfflineVideo)
 	r.mux.HandleFunc("GET /api/v1/characters/{id}/knowledge", r.handleListKnowledgeSources)

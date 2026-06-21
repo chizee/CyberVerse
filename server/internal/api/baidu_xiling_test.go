@@ -356,24 +356,23 @@ func TestBaiduXilingBasicVideoSubmitAndQuery(t *testing.T) {
 	}
 }
 
-func TestOfflineVideoPublicBaseURLRejectsLocalhost(t *testing.T) {
-	t.Setenv("OFFLINE_VIDEO_PUBLIC_BASE_URL", "")
-	t.Setenv("CYBERVERSE_PUBLIC_BASE_URL", "")
-	t.Setenv("PUBLIC_BASE_URL", "")
-	req := httptest.NewRequest(http.MethodPost, "http://localhost:8080/api/v1/characters/c/offline-videos", nil)
-	_, err := offlineVideoPublicBaseURL(req)
-	if err == nil || !strings.Contains(err.Error(), "localhost") {
-		t.Fatalf("expected localhost error, got %v", err)
-	}
-}
-
-func TestOfflineVideoPublicBaseURLUsesEnv(t *testing.T) {
-	t.Setenv("OFFLINE_VIDEO_PUBLIC_BASE_URL", "https://public.example.com/")
-	base, err := offlineVideoPublicBaseURL(nil)
+func TestBaiduXilingInputAudioURLFromRequest(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/characters/c/offline-videos", strings.NewReader("input_audio_url=https%3A%2F%2Fpublic.example.com%2Finput.wav"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	inputAudioURL, err := baiduXilingInputAudioURLFromRequest(req)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if base != "https://public.example.com" {
-		t.Fatalf("expected trimmed public URL, got %q", base)
+	if inputAudioURL != "https://public.example.com/input.wav" {
+		t.Fatalf("unexpected inputAudioUrl: %q", inputAudioURL)
+	}
+}
+
+func TestBaiduXilingInputAudioURLFromRequestRejectsInvalidURL(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/characters/c/offline-videos", strings.NewReader("input_audio_url=ftp%3A%2F%2Fpublic.example.com%2Finput.wav"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	_, err := baiduXilingInputAudioURLFromRequest(req)
+	if err == nil || !strings.Contains(err.Error(), "http or https") {
+		t.Fatalf("expected http(s) URL error, got %v", err)
 	}
 }

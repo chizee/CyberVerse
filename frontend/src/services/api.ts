@@ -158,6 +158,7 @@ export interface CreateOfflineVideoInput {
   inputType: 'text' | 'audio'
   text?: string
   audio?: File | null
+  inputAudioUrl?: string
   width?: number
   height?: number
   transparent?: boolean
@@ -179,6 +180,7 @@ export async function createOfflineVideo(characterId: string, input: CreateOffli
   form.append('input_type', input.inputType)
   if (input.text) form.append('text', input.text)
   if (input.audio) form.append('audio', input.audio)
+  if (input.inputAudioUrl) form.append('input_audio_url', input.inputAudioUrl)
   if (input.width) form.append('width', String(input.width))
   if (input.height) form.append('height', String(input.height))
   if (typeof input.transparent === 'boolean') form.append('transparent', String(input.transparent))

@@ -21,6 +21,7 @@ const showLoading = computed(() => loading.value && !hasCurrentCharacter.value)
 const inputType = ref<'text' | 'audio'>('text')
 const scriptText = ref('')
 const audioFile = ref<File | null>(null)
+const inputAudioUrl = ref('')
 const outputWidth = ref(1080)
 const outputHeight = ref(1920)
 const transparentBackground = ref(false)
@@ -59,6 +60,7 @@ interface OfflineVideoSettings {
   ttsSpeed?: number
   ttsVolume?: number
   ttsPitch?: number
+  inputAudioUrl?: string
   backgroundImageUrl?: string
   autoAnimoji?: boolean
 }
@@ -113,9 +115,7 @@ const characterCoverImage = computed(() => {
 const audioHint = computed(() =>
   isBaiduXilingCharacter.value ? t('offlineVideo.baiduAudioHint') : t('offlineVideo.audioHint'),
 )
-const audioAccept = computed(() =>
-  isBaiduXilingCharacter.value ? '.wav,.mp3,.m4a,.wma,audio/*' : '.wav,.pcm,.s16le,audio/*',
-)
+const audioAccept = '.wav,.pcm,.s16le,audio/*'
 const isTTSPersonRequired = computed(() => isBaiduXilingCharacter.value && inputType.value === 'text')
 const isMissingTTSPerson = computed(() => isTTSPersonRequired.value && !ttsPerson.value.trim())
 const canGenerate = computed(() => {
@@ -124,6 +124,9 @@ const canGenerate = computed(() => {
   if (inputType.value === 'text') {
     if (isMissingTTSPerson.value) return false
     return scriptText.value.trim().length > 0
+  }
+  if (isBaiduXilingCharacter.value) {
+    return inputAudioUrl.value.trim().length > 0
   }
   return !!audioFile.value
 })
@@ -155,6 +158,7 @@ function saveOfflineVideoSettings() {
     ttsSpeed: ttsSpeed.value,
     ttsVolume: ttsVolume.value,
     ttsPitch: ttsPitch.value,
+    inputAudioUrl: inputAudioUrl.value,
     backgroundImageUrl: backgroundImageUrl.value,
     autoAnimoji: autoAnimoji.value,
   }
@@ -250,6 +254,7 @@ function loadOutputSettings() {
   ttsSpeed.value = numberSetting(settings.ttsSpeed, 5)
   ttsVolume.value = numberSetting(settings.ttsVolume, 5)
   ttsPitch.value = numberSetting(settings.ttsPitch, 5)
+  inputAudioUrl.value = stringSetting(settings.inputAudioUrl, '')
   backgroundImageUrl.value = stringSetting(settings.backgroundImageUrl, '')
   autoAnimoji.value = boolSetting(settings.autoAnimoji, false)
 }
@@ -266,6 +271,7 @@ watch(
     ttsSpeed,
     ttsVolume,
     ttsPitch,
+    inputAudioUrl,
     backgroundImageUrl,
     autoAnimoji,
   ],
@@ -286,7 +292,8 @@ async function submitJob() {
     const createdJob = await createOfflineVideo(characterId.value, {
       inputType: inputType.value,
       text: scriptText.value.trim(),
-      audio: audioFile.value,
+      audio: isBaiduXilingCharacter.value ? null : audioFile.value,
+      inputAudioUrl: isBaiduXilingCharacter.value ? inputAudioUrl.value.trim() : '',
       width: outputWidth.value,
       height: outputHeight.value,
       transparent: transparentBackground.value,
@@ -452,6 +459,18 @@ onUnmounted(() => {
                 />
               </template>
 
+              <template v-else-if="isBaiduXilingCharacter">
+                <label class="field-label" for="offline-audio-url">{{ t('offlineVideo.inputAudioUrl') }}</label>
+                <input
+                  id="offline-audio-url"
+                  v-model="inputAudioUrl"
+                  class="number-input"
+                  type="url"
+                  :placeholder="t('offlineVideo.inputAudioUrlPlaceholder')"
+                >
+                <p class="field-hint">{{ audioHint }}</p>
+              </template>
+
               <template v-else>
                 <label class="field-label" for="offline-audio">{{ t('offlineVideo.audioFile') }}</label>
                 <input
@@ -556,11 +575,6 @@ onUnmounted(() => {
                         <span>{{ t('offlineVideo.autoAnimoji') }}</span>
                       </label>
                     </div>
-                  </div>
-
-                  <div v-else class="settings-section">
-                    <h4 class="settings-section-title">{{ t('offlineVideo.voiceDrive') }}</h4>
-                    <p class="field-hint">{{ t('offlineVideo.voiceDriveHint') }}</p>
                   </div>
                 </template>
               </section>
