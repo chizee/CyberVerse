@@ -80,10 +80,18 @@ function cloneSections(sections: ConfigSection[]): ConfigSection[] {
   return JSON.parse(JSON.stringify(sections))
 }
 
+function comparableSections(sections: ConfigSection[]): ConfigSection[] {
+  return sections.map((section) => {
+    const comparable = { ...section }
+    delete comparable.collapsed
+    return comparable
+  })
+}
+
 // Check if there are unsaved changes
 const hasChanges = computed(() => {
   if (originalSections.value.length === 0) return false
-  return JSON.stringify(configSections.value) !== JSON.stringify(originalSections.value)
+  return JSON.stringify(comparableSections(configSections.value)) !== JSON.stringify(comparableSections(originalSections.value))
 })
 
 function sectionHasRestartPending(section: ConfigSection): boolean {
@@ -259,29 +267,36 @@ async function launch() {
             </div>
 
             <div v-for="section in configSections" :key="section.title" class="config-card">
-              <div class="config-header">
-                <button class="collapse-btn" type="button" @click="section.collapsed = !section.collapsed">
-                  {{ section.collapsed ? '▶' : '▼' }}
-                </button>
-                <span class="config-title">{{ launchSectionTitle(section) }}</span>
-                <div
-                  v-if="sectionHasRestartPending(section)"
-                  class="group relative ml-auto flex items-center gap-1"
-                >
-                  <span class="restart-badge">{{ t('launch.restartRequired') }}</span>
-                  <button
-                    type="button"
-                    class="restart-help"
-                    tabindex="0"
-                    :aria-label="restartBadgeHint"
+              <button
+                class="config-header"
+                type="button"
+                :aria-expanded="!section.collapsed"
+                @click="section.collapsed = !section.collapsed"
+              >
+                <span class="config-header-main">
+                  <span class="config-title">{{ launchSectionTitle(section) }}</span>
+                  <span
+                    v-if="sectionHasRestartPending(section)"
+                    class="restart-indicator"
                   >
-                    ?
-                  </button>
-                  <div role="tooltip" class="restart-tooltip">
-                    {{ restartBadgeHint }}
-                  </div>
-                </div>
-              </div>
+                    <span class="restart-badge">{{ t('launch.restartRequired') }}</span>
+                    <span
+                      class="restart-help"
+                      aria-hidden="true"
+                    >
+                      ?
+                    </span>
+                    <span role="tooltip" class="restart-tooltip">
+                      {{ restartBadgeHint }}
+                    </span>
+                  </span>
+                </span>
+                <span
+                  class="config-chevron"
+                  :class="{ expanded: !section.collapsed }"
+                  aria-hidden="true"
+                />
+              </button>
 
               <div v-if="!section.collapsed">
                 <div v-for="param in section.params" :key="param.name" class="config-row">
@@ -420,7 +435,6 @@ async function launch() {
   background: #0b0d12;
 }
 
-.config-header,
 .config-row {
   display: flex;
   align-items: center;
@@ -429,9 +443,27 @@ async function launch() {
 }
 
 .config-header {
+  display: flex;
+  min-width: 0;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.06);
   background: #0b0e14;
   padding: 16px 20px;
+  text-align: left;
+  cursor: pointer;
+  transition: background 160ms ease;
+}
+
+.config-header:hover {
+  background: #0f131a;
+}
+
+.config-header:focus-visible {
+  outline: 2px solid rgba(52, 230, 243, 0.45);
+  outline-offset: -2px;
 }
 
 .config-row {
@@ -444,15 +476,49 @@ async function launch() {
   border-bottom: 0;
 }
 
-.collapse-btn {
-  color: #505a6e;
-  font-size: 10px;
+.config-header-main {
+  position: relative;
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
 }
 
 .config-title {
   color: #c8d0dc;
   font-size: 14px;
   font-weight: 800;
+}
+
+.config-chevron {
+  display: inline-flex;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  align-items: center;
+  justify-content: center;
+  transform: rotate(180deg);
+  transition: transform 160ms ease;
+}
+
+.config-chevron::before {
+  width: 8px;
+  height: 8px;
+  border-bottom: 2px solid #34e6f3;
+  border-right: 2px solid #34e6f3;
+  content: "";
+  transform: rotate(-45deg);
+}
+
+.config-chevron.expanded {
+  transform: rotate(90deg);
+}
+
+.restart-indicator {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .restart-badge {
@@ -481,7 +547,7 @@ async function launch() {
   pointer-events: none;
   visibility: hidden;
   position: absolute;
-  right: 0;
+  left: 0;
   top: calc(100% + 6px);
   z-index: 30;
   width: min(288px, calc(100vw - 3rem));
@@ -496,8 +562,8 @@ async function launch() {
   transition: opacity 150ms ease;
 }
 
-.group:hover .restart-tooltip,
-.group:focus-within .restart-tooltip {
+.restart-indicator:hover .restart-tooltip,
+.config-header:focus-visible .restart-tooltip {
   visibility: visible;
   opacity: 1;
 }

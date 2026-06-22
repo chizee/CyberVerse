@@ -23,6 +23,7 @@ const showLoading = computed(() => loading.value && !hasCurrentCharacter.value)
 const inputType = ref<'text' | 'audio'>('text')
 const scriptText = ref('')
 const audioFile = ref<File | null>(null)
+const audioFileError = ref('')
 const inputAudioUrl = ref('')
 const outputWidth = ref(1080)
 const outputHeight = ref(1920)
@@ -68,7 +69,6 @@ interface OfflineVideoSettings {
   outputWidth?: number
   outputHeight?: number
   transparentBackground?: boolean
-  outputSettingsExpanded?: boolean
   ttsPerson?: string
   ttsLan?: string
   ttsSpeed?: number
@@ -114,6 +114,7 @@ const providerSelectOptions = (items: ComponentOption[]) =>
 
 const isBaiduXilingCharacter = computed(() => store.current?.avatar_backend === 'baidu_xiling')
 const showLocalTextTTSSettings = computed(() => !isBaiduXilingCharacter.value && inputType.value === 'text')
+const showOutputSettings = computed(() => isBaiduXilingCharacter.value || showLocalTextTTSSettings.value)
 const hasActiveJobs = computed(() => jobs.value.some(job => job.status === 'queued' || job.status === 'running'))
 const totalJobPages = computed(() => Math.max(1, Math.ceil(jobs.value.length / JOBS_PER_PAGE)))
 const pagedJobs = computed(() => {
@@ -136,6 +137,13 @@ const characterCoverImage = computed(() => {
 const audioHint = computed(() =>
   isBaiduXilingCharacter.value ? t('offlineVideo.baiduAudioHint') : t('offlineVideo.audioHint'),
 )
+const selectedAudioFileName = computed(() => audioFile.value?.name || t('offlineVideo.audioFileEmpty'))
+const selectedAudioFileMeta = computed(() => {
+  const file = audioFile.value
+  if (!file) return t('offlineVideo.audioFileEmptyHint')
+  const fileType = file.type || t('offlineVideo.audioFileRawFormat')
+  return `${formatFileSize(file.size)} · ${fileType}`
+})
 const ttsProviderOptions = computed(() => providerSelectOptions(componentCatalog.value.tts))
 const selectedOfflineTTSComponent = computed(() =>
   componentCatalog.value.tts.find(item => item.id === offlineTTSProvider.value),
@@ -147,7 +155,8 @@ const offlineTTSVoiceOptions = computed(() => {
   }
   return localizedVoiceOptions(QWEN_TTS_VOICE_OPTIONS, locale.value)
 })
-const audioAccept = '.wav,.pcm,.s16le,audio/*'
+const supportedAudioExtensions = new Set(['wav', 'pcm', 's16le'])
+const audioAccept = '.wav,.pcm,.s16le,audio/wav,audio/wave,audio/x-wav'
 const isTTSPersonRequired = computed(() => isBaiduXilingCharacter.value && inputType.value === 'text')
 const isMissingTTSPerson = computed(() => isTTSPersonRequired.value && !ttsPerson.value.trim())
 const canGenerate = computed(() => {
@@ -184,7 +193,6 @@ function saveOfflineVideoSettings() {
     outputWidth: outputWidth.value,
     outputHeight: outputHeight.value,
     transparentBackground: transparentBackground.value,
-    outputSettingsExpanded: outputSettingsExpanded.value,
     ttsPerson: ttsPerson.value,
     ttsLan: ttsLan.value,
     ttsSpeed: ttsSpeed.value,
@@ -329,9 +337,37 @@ function closeFailedReason() {
   failedReasonJob.value = null
 }
 
+function formatFileSize(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 KB'
+  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+function isSupportedOfflineAudioFile(file: File | null): boolean {
+  if (!file) return false
+  const normalizedName = file.name.trim().toLowerCase()
+  const dotIndex = normalizedName.lastIndexOf('.')
+  const extension = dotIndex >= 0 ? normalizedName.slice(dotIndex + 1) : ''
+  return supportedAudioExtensions.has(extension)
+}
+
 function handleAudioChange(event: Event) {
   const input = event.target as HTMLInputElement
-  audioFile.value = input.files?.[0] || null
+  const file = input.files?.[0] || null
+  errorMessage.value = ''
+  if (!file) {
+    audioFile.value = null
+    audioFileError.value = ''
+    return
+  }
+  if (!isSupportedOfflineAudioFile(file)) {
+    audioFile.value = null
+    audioFileError.value = t('offlineVideo.audioFileUnsupported')
+    input.value = ''
+    return
+  }
+  audioFile.value = file
+  audioFileError.value = ''
 }
 
 function loadOutputSettings() {
@@ -343,7 +379,7 @@ function loadOutputSettings() {
   outputWidth.value = numberSetting(settings.outputWidth, outputWidth.value)
   outputHeight.value = numberSetting(settings.outputHeight, outputHeight.value)
   transparentBackground.value = boolSetting(settings.transparentBackground, false)
-  outputSettingsExpanded.value = boolSetting(settings.outputSettingsExpanded, isTTSPersonRequired.value)
+  outputSettingsExpanded.value = false
   ttsPerson.value = stringSetting(settings.ttsPerson, '')
   ttsLan.value = stringSetting(settings.ttsLan, 'auto')
   ttsSpeed.value = numberSetting(settings.ttsSpeed, 5)
@@ -360,7 +396,6 @@ watch(
     outputWidth,
     outputHeight,
     transparentBackground,
-    outputSettingsExpanded,
     ttsPerson,
     ttsLan,
     ttsSpeed,
@@ -397,6 +432,11 @@ watch(jobs, () => {
 
 async function submitJob() {
   if (!canGenerate.value) return
+  if (inputType.value === 'audio' && !isBaiduXilingCharacter.value && !isSupportedOfflineAudioFile(audioFile.value)) {
+    audioFile.value = null
+    audioFileError.value = t('offlineVideo.audioFileUnsupported')
+    return
+  }
   submitting.value = true
   errorMessage.value = ''
   try {
@@ -577,35 +617,6 @@ onUnmounted(() => {
                   class="script-input"
                   :placeholder="t('offlineVideo.scriptPlaceholder')"
                 />
-                <section v-if="showLocalTextTTSSettings" class="local-tts-settings">
-                  <div class="local-tts-grid">
-                    <span class="local-tts-label">TTS</span>
-                    <label class="settings-field">
-                      <span>{{ t('common.provider') }}</span>
-                      <CvSelect
-                        v-model="offlineTTSProvider"
-                        :options="ttsProviderOptions"
-                      />
-                    </label>
-                    <label class="settings-field">
-                      <span>{{ t('common.model') }}</span>
-                      <input
-                        class="number-input readonly-input"
-                        type="text"
-                        :value="offlineTTSModel"
-                        readonly
-                      >
-                    </label>
-                    <label class="settings-field">
-                      <span>{{ t('common.voice') }}</span>
-                      <CvSelect
-                        v-model="offlineTTSVoice"
-                        :options="offlineTTSVoiceOptions"
-                      />
-                    </label>
-                  </div>
-                  <p v-if="offlineTTSSaveError" class="field-error">{{ offlineTTSSaveError }}</p>
-                </section>
               </template>
 
               <template v-else-if="isBaiduXilingCharacter">
@@ -622,17 +633,35 @@ onUnmounted(() => {
 
               <template v-else>
                 <label class="field-label" for="offline-audio">{{ t('offlineVideo.audioFile') }}</label>
-                <input
-                  id="offline-audio"
-                  class="file-input"
-                  type="file"
-                  :accept="audioAccept"
-                  @change="handleAudioChange"
-                >
+                <div class="audio-upload">
+                  <input
+                    id="offline-audio"
+                    class="audio-upload-input"
+                    type="file"
+                    :accept="audioAccept"
+                    @change="handleAudioChange"
+                  >
+                  <label class="audio-upload-control" for="offline-audio">
+                    <span class="audio-upload-icon" aria-hidden="true">
+                      <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+                        <path d="M9 12V3.75M9 3.75L5.75 7M9 3.75L12.25 7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+                        <path d="M3.75 11.25V13.5C3.75 14.3284 4.42157 15 5.25 15H12.75C13.5784 15 14.25 14.3284 14.25 13.5V11.25" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+                      </svg>
+                    </span>
+                    <span class="audio-upload-copy">
+                      <strong>{{ selectedAudioFileName }}</strong>
+                      <small>{{ selectedAudioFileMeta }}</small>
+                    </span>
+                    <span class="audio-upload-action">
+                      {{ audioFile ? t('offlineVideo.changeAudioFile') : t('offlineVideo.chooseAudioFile') }}
+                    </span>
+                  </label>
+                </div>
+                <p v-if="audioFileError" class="field-error">{{ audioFileError }}</p>
                 <p class="field-hint">{{ audioHint }}</p>
               </template>
 
-              <section v-if="isBaiduXilingCharacter" class="output-settings">
+              <section v-if="showOutputSettings" class="output-settings">
                 <div class="settings-header">
                   <button
                     class="settings-toggle"
@@ -644,7 +673,7 @@ onUnmounted(() => {
                   </button>
                 </div>
                 <template v-if="outputSettingsExpanded">
-                  <div class="settings-grid">
+                  <div v-if="isBaiduXilingCharacter" class="settings-grid">
                     <label class="settings-field">
                       <span>{{ t('offlineVideo.outputWidth') }}</span>
                       <input v-model.number="outputWidth" class="number-input" type="number" min="1" max="3840" step="1">
@@ -668,7 +697,7 @@ onUnmounted(() => {
                     </label>
                   </div>
 
-                  <div v-if="inputType === 'text'" class="settings-section">
+                  <div v-if="isBaiduXilingCharacter && inputType === 'text'" class="settings-section">
                     <h4 class="settings-section-title">{{ t('offlineVideo.ttsSettings') }}</h4>
                     <div class="settings-grid">
                       <div class="settings-field">
@@ -724,6 +753,39 @@ onUnmounted(() => {
                         <span>{{ t('offlineVideo.autoAnimoji') }}</span>
                       </label>
                     </div>
+                  </div>
+
+                  <div v-if="showLocalTextTTSSettings" class="settings-section local-tts-section">
+                    <div class="settings-section-title-row">
+                      <h4 class="settings-section-title">{{ t('offlineVideo.ttsSettings') }}</h4>
+                      <span v-if="savingOfflineTTS" class="local-tts-status">{{ t('common.saving') }}</span>
+                    </div>
+                    <div class="local-tts-grid">
+                      <label class="settings-field">
+                        <span>{{ t('common.provider') }}</span>
+                        <CvSelect
+                          v-model="offlineTTSProvider"
+                          :options="ttsProviderOptions"
+                        />
+                      </label>
+                      <label class="settings-field local-tts-field--model">
+                        <span>{{ t('common.model') }}</span>
+                        <input
+                          class="number-input readonly-input"
+                          type="text"
+                          :value="offlineTTSModel"
+                          readonly
+                        >
+                      </label>
+                      <label class="settings-field">
+                        <span>{{ t('common.voice') }}</span>
+                        <CvSelect
+                          v-model="offlineTTSVoice"
+                          :options="offlineTTSVoiceOptions"
+                        />
+                      </label>
+                    </div>
+                    <p v-if="offlineTTSSaveError" class="field-error">{{ offlineTTSSaveError }}</p>
                   </div>
                 </template>
               </section>
@@ -939,8 +1001,7 @@ onUnmounted(() => {
 }
 
 .text-input,
-.script-input,
-.file-input {
+.script-input {
   width: 100%;
   border: 1px solid #303a49;
   background: #0b0d12;
@@ -949,8 +1010,7 @@ onUnmounted(() => {
   outline: none;
 }
 
-.text-input,
-.file-input {
+.text-input {
   min-height: 44px;
   padding: 0 14px;
 }
@@ -963,8 +1023,7 @@ onUnmounted(() => {
 }
 
 .text-input:focus,
-.script-input:focus,
-.file-input:focus {
+.script-input:focus {
   border-color: #34e6f3;
 }
 
@@ -1035,22 +1094,22 @@ onUnmounted(() => {
   gap: 12px;
 }
 
-.local-tts-settings {
-  margin-top: -2px;
+.local-tts-status {
+  flex: 0 0 auto;
+  color: #8dcdd2;
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .local-tts-grid {
   display: grid;
   align-items: start;
   gap: 12px;
-  grid-template-columns: 70px repeat(3, minmax(0, 1fr));
+  grid-template-columns: minmax(150px, 0.82fr) minmax(240px, 1.45fr) minmax(170px, 1fr);
 }
 
-.local-tts-label {
-  padding-top: 31px;
-  color: #a8b1c0;
-  font-size: 13px;
-  font-weight: 800;
+.local-tts-field--model {
+  min-width: 240px;
 }
 
 .settings-section {
@@ -1058,11 +1117,28 @@ onUnmounted(() => {
   padding-top: 14px;
 }
 
+.local-tts-section {
+  border-top: 0;
+  padding-top: 0;
+}
+
 .settings-section-title {
   margin-bottom: 12px;
   color: #f4f7fb;
   font-size: 13px;
   font-weight: 800;
+}
+
+.settings-section-title-row {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.settings-section-title-row .settings-section-title {
+  margin-bottom: 12px;
 }
 
 .wide-field {
@@ -1171,6 +1247,96 @@ onUnmounted(() => {
 .readonly-input {
   cursor: default;
   color: #d7dde8;
+}
+
+.audio-upload {
+  min-width: 0;
+}
+
+.audio-upload-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.audio-upload-control {
+  display: grid;
+  min-height: 64px;
+  width: 100%;
+  grid-template-columns: 42px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid #303a49;
+  background: #0b0d12;
+  padding: 10px 12px;
+  color: #f4f7fb;
+  transition: border-color 160ms ease, background 160ms ease, box-shadow 160ms ease;
+  cursor: pointer;
+}
+
+.audio-upload-control:hover {
+  border-color: rgba(141, 205, 210, 0.68);
+  background: #0f1218;
+}
+
+.audio-upload-input:focus-visible + .audio-upload-control {
+  border-color: #34e6f3;
+  box-shadow: 0 0 0 2px rgba(52, 230, 243, 0.14);
+}
+
+.audio-upload-icon {
+  display: inline-flex;
+  width: 42px;
+  height: 42px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(52, 230, 243, 0.24);
+  background: rgba(52, 230, 243, 0.06);
+  color: #8dcdd2;
+}
+
+.audio-upload-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.audio-upload-copy strong,
+.audio-upload-copy small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.audio-upload-copy strong {
+  color: #f4f7fb;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.audio-upload-copy small {
+  color: #798394;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.audio-upload-action {
+  display: inline-flex;
+  min-height: 34px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(104, 115, 132, 0.58);
+  padding: 0 12px;
+  color: rgba(221, 225, 231, 0.86);
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
 }
 
 .field-error {
@@ -1518,8 +1684,17 @@ onUnmounted(() => {
     grid-template-columns: 1fr;
   }
 
-  .local-tts-label {
-    padding-top: 0;
+  .local-tts-field--model {
+    min-width: 0;
+  }
+
+  .audio-upload-control {
+    grid-template-columns: 38px minmax(0, 1fr);
+  }
+
+  .audio-upload-action {
+    grid-column: 2;
+    justify-self: start;
   }
 
   .jobs-header {
