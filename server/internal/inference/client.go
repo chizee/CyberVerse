@@ -12,6 +12,8 @@ import (
 	"google.golang.org/grpc/keepalive"
 )
 
+const maxGRPCMessageBytes = 256 * 1024 * 1024
+
 // Client manages the gRPC connection to the Python inference server
 // and provides typed access to all service clients.
 type Client struct {
@@ -37,7 +39,7 @@ func NewClient(addr string) (*Client, error) {
 			PermitWithoutStream: true,
 		}),
 		grpc.WithDefaultCallOptions(
-			grpc.MaxCallRecvMsgSize(50*1024*1024), // 50MB for video frames
+			grpc.MaxCallRecvMsgSize(maxGRPCMessageBytes),
 			grpc.MaxCallSendMsgSize(10*1024*1024),
 		),
 	}

@@ -39,6 +39,7 @@ warnings.filterwarnings(
 
 _PLUGIN_CATEGORIES = ("avatar", "llm", "tts", "asr", "omni", "persona", "voice_llm")
 _INITIALIZE_ALL_CATEGORIES = {"llm", "tts", "asr", "omni", "persona", "voice_llm"}
+_GRPC_MAX_MESSAGE_BYTES = 256 * 1024 * 1024
 
 
 def _config_bool(value: object, default: bool = True) -> bool:
@@ -78,8 +79,8 @@ class InferenceServer:
         self._stopped = False
         self.server = grpc.aio.server(
             options=[
-                ("grpc.max_send_message_length", 50 * 1024 * 1024),
-                ("grpc.max_receive_message_length", 50 * 1024 * 1024),
+                ("grpc.max_send_message_length", _GRPC_MAX_MESSAGE_BYTES),
+                ("grpc.max_receive_message_length", _GRPC_MAX_MESSAGE_BYTES),
                 ("grpc.keepalive_permit_without_calls", 1),
                 ("grpc.http2.min_ping_interval_without_data_ms", 30000),
                 ("grpc.http2.min_recv_ping_interval_without_data_ms", 30000),

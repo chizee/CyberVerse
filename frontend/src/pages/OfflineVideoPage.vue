@@ -1,13 +1,13 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import AppHeader from '../components/AppHeader.vue'
 import CvSelect from '../components/CvSelect.vue'
 import { useCharacterStore } from '../stores/characters'
-import { createOfflineVideo, deleteOfflineVideo, getComponents, listOfflineVideos, renameOfflineVideo, updateOfflineVideoTTS } from '../services/api'
+import { createOfflineVideo, deleteOfflineVideo, getComponents, getLaunchConfig, listOfflineVideos, renameOfflineVideo, updateOfflineVideoTTS } from '../services/api'
 import { OPENAI_VOICE_OPTIONS, QWEN_TTS_VOICE_OPTIONS } from '../types'
-import type { ComponentOption, ComponentsResponse, OfflineVideoJob } from '../types'
+import type { ComponentOption, ComponentsResponse, ConfigParam, OfflineVideoJob } from '../types'
 import { saveLaunchWorkspaceMode } from '../utils/launchModePreference'
 import { DEFAULT_QWEN_TTS_VOICE, formatVoiceTypeDisplay, isOpenAIVoiceType, isQwenTTSVoiceType, localizedVoiceOptions } from '../utils/voice'
 
@@ -21,7 +21,7 @@ const pageTitle = computed(() => t('launch.workspaceTitle'))
 const hasCurrentCharacter = computed(() => store.current?.id === characterId.value)
 const showLoading = computed(() => loading.value && !hasCurrentCharacter.value)
 const inputType = ref<'text' | 'audio'>('text')
-const scriptText = ref('')
+const scriptText = ref(t('offlineVideo.defaultScript'))
 const audioFile = ref<File | null>(null)
 const audioFileError = ref('')
 const inputAudioUrl = ref('')
@@ -29,6 +29,7 @@ const outputWidth = ref(1080)
 const outputHeight = ref(1920)
 const transparentBackground = ref(false)
 const outputSettingsExpanded = ref(false)
+const showLocalVideoOutputHelp = ref(false)
 const ttsPerson = ref('')
 const ttsLan = ref('auto')
 const ttsSpeed = ref(5)
@@ -41,6 +42,7 @@ const savingOfflineTTS = ref(false)
 const backgroundImageUrl = ref('')
 const autoAnimoji = ref(false)
 const jobs = ref<OfflineVideoJob[]>([])
+const localVideoOutputParams = ref<ConfigParam[]>([])
 const loading = ref(true)
 const submitting = ref(false)
 const renaming = ref(false)
@@ -49,6 +51,8 @@ const editingTitle = ref('')
 const highlightedJobId = ref('')
 const currentJobPage = ref(1)
 const failedReasonJob = ref<OfflineVideoJob | null>(null)
+const playingVideoJob = ref<OfflineVideoJob | null>(null)
+const videoPlayerRef = ref<HTMLVideoElement | null>(null)
 const errorMessage = ref('')
 let pollTimer: ReturnType<typeof setInterval> | null = null
 let highlightTimer: ReturnType<typeof setTimeout> | null = null
@@ -114,7 +118,18 @@ const providerSelectOptions = (items: ComponentOption[]) =>
 
 const isBaiduXilingCharacter = computed(() => store.current?.avatar_backend === 'baidu_xiling')
 const showLocalTextTTSSettings = computed(() => !isBaiduXilingCharacter.value && inputType.value === 'text')
-const showOutputSettings = computed(() => isBaiduXilingCharacter.value || showLocalTextTTSSettings.value)
+const localVideoOutputRows = computed(() => {
+  const wanted = new Set(['size', 'fps'])
+  return localVideoOutputParams.value
+    .filter(param => wanted.has(param.name))
+    .map(param => ({
+      label: param.name === 'size' ? t('offlineVideo.outputResolution') : t('offlineVideo.outputFPS'),
+      path: param.path,
+      value: String(param.value === '' ? t('common.emptyDash') : param.value),
+    }))
+})
+const showLocalVideoOutputSettings = computed(() => !isBaiduXilingCharacter.value && localVideoOutputRows.value.length > 0)
+const showOutputSettings = computed(() => isBaiduXilingCharacter.value || showLocalTextTTSSettings.value || showLocalVideoOutputSettings.value)
 const hasActiveJobs = computed(() => jobs.value.some(job => job.status === 'queued' || job.status === 'running'))
 const totalJobPages = computed(() => Math.max(1, Math.ceil(jobs.value.length / JOBS_PER_PAGE)))
 const pagedJobs = computed(() => {
@@ -303,6 +318,13 @@ function formatDate(value?: string): string {
   return date.toLocaleString()
 }
 
+function downloadVideoFilename(job: OfflineVideoJob): string {
+  const fallback = 'offline-video'
+  const rawName = (job.video_filename || job.title || fallback).trim()
+  const safeName = rawName.replace(/[\\/:*?"<>|]+/g, '-').trim() || fallback
+  return /\.[a-z0-9]{2,5}$/i.test(safeName) ? safeName : `${safeName}.mp4`
+}
+
 async function refreshJobs() {
   if (!characterId.value) return
   const resp = await listOfflineVideos(characterId.value)
@@ -335,6 +357,53 @@ function openFailedReason(job: OfflineVideoJob) {
 
 function closeFailedReason() {
   failedReasonJob.value = null
+}
+
+async function openVideoPlayer(job: OfflineVideoJob) {
+  if (!job.video_url) return
+  videoPlayerRef.value?.pause()
+  playingVideoJob.value = job
+  await nextTick()
+  const video = videoPlayerRef.value
+  if (!video) return
+  try {
+    video.currentTime = 0
+  } catch {
+    // Some remote videos may not be seekable before metadata is ready.
+  }
+  try {
+    await video.play()
+  } catch {
+    // Browser autoplay policy can still require the user to press play.
+  }
+}
+
+function closeVideoPlayer() {
+  const video = videoPlayerRef.value
+  if (video) {
+    video.pause()
+    try {
+      video.currentTime = 0
+    } catch {
+      // Some remote videos may not be seekable after the source is removed.
+    }
+  }
+  playingVideoJob.value = null
+}
+
+function handleModalKeydown(event: KeyboardEvent) {
+  if (event.key !== 'Escape') return
+  if (playingVideoJob.value) {
+    closeVideoPlayer()
+    return
+  }
+  if (failedReasonJob.value) {
+    closeFailedReason()
+  }
+}
+
+function closeLocalVideoOutputHelp() {
+  showLocalVideoOutputHelp.value = false
 }
 
 function formatFileSize(bytes: number): string {
@@ -388,6 +457,18 @@ function loadOutputSettings() {
   inputAudioUrl.value = stringSetting(settings.inputAudioUrl, '')
   backgroundImageUrl.value = stringSetting(settings.backgroundImageUrl, '')
   autoAnimoji.value = boolSetting(settings.autoAnimoji, false)
+}
+
+async function loadLocalVideoOutputSettings() {
+  localVideoOutputParams.value = []
+  if (isBaiduXilingCharacter.value) return
+  try {
+    const config = await getLaunchConfig()
+    const section = config.sections.find(item => item.key === 'video_output')
+    localVideoOutputParams.value = section?.params || []
+  } catch (err) {
+    console.warn('Failed to load local video output settings:', err)
+  }
 }
 
 watch(
@@ -459,7 +540,7 @@ async function submitJob() {
       autoAnimoji: autoAnimoji.value,
     })
     if (inputType.value === 'text') {
-      scriptText.value = ''
+      scriptText.value = t('offlineVideo.defaultScript')
     }
     await refreshJobs()
     markJobHighlighted(createdJob.id)
@@ -504,6 +585,8 @@ async function removeJob(job: OfflineVideoJob) {
 }
 
 onMounted(async () => {
+  window.addEventListener('keydown', handleModalKeydown)
+  window.addEventListener('click', closeLocalVideoOutputHelp)
   saveLaunchWorkspaceMode('offline')
   try {
     componentCatalog.value = await getComponents()
@@ -513,6 +596,7 @@ onMounted(async () => {
   await store.fetchOne(characterId.value).catch(() => {})
   loadOutputSettings()
   loadOfflineTTSPreference()
+  await loadLocalVideoOutputSettings()
   await refreshJobs().catch((err) => {
     errorMessage.value = err instanceof Error ? err.message : t('offlineVideo.loadFailed')
   })
@@ -528,6 +612,9 @@ onUnmounted(() => {
   if (pollTimer) clearInterval(pollTimer)
   if (highlightTimer) clearTimeout(highlightTimer)
   if (offlineTTSSaveTimer) clearTimeout(offlineTTSSaveTimer)
+  window.removeEventListener('keydown', handleModalKeydown)
+  window.removeEventListener('click', closeLocalVideoOutputHelp)
+  closeVideoPlayer()
 })
 </script>
 
@@ -666,13 +753,44 @@ onUnmounted(() => {
                   <button
                     class="settings-toggle"
                     type="button"
-                    @click="outputSettingsExpanded = !outputSettingsExpanded"
+                    @click="outputSettingsExpanded = !outputSettingsExpanded; showLocalVideoOutputHelp = false"
                   >
                     <h3>{{ t('offlineVideo.outputSettings') }}</h3>
                     <span class="settings-chevron" :class="{ expanded: outputSettingsExpanded }" aria-hidden="true" />
                   </button>
                 </div>
                 <template v-if="outputSettingsExpanded">
+                  <div v-if="showLocalVideoOutputSettings" class="settings-section local-video-output-section">
+                    <div class="settings-section-title-row settings-section-title-row--compact">
+                      <h4 class="settings-section-title">{{ t('offlineVideo.videoOutputSettings') }}</h4>
+                      <span class="settings-help">
+                        <button
+                          class="field-help-button"
+                          type="button"
+                          :aria-label="t('offlineVideo.videoOutputHelpLabel')"
+                          :aria-expanded="showLocalVideoOutputHelp"
+                          @click.stop="showLocalVideoOutputHelp = !showLocalVideoOutputHelp"
+                        >
+                          ?
+                        </button>
+                        <span v-if="showLocalVideoOutputHelp" class="settings-help-popover" role="tooltip">
+                          {{ t('offlineVideo.videoOutputHelp') }}
+                        </span>
+                      </span>
+                    </div>
+                    <div class="settings-grid">
+                      <label v-for="row in localVideoOutputRows" :key="row.path" class="settings-field">
+                        <span>{{ row.label }}</span>
+                        <input
+                          class="number-input readonly-input local-video-output-input"
+                          type="text"
+                          :value="row.value"
+                          readonly
+                        >
+                      </label>
+                    </div>
+                  </div>
+
                   <div v-if="isBaiduXilingCharacter" class="settings-grid">
                     <label class="settings-field">
                       <span>{{ t('offlineVideo.outputWidth') }}</span>
@@ -755,7 +873,11 @@ onUnmounted(() => {
                     </div>
                   </div>
 
-                  <div v-if="showLocalTextTTSSettings" class="settings-section local-tts-section">
+                  <div
+                    v-if="showLocalTextTTSSettings"
+                    class="settings-section local-tts-section"
+                    :class="{ 'local-tts-section--separated': showLocalVideoOutputSettings }"
+                  >
                     <div class="settings-section-title-row">
                       <h4 class="settings-section-title">{{ t('offlineVideo.ttsSettings') }}</h4>
                       <span v-if="savingOfflineTTS" class="local-tts-status">{{ t('common.saving') }}</span>
@@ -817,16 +939,27 @@ onUnmounted(() => {
                 'video-card--highlight': highlightedJobId === job.id,
               }"
             >
-              <div class="video-preview" :class="`video-preview--${job.status}`">
+              <button
+                v-if="job.status === 'completed' && job.video_url"
+                class="video-preview video-preview--playable"
+                :class="`video-preview--${job.status}`"
+                type="button"
+                :aria-label="t('offlineVideo.playVideoAria', { title: job.title })"
+                @click="openVideoPlayer(job)"
+              >
                 <video
-                  v-if="job.status === 'completed' && job.video_url"
                   :src="job.video_url"
                   class="video-preview-media"
                   muted
                   playsinline
                   preload="metadata"
                 />
-                <div v-else-if="isActiveJob(job)" class="video-preview-state">
+                <span class="video-preview-play-overlay" aria-hidden="true">
+                  <span class="video-preview-play-icon">▶</span>
+                </span>
+              </button>
+              <div v-else class="video-preview" :class="`video-preview--${job.status}`">
+                <div v-if="isActiveJob(job)" class="video-preview-state">
                   <span class="job-spinner" aria-hidden="true" />
                   <span>{{ statusLabel(job) }}</span>
                 </div>
@@ -883,12 +1016,12 @@ onUnmounted(() => {
                   <div class="video-card-actions">
                     <a
                       v-if="job.video_url"
-                      class="cv-pi-button cv-pi-button--primary cv-pi-button--compact"
+                      class="cv-pi-button cv-pi-button--compact"
                       :href="job.video_url"
-                      target="_blank"
-                      rel="noreferrer"
+                      :download="downloadVideoFilename(job)"
+                      :aria-label="t('offlineVideo.downloadVideoAria', { title: job.title })"
                     >
-                      {{ t('offlineVideo.openVideo') }}
+                      {{ t('offlineVideo.downloadVideo') }}
                     </a>
                     <button
                       class="cv-pi-button cv-pi-button--compact"
@@ -936,6 +1069,25 @@ onUnmounted(() => {
           </button>
         </div>
         <pre class="failure-modal-message">{{ failedReasonText }}</pre>
+      </section>
+    </div>
+
+    <div v-if="playingVideoJob?.video_url" class="video-player-modal-backdrop" @click.self="closeVideoPlayer">
+      <section class="video-player-modal" role="dialog" aria-modal="true" :aria-label="t('offlineVideo.videoPlayerTitle')">
+        <div class="video-player-modal-header">
+          <h2>{{ playingVideoJob.title }}</h2>
+          <button class="failure-modal-close" type="button" :aria-label="t('offlineVideo.closeVideoPlayer')" @click="closeVideoPlayer">
+            ×
+          </button>
+        </div>
+        <video
+          ref="videoPlayerRef"
+          class="video-player-media"
+          :src="playingVideoJob.video_url"
+          controls
+          playsinline
+          preload="metadata"
+        />
       </section>
     </div>
   </div>
@@ -1122,6 +1274,16 @@ onUnmounted(() => {
   padding-top: 0;
 }
 
+.local-video-output-section {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.local-tts-section--separated {
+  border-top: 1px solid #242b36;
+  padding-top: 14px;
+}
+
 .settings-section-title {
   margin-bottom: 12px;
   color: #f4f7fb;
@@ -1139,6 +1301,38 @@ onUnmounted(() => {
 
 .settings-section-title-row .settings-section-title {
   margin-bottom: 12px;
+}
+
+.settings-section-title-row--compact {
+  position: relative;
+  justify-content: flex-start;
+  margin-bottom: 12px;
+}
+
+.settings-section-title-row--compact .settings-section-title {
+  margin-bottom: 0;
+}
+
+.settings-help {
+  position: relative;
+  display: inline-flex;
+}
+
+.settings-help-popover {
+  position: absolute;
+  left: calc(100% + 8px);
+  top: 50%;
+  z-index: 30;
+  width: min(260px, calc(100vw - 72px));
+  padding: 10px 12px;
+  border: 1px solid #303a49;
+  background: #151920;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+  color: #c4ccd8;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 18px;
+  transform: translateY(-50%);
 }
 
 .wide-field {
@@ -1247,6 +1441,13 @@ onUnmounted(() => {
 .readonly-input {
   cursor: default;
   color: #d7dde8;
+}
+
+.local-video-output-input {
+  border-color: #242b36;
+  background: #151920;
+  color: #8d96a6;
+  cursor: not-allowed;
 }
 
 .audio-upload {
@@ -1426,7 +1627,7 @@ onUnmounted(() => {
 
 .video-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 16px;
 }
 
@@ -1436,7 +1637,6 @@ onUnmounted(() => {
   flex-direction: column;
   border: 1px solid #242b36;
   background: #0b0d12;
-  padding: 12px;
   transition: border-color 160ms ease, background 160ms ease, box-shadow 160ms ease;
 }
 
@@ -1452,16 +1652,70 @@ onUnmounted(() => {
 
 .video-preview {
   position: relative;
-  aspect-ratio: 16 / 10;
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
   overflow: hidden;
-  border: 1px solid #242b36;
+  border: 0;
+  border-bottom: 1px solid #242b36;
   background: #07080b;
+  padding: 0;
+  text-align: left;
 }
 
 .video-preview-media {
   width: 100%;
   height: 100%;
   object-fit: cover;
+}
+
+.video-preview--playable {
+  cursor: pointer;
+  outline: none;
+}
+
+.video-preview--playable::after {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, transparent 58%, rgba(0, 0, 0, 0.3));
+  content: "";
+  opacity: 0.72;
+  pointer-events: none;
+}
+
+.video-preview-play-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.18);
+  opacity: 0;
+  transition: opacity 160ms ease, background 160ms ease;
+}
+
+.video-preview-play-icon {
+  display: inline-flex;
+  width: 46px;
+  height: 46px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(244, 247, 251, 0.62);
+  background: rgba(7, 8, 11, 0.58);
+  color: #f4f7fb;
+  font-size: 16px;
+  font-weight: 800;
+}
+
+.video-preview--playable:hover .video-preview-play-overlay,
+.video-preview--playable:focus-visible .video-preview-play-overlay {
+  background: rgba(0, 0, 0, 0.28);
+  opacity: 1;
+}
+
+.video-preview--playable:focus-visible {
+  box-shadow: inset 0 0 0 2px #34e6f3;
 }
 
 .video-preview-state {
@@ -1553,18 +1807,18 @@ onUnmounted(() => {
 .video-card-body {
   display: flex;
   min-width: 0;
-  min-height: 128px;
+  min-height: 116px;
   flex: 1 1 auto;
   flex-direction: column;
-  padding-top: 12px;
+  padding: 12px;
 }
 
 .video-title {
   overflow: hidden;
   color: #f4f7fb;
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 800;
-  line-height: 20px;
+  line-height: 21px;
   text-align: left;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1578,7 +1832,7 @@ onUnmounted(() => {
 .video-date {
   margin-top: 4px;
   color: #798394;
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .video-progress {
@@ -1618,7 +1872,8 @@ onUnmounted(() => {
   gap: 10px;
 }
 
-.failure-modal-backdrop {
+.failure-modal-backdrop,
+.video-player-modal-backdrop {
   position: fixed;
   inset: 0;
   z-index: 80;
@@ -1662,6 +1917,12 @@ onUnmounted(() => {
   color: #34e6f3;
 }
 
+.failure-modal-close:focus-visible {
+  border-color: #34e6f3;
+  color: #34e6f3;
+  outline: none;
+}
+
 .failure-modal-message {
   max-height: 260px;
   margin-top: 0;
@@ -1673,6 +1934,45 @@ onUnmounted(() => {
   line-height: 1.65;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.video-player-modal {
+  display: flex;
+  width: min(920px, 100%);
+  max-height: calc(100vh - 48px);
+  flex-direction: column;
+  gap: 14px;
+  border: 1px solid #303a49;
+  background: #11141b;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.38);
+  padding: 18px;
+}
+
+.video-player-modal-header {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.video-player-modal-header h2 {
+  min-width: 0;
+  overflow: hidden;
+  color: #f4f7fb;
+  font-size: 16px;
+  font-weight: 800;
+  line-height: 24px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.video-player-media {
+  width: 100%;
+  max-height: calc(100vh - 146px);
+  border: 1px solid #242b36;
+  background: #07080b;
+  object-fit: contain;
 }
 
 @media (max-width: 860px) {
@@ -1710,17 +2010,26 @@ onUnmounted(() => {
     align-items: flex-start;
     flex-direction: column;
   }
+
+  .video-player-modal {
+    padding: 14px;
+  }
+
+  .video-player-modal-header h2 {
+    font-size: 14px;
+    line-height: 20px;
+  }
 }
 
 @media (max-width: 1180px) and (min-width: 861px) {
   .video-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
 @media (max-width: 960px) and (min-width: 681px) {
   .video-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: 1fr;
   }
 }
 </style>
