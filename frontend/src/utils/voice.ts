@@ -1,6 +1,7 @@
 import {
   COSYVOICE_V3_FLASH_VOICE_OPTIONS,
   COSYVOICE_V3_PLUS_VOICE_OPTIONS,
+  DOUBAO_TTS_VOICE_OPTIONS,
   OPENAI_VOICE_OPTIONS,
   QWEN_OMNI_VOICE_OPTIONS,
   QWEN_TTS_VOICE_OPTIONS,
@@ -9,6 +10,7 @@ import {
 import type { ComposerTranslation } from 'vue-i18n'
 
 export const DEFAULT_OFFICIAL_VOICE = '温柔文雅'
+export const DEFAULT_DOUBAO_TTS_VOICE = 'zh_female_xiaohe_uranus_bigtts'
 export const DEFAULT_QWEN_TTS_VOICE = 'Momo'
 export const DEFAULT_QWEN_OMNI_VOICE = 'Tina'
 export const DEFAULT_COSYVOICE_V3_VOICE = 'longanyang'
@@ -16,10 +18,14 @@ export const DEFAULT_COSYVOICE_V3_VOICE = 'longanyang'
 type VoiceDisplayOption = {
   label: string
   value: string
+  labelEn?: string
 }
 
 const officialVoiceLabelMap = new Map(
   VOICE_OPTIONS.map(option => [option.value, option.label]),
+)
+const doubaoTTSVoiceOptionMap = new Map(
+  DOUBAO_TTS_VOICE_OPTIONS.map(option => [option.value, option]),
 )
 const qwenTTSVoiceLabelMap = new Map(
   QWEN_TTS_VOICE_OPTIONS.map(option => [option.value, option.label]),
@@ -65,6 +71,10 @@ export function isOfficialVoiceType(value: string): boolean {
   return officialVoiceLabelMap.has(value.trim())
 }
 
+export function isDoubaoTTSVoiceType(value: string): boolean {
+  return doubaoTTSVoiceOptionMap.has(value.trim())
+}
+
 export function isQwenTTSVoiceType(value: string): boolean {
   return qwenTTSVoiceLabelMap.has(value.trim())
 }
@@ -105,11 +115,43 @@ export function isCosyVoiceKnownBuiltinVoice(voice: string): boolean {
   return cosyVoiceLabelMap.has(voice.trim())
 }
 
-function englishLabelFromCurrentLabel(label: string, value: string): string {
+function hasCJK(value: string): boolean {
+  return /[\u3400-\u9fff]/.test(value)
+}
+
+function slashEnglishLabel(label: string): string {
+  const parts = label.split('/')
+  if (parts.length < 2) return ''
+  const candidate = parts[parts.length - 1]?.trim() || ''
+  return candidate && /[A-Za-z]/.test(candidate) && !hasCJK(candidate) ? candidate : ''
+}
+
+function englishLabelFromCurrentLabel(
+  label: string,
+  value: string,
+  labelEn?: string,
+): string {
+  if (labelEn) return labelEn
   const officialLabel = officialVoiceEnglishLabelMap.get(value)
   if (officialLabel) return officialLabel
   const match = label.match(/\(([^)]+)\)\s*$/)
-  return match?.[1] || value
+  if (match?.[1]) return match[1]
+  const slashLabel = slashEnglishLabel(label)
+  if (slashLabel) return slashLabel
+  const cleaned = chineseLabelFromCurrentLabel(label)
+  if (!hasCJK(cleaned)) return cleaned
+  return value
+}
+
+function chineseLabelFromCurrentLabel(label: string): string {
+  const cleaned = label.replace(/\s*\([^)]+\)\s*$/, '').trim()
+  const parts = cleaned.split('/')
+  if (parts.length < 2) return cleaned
+  const left = parts[0]?.trim() || ''
+  const right = parts[parts.length - 1]?.trim() || ''
+  if (!left || !hasCJK(left) || hasCJK(right)) return cleaned
+  const version = right.match(/\s+(\d+(?:\.\d+)?)$/)?.[1]
+  return version ? `${left} ${version}` : left
 }
 
 export function localizedVoiceOptions(
@@ -119,7 +161,9 @@ export function localizedVoiceOptions(
   const useEnglish = locale.toLowerCase().startsWith('en')
   return options.map((option) => ({
     value: option.value,
-    label: useEnglish ? englishLabelFromCurrentLabel(option.label, option.value) : option.label,
+    label: useEnglish
+      ? englishLabelFromCurrentLabel(option.label, option.value, option.labelEn)
+      : chineseLabelFromCurrentLabel(option.label),
   }))
 }
 
@@ -130,13 +174,21 @@ export function formatVoiceTypeDisplay(
 ): string {
   const trimmed = value.trim()
   if (!trimmed) return '—'
+  const doubaoOption = doubaoTTSVoiceOptionMap.get(trimmed)
+  if (doubaoOption) {
+    return locale.toLowerCase().startsWith('en')
+      ? englishLabelFromCurrentLabel(doubaoOption.label, trimmed, doubaoOption.labelEn)
+      : chineseLabelFromCurrentLabel(doubaoOption.label)
+  }
   const label = qwenTTSVoiceLabelMap.get(trimmed)
     ?? qwenOmniVoiceLabelMap.get(trimmed)
     ?? openAIVoiceLabelMap.get(trimmed)
     ?? cosyVoiceLabelMap.get(trimmed)
     ?? officialVoiceLabelMap.get(trimmed)
   if (label) {
-    return locale.toLowerCase().startsWith('en') ? englishLabelFromCurrentLabel(label, trimmed) : label
+    return locale.toLowerCase().startsWith('en')
+      ? englishLabelFromCurrentLabel(label, trimmed)
+      : chineseLabelFromCurrentLabel(label)
   }
   return t ? t('voices.cloned', { id: trimmed }) : `Cloned voice · ${trimmed}`
 }

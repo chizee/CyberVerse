@@ -19,7 +19,7 @@ type LegacySettings = Partial<Settings> & {
 
 function defaultSettings(): Settings {
   return {
-    doubao: { access_token: '', app_id: '' },
+    doubao: { access_token: '', app_id: '', api_key: '' },
     livekit: { url: '', api_key: '', api_secret: '' },
     model_providers: {
       dashscope_api_key: '',
@@ -97,7 +97,17 @@ async function test() {
         <section class="bg-cv-surface border border-cv-border rounded-cv-lg p-6">
           <h3 class="text-sm font-semibold text-cv-text mb-4">{{ t('settings.doubaoVoice') }}</h3>
           <label class="block mb-3">
-            <span class="text-[13px] text-cv-text-secondary">Access Token</span>
+            <span class="text-[13px] text-cv-text-secondary">{{ t('settings.doubaoApiKey') }}</span>
+            <div class="relative mt-1.5">
+              <input v-model="form.doubao.api_key" :type="showTokens['doubao_api_key'] ? 'text' : 'password'"
+                     class="w-full h-[42px] bg-cv-elevated border border-cv-border rounded-cv-md px-4 pr-10 text-sm text-cv-text focus:border-cv-accent focus:outline-none transition-all" />
+              <button @click="toggleShow('doubao_api_key')" class="absolute right-3 top-1/2 -translate-y-1/2 text-cv-text-muted hover:text-cv-text cursor-pointer text-xs">
+                {{ showTokens['doubao_api_key'] ? t('common.hide') : t('common.show') }}
+              </button>
+            </div>
+          </label>
+          <label class="block mb-3">
+            <span class="text-[13px] text-cv-text-secondary">{{ t('settings.doubaoAccessToken') }}</span>
             <div class="relative mt-1.5">
               <input v-model="form.doubao.access_token" :type="showTokens['doubao_token'] ? 'text' : 'password'"
                      class="w-full h-[42px] bg-cv-elevated border border-cv-border rounded-cv-md px-4 pr-10 text-sm text-cv-text focus:border-cv-accent focus:outline-none transition-all" />
@@ -107,7 +117,7 @@ async function test() {
             </div>
           </label>
           <label class="block mb-3">
-            <span class="text-[13px] text-cv-text-secondary">App ID</span>
+            <span class="text-[13px] text-cv-text-secondary">{{ t('settings.doubaoAppId') }}</span>
             <input v-model="form.doubao.app_id" class="mt-1.5 w-full h-[42px] bg-cv-elevated border border-cv-border rounded-cv-md px-4 text-sm text-cv-text focus:border-cv-accent focus:outline-none transition-all" />
           </label>
         </section>

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 
 interface Option {
   label: string
@@ -11,6 +11,9 @@ const props = defineProps<{
   options: (Option | string)[]
   placeholder?: string
   success?: boolean
+  searchable?: boolean
+  searchPlaceholder?: string
+  emptyLabel?: string
 }>()
 
 const emit = defineEmits<{
@@ -18,6 +21,7 @@ const emit = defineEmits<{
 }>()
 
 const open = ref(false)
+const query = ref('')
 const containerRef = ref<HTMLElement>()
 
 const normalizedOptions = computed<Option[]>(() =>
@@ -27,6 +31,14 @@ const normalizedOptions = computed<Option[]>(() =>
 const selectedLabel = computed(
   () => normalizedOptions.value.find(o => o.value === props.modelValue)?.label ?? props.modelValue
 )
+
+const filteredOptions = computed<Option[]>(() => {
+  const normalizedQuery = query.value.trim().toLowerCase()
+  if (!props.searchable || !normalizedQuery) return normalizedOptions.value
+  return normalizedOptions.value.filter((option) =>
+    `${option.label} ${option.value}`.toLowerCase().includes(normalizedQuery)
+  )
+})
 
 function select(value: string) {
   emit('update:modelValue', value)
@@ -41,6 +53,10 @@ function handleOutsideClick(e: MouseEvent) {
 
 onMounted(() => document.addEventListener('mousedown', handleOutsideClick))
 onUnmounted(() => document.removeEventListener('mousedown', handleOutsideClick))
+
+watch(open, (isOpen) => {
+  if (!isOpen) query.value = ''
+})
 </script>
 
 <template>
@@ -98,8 +114,17 @@ onUnmounted(() => document.removeEventListener('mousedown', handleOutsideClick))
         class="absolute z-50 top-full left-0 right-0 mt-1 bg-cv-elevated border border-cv-border rounded-cv-md overflow-y-auto shadow-[0_8px_24px_rgba(0,0,0,0.5)]"
         style="max-height: 216px;"
       >
+        <div v-if="props.searchable" class="sticky top-0 z-10 bg-cv-elevated p-2">
+          <input
+            v-model="query"
+            type="text"
+            :placeholder="props.searchPlaceholder || 'Search'"
+            class="h-8 w-full rounded-cv-md border border-cv-border bg-cv-surface px-3 text-sm text-cv-text outline-none placeholder:text-cv-text-muted focus:border-cv-text-muted"
+            @click.stop
+          />
+        </div>
         <button
-          v-for="opt in normalizedOptions"
+          v-for="opt in filteredOptions"
           :key="opt.value"
           type="button"
           @click="select(opt.value)"
@@ -110,6 +135,12 @@ onUnmounted(() => document.removeEventListener('mousedown', handleOutsideClick))
         >
           {{ opt.label }}
         </button>
+        <div
+          v-if="props.searchable && filteredOptions.length === 0"
+          class="px-4 py-3 text-sm text-cv-text-muted"
+        >
+          {{ props.emptyLabel || 'No results' }}
+        </div>
       </div>
     </Transition>
   </div>

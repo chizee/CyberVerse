@@ -8,10 +8,11 @@ import CvSelect from '../components/CvSelect.vue'
 import KnowledgeSourceManager from '../components/KnowledgeSourceManager.vue'
 import { useCharacterStore } from '../stores/characters'
 import type { AvatarBackend, BaiduXilingCharacterConfig, CharacterComponents, CharacterForm, ComponentOption, ComponentsResponse, ImageInfo } from '../types'
-import { OPENAI_VOICE_OPTIONS, QWEN_OMNI_VOICE_OPTIONS, QWEN_TTS_MODEL_OPTIONS, QWEN_TTS_VOICE_OPTIONS, VOICE_OPTIONS } from '../types'
+import { DOUBAO_TTS_VOICE_OPTIONS, OPENAI_VOICE_OPTIONS, QWEN_OMNI_VOICE_OPTIONS, QWEN_TTS_MODEL_OPTIONS, QWEN_TTS_VOICE_OPTIONS, VOICE_OPTIONS } from '../types'
 import { uploadAvatar, getCharacterImages, deleteCharacterImage, activateCharacterImage, testCharacterVoice, getComponents, getBaiduXilingFigure } from '../services/api'
 import {
   DEFAULT_COSYVOICE_V3_VOICE,
+  DEFAULT_DOUBAO_TTS_VOICE,
   DEFAULT_OFFICIAL_VOICE,
   DEFAULT_QWEN_OMNI_VOICE,
   DEFAULT_QWEN_TTS_VOICE,
@@ -21,6 +22,7 @@ import {
   isCosyVoiceCloneOnlyModel,
   isCosyVoiceKnownBuiltinVoice,
   isCosyVoiceTTSModel,
+  isDoubaoTTSVoiceType,
   isOfficialVoiceType,
   isOpenAIVoiceType,
   isQwenOmniVoiceType,
@@ -75,6 +77,7 @@ const baiduLookupLoading = ref(false)
 const baiduLookupError = ref('')
 const OFFICIAL_VOICE_PREVIEW_URL = 'https://console.volcengine.com/speech/new/experience/call'
 const CUSTOM_VOICE_CLONE_URL = 'https://console.volcengine.com/speech/new/experience/clone'
+const DOUBAO_TTS_VOICE_LIST_URL = 'https://www.volcengine.com/docs/6561/1257544?lang=zh#%E8%B1%86%E5%8C%85%E8%AF%AD%E9%9F%B3%E5%90%88%E6%88%90%E6%A8%A1%E5%9E%8B2-0-%E9%9F%B3%E8%89%B2%E5%88%97%E8%A1%A8'
 const QWEN_TTS_VOICE_PREVIEW_URL = 'https://help.aliyun.com/zh/model-studio/qwen-tts-voice-list'
 const COSYVOICE_VOICE_LIST_URL = 'https://help.aliyun.com/zh/model-studio/cosyvoice-voice-list'
 const QWEN_OMNI_VOICE_LIST_URL = 'https://help.aliyun.com/zh/model-studio/omni-voice-list'
@@ -125,11 +128,9 @@ const trimmedCustomVoiceType = computed(() => customVoiceType.value.trim())
 const selectedTTS = computed(() => form.value.components?.tts || DEFAULT_COMPONENTS.tts)
 const selectedTTSModel = computed(() => form.value.components?.tts_model || selectedComponent('tts')?.model || '')
 const selectedOmniProvider = computed(() => form.value.voice_provider || 'doubao')
-const usesDoubaoVoice = computed(() =>
-  form.value.mode === 'omni'
-    ? selectedOmniProvider.value === 'doubao'
-    : selectedTTS.value === 'doubao'
-)
+const usesDoubaoTTS = computed(() => form.value.mode !== 'omni' && selectedTTS.value === 'doubao')
+const usesDoubaoOmniVoice = computed(() => form.value.mode === 'omni' && selectedOmniProvider.value === 'doubao')
+const usesDoubaoVoice = computed(() => usesDoubaoTTS.value || usesDoubaoOmniVoice.value)
 const usesCosyVoiceTTS = computed(() =>
   form.value.mode !== 'omni'
   && selectedTTS.value === 'qwen'
@@ -195,7 +196,10 @@ const cosyVoiceOfficialOptions = computed(() => localizedVoiceOptions(
   locale.value,
 ))
 const qwenOmniVoiceOptions = computed(() => localizedVoiceOptions(QWEN_OMNI_VOICE_OPTIONS, locale.value))
-const officialVoiceOptions = computed(() => localizedVoiceOptions(VOICE_OPTIONS, locale.value))
+const officialVoiceOptions = computed(() => localizedVoiceOptions(
+  usesDoubaoTTS.value ? DOUBAO_TTS_VOICE_OPTIONS : VOICE_OPTIONS,
+  locale.value,
+))
 const openAIVoiceOptions = computed(() => localizedVoiceOptions(OPENAI_VOICE_OPTIONS, locale.value))
 const canSave = computed(() =>
   !!form.value.name.trim() && hasRequiredAvatarConfig.value && (
@@ -232,12 +236,21 @@ function isPresetVoice(value: string): boolean {
     || isOpenAIVoiceType(value)
     || isQwenOmniVoiceType(value)
     || isOfficialVoiceType(value)
+    || isDoubaoTTSVoiceType(value)
     || isCosyVoiceKnownBuiltinVoice(value)
+}
+
+function defaultDoubaoVoice() {
+  return usesDoubaoTTS.value ? DEFAULT_DOUBAO_TTS_VOICE : DEFAULT_OFFICIAL_VOICE
+}
+
+function isCurrentDoubaoOfficialVoice(value: string): boolean {
+  return usesDoubaoTTS.value ? isDoubaoTTSVoiceType(value) : isOfficialVoiceType(value)
 }
 
 function defaultVoiceForTTS(tts: string) {
   if (tts === 'openai') return 'nova'
-  if (tts === 'doubao') return DEFAULT_OFFICIAL_VOICE
+  if (tts === 'doubao') return DEFAULT_DOUBAO_TTS_VOICE
   if (tts === 'qwen' && usesCosyVoiceCloneOnlyTTS.value) return ''
   if (tts === 'qwen' && usesCosyVoiceBuiltinTTS.value) return DEFAULT_COSYVOICE_V3_VOICE
   return DEFAULT_QWEN_TTS_VOICE
@@ -355,8 +368,14 @@ function applyTTSVoiceDefault(tts: string, force = false) {
   } else if (tts === 'openai' && !isOpenAIVoiceType(current)) {
     form.value.voice_type = 'nova'
   } else if (tts === 'doubao') {
-    const looksLikeNonDoubaoVoice = isQwenTTSVoiceType(current) || isOpenAIVoiceType(current) || isQwenOmniVoiceType(current)
-    syncVoiceInputs(looksLikeNonDoubaoVoice ? DEFAULT_OFFICIAL_VOICE : current)
+    const looksLikeOtherDoubaoModeVoice = usesDoubaoTTS.value
+      ? isOfficialVoiceType(current)
+      : isDoubaoTTSVoiceType(current)
+    const looksLikeNonDoubaoVoice = isQwenTTSVoiceType(current)
+      || isOpenAIVoiceType(current)
+      || isQwenOmniVoiceType(current)
+      || looksLikeOtherDoubaoModeVoice
+    syncVoiceInputs(looksLikeNonDoubaoVoice ? defaultVoiceForTTS(tts) : current)
   }
 }
 
@@ -379,7 +398,10 @@ function applyModeVoiceDefault(force = false) {
     return
   }
 
-  const looksLikeNonDoubaoVoice = isQwenTTSVoiceType(current) || isOpenAIVoiceType(current) || isQwenOmniVoiceType(current)
+  const looksLikeNonDoubaoVoice = isQwenTTSVoiceType(current)
+    || isOpenAIVoiceType(current)
+    || isQwenOmniVoiceType(current)
+    || isDoubaoTTSVoiceType(current)
   if (force || !current || looksLikeNonDoubaoVoice) {
     form.value.voice_type = defaultVoiceForOmni(provider)
   }
@@ -398,7 +420,7 @@ function clearVoiceTestResult() {
 
 function syncVoiceInputs(voiceType: string) {
   const normalized = voiceType.trim()
-  if (normalized && !isOfficialVoiceType(normalized)) {
+  if (normalized && !isCurrentDoubaoOfficialVoice(normalized)) {
     voiceMode.value = 'custom'
     customVoiceType.value = normalized
     form.value.voice_type = normalized
@@ -407,7 +429,7 @@ function syncVoiceInputs(voiceType: string) {
 
   voiceMode.value = 'official'
   customVoiceType.value = ''
-  form.value.voice_type = normalized || DEFAULT_OFFICIAL_VOICE
+  form.value.voice_type = normalized || defaultDoubaoVoice()
 }
 
 function setVoiceMode(mode: 'official' | 'custom') {
@@ -415,13 +437,13 @@ function setVoiceMode(mode: 'official' | 'custom') {
   voiceError.value = ''
 
   if (mode === 'official') {
-    if (!isOfficialVoiceType(form.value.voice_type)) {
-      form.value.voice_type = DEFAULT_OFFICIAL_VOICE
+    if (!isCurrentDoubaoOfficialVoice(form.value.voice_type)) {
+      form.value.voice_type = defaultDoubaoVoice()
     }
     return
   }
 
-  if (!isOfficialVoiceType(form.value.voice_type)) {
+  if (!isCurrentDoubaoOfficialVoice(form.value.voice_type)) {
     customVoiceType.value = form.value.voice_type.trim()
   }
 }
@@ -473,7 +495,7 @@ function resolveVoiceType() {
     return trimmedCustomVoiceType.value
   }
 
-  return form.value.voice_type.trim() || DEFAULT_OFFICIAL_VOICE
+  return form.value.voice_type.trim() || defaultDoubaoVoice()
 }
 
 function resolveVoiceProviderForCheck() {
@@ -655,7 +677,7 @@ async function handleCheckVoice() {
     await testCharacterVoice({
       voice_provider: resolveVoiceProviderForCheck(),
       voice_type: voiceType,
-      model: usesCosyVoiceTTS.value ? selectedTTSModel.value : undefined,
+      model: (usesCosyVoiceTTS.value || usesDoubaoTTS.value) ? selectedTTSModel.value : undefined,
     })
     voiceTestStatus.value = 'success'
     voiceTestMessage.value = ''
@@ -1170,6 +1192,9 @@ const pageTitle = computed(() =>
                     v-model="form.voice_type"
                     :options="officialVoiceOptions"
                     :success="voiceCheckSucceeded"
+                    :searchable="usesDoubaoTTS"
+                    :search-placeholder="t('common.search')"
+                    :empty-label="t('common.noResults')"
                     class="min-w-0"
                   />
                   <div v-else class="relative min-w-0">
@@ -1201,6 +1226,18 @@ const pageTitle = computed(() =>
                     {{ t('common.check') }}
                   </button>
                 </div>
+                <p v-if="usesDoubaoTTS && voiceMode === 'official'" class="mt-2 text-[11px] leading-5 text-cv-text-muted">
+                  {{ t('characterEdit.canPreviewAt') }}
+                  <a
+                    :href="DOUBAO_TTS_VOICE_LIST_URL"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    class="underline underline-offset-2 transition-colors hover:text-cv-text"
+                  >
+                    {{ t('characterEdit.doubaoTTSVoiceList') }}
+                  </a>
+                  {{ t('characterEdit.previewVoice') }}
+                </p>
                 <p v-if="voiceError" class="mt-2 text-[11px] text-cv-danger">{{ voiceError }}</p>
                 <p
                   v-if="voiceTestStatus === 'error' && voiceTestMessage"
@@ -1271,6 +1308,9 @@ const pageTitle = computed(() =>
                     v-model="form.voice_type"
                     :options="officialVoiceOptions"
                     :success="voiceCheckSucceeded"
+                    :searchable="usesDoubaoTTS"
+                    :search-placeholder="t('common.search')"
+                    :empty-label="t('common.noResults')"
                     class="min-w-0 flex-1"
                   />
                   <div v-else class="relative min-w-0 flex-1">

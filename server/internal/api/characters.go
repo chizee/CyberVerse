@@ -305,12 +305,12 @@ func (r *Router) handleTestCharacterVoice(w http.ResponseWriter, req *http.Reque
 		writeJSON(w, http.StatusBadRequest, ErrorResponse{Error: "voice_type is required"})
 		return
 	}
-	if provider == "qwen" {
-		if model == "" {
+	if provider == "qwen" || (provider == "doubao" && isDoubaoTTSModel(model)) {
+		if provider == "qwen" && model == "" {
 			writeJSON(w, http.StatusBadRequest, ErrorResponse{Error: "model is required for qwen voice check"})
 			return
 		}
-		if !isCosyVoiceTTSModel(model) {
+		if provider == "qwen" && !isCosyVoiceTTSModel(model) {
 			writeJSON(w, http.StatusBadRequest, ErrorResponse{Error: "unsupported qwen tts model for voice check: " + model})
 			return
 		}
@@ -368,6 +368,11 @@ func (r *Router) handleTestCharacterVoice(w http.ResponseWriter, req *http.Reque
 
 func isCosyVoiceTTSModel(model string) bool {
 	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(model)), "cosyvoice-")
+}
+
+func isDoubaoTTSModel(model string) bool {
+	model = strings.ToLower(strings.TrimSpace(model))
+	return strings.HasPrefix(model, "seed-tts-") || strings.HasPrefix(model, "seed-icl-")
 }
 
 // handleUploadAvatar uploads an image to the character's images/ directory.

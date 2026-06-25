@@ -167,6 +167,9 @@ func NormalizeOfflineVideoTTS(cfg *OfflineVideoTTS) *OfflineVideoTTS {
 }
 
 func defaultVoiceTypeForComponents(components Components) string {
+	if components.TTS == "doubao" {
+		return "zh_female_xiaohe_uranus_bigtts"
+	}
 	if components.TTS != "qwen" {
 		return ""
 	}

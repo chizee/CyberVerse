@@ -31,6 +31,7 @@ type SettingsResponse struct {
 type DoubaoSettings struct {
 	AccessToken string `json:"access_token"`
 	AppID       string `json:"app_id"`
+	APIKey      string `json:"api_key"`
 }
 
 type LiveKitSettings struct {
@@ -119,6 +120,7 @@ type settingsField struct {
 var settingsFields = []settingsField{
 	{"DOUBAO_ACCESS_TOKEN", func(s *SettingsResponse) string { return s.Doubao.AccessToken }},
 	{"DOUBAO_APP_ID", func(s *SettingsResponse) string { return s.Doubao.AppID }},
+	{"DOUBAO_API_KEY", func(s *SettingsResponse) string { return s.Doubao.APIKey }},
 	{"LIVEKIT_URL", func(s *SettingsResponse) string { return s.LiveKit.URL }},
 	{"LIVEKIT_API_KEY", func(s *SettingsResponse) string { return s.LiveKit.APIKey }},
 	{"LIVEKIT_API_SECRET", func(s *SettingsResponse) string { return s.LiveKit.APISecret }},
@@ -137,6 +139,7 @@ func (r *Router) handleGetSettings(w http.ResponseWriter, req *http.Request) {
 		Doubao: DoubaoSettings{
 			AccessToken: os.Getenv("DOUBAO_ACCESS_TOKEN"),
 			AppID:       os.Getenv("DOUBAO_APP_ID"),
+			APIKey:      os.Getenv("DOUBAO_API_KEY"),
 		},
 		LiveKit: LiveKitSettings{
 			URL:       envOrDefault("LIVEKIT_URL", r.cfg.LiveKit.URL),

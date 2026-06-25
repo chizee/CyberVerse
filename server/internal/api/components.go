@@ -132,6 +132,8 @@ func defaultTTSVoice(provider string) string {
 	switch strings.ToLower(strings.TrimSpace(provider)) {
 	case "qwen":
 		return "Momo"
+	case "doubao":
+		return "zh_female_xiaohe_uranus_bigtts"
 	case "openai":
 		return "nova"
 	default:

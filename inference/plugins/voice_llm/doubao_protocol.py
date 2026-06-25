@@ -38,7 +38,9 @@ class DoubaoEvent:
     """Event codes used in the Doubao protocol."""
 
     START_CONNECTION = 1
+    FINISH_CONNECTION = 2
     CONNECTION_STARTED = 50
+    CONNECTION_FINISHED = 52
     START_SESSION = 100
     SESSION_STARTED = 150
     FINISH_SESSION = 102
@@ -46,6 +48,8 @@ class DoubaoEvent:
     SESSION_FAILED = 153
     TASK_REQUEST = 200
     SAY_HELLO = 300
+    TTS_SENTENCE_START = 350
+    TTS_SENTENCE_END = 351
     CHAT_TEXT_QUERY = 501
     CHAT_TEXT_QUERY_CONFIRMED = 553
     REPLY_START = 350          # Assistant reply starts.

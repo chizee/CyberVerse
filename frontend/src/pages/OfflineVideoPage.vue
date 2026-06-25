@@ -6,11 +6,12 @@ import AppHeader from '../components/AppHeader.vue'
 import CvSelect from '../components/CvSelect.vue'
 import { useCharacterStore } from '../stores/characters'
 import { createOfflineVideo, deleteOfflineVideo, getComponents, getLaunchConfig, listOfflineVideos, renameOfflineVideo, updateOfflineVideoTTS } from '../services/api'
-import { OPENAI_VOICE_OPTIONS, QWEN_TTS_MODEL_OPTIONS, QWEN_TTS_VOICE_OPTIONS } from '../types'
+import { DOUBAO_TTS_VOICE_OPTIONS, OPENAI_VOICE_OPTIONS, QWEN_TTS_MODEL_OPTIONS, QWEN_TTS_VOICE_OPTIONS } from '../types'
 import type { ComponentOption, ComponentsResponse, ConfigParam, OfflineVideoJob } from '../types'
 import { saveLaunchWorkspaceMode } from '../utils/launchModePreference'
 import {
   DEFAULT_COSYVOICE_V3_VOICE,
+  DEFAULT_DOUBAO_TTS_VOICE,
   DEFAULT_QWEN_TTS_VOICE,
   cosyVoiceBuiltinVoiceOptions,
   formatVoiceTypeDisplay,
@@ -19,6 +20,7 @@ import {
   isCosyVoiceCloneOnlyModel,
   isCosyVoiceKnownBuiltinVoice,
   isCosyVoiceTTSModel,
+  isDoubaoTTSVoiceType,
   isOfficialVoiceType,
   isOpenAIVoiceType,
   isQwenOmniVoiceType,
@@ -203,6 +205,9 @@ const offlineTTSVoiceOptions = computed(() => {
   if (offlineTTSProvider.value === 'openai') {
     return localizedVoiceOptions(OPENAI_VOICE_OPTIONS, locale.value)
   }
+  if (offlineTTSProvider.value === 'doubao') {
+    return localizedVoiceOptions(DOUBAO_TTS_VOICE_OPTIONS, locale.value)
+  }
   return localizedVoiceOptions(QWEN_TTS_VOICE_OPTIONS, locale.value)
 })
 const offlineCosyVoiceOfficialOptions = computed(() => localizedVoiceOptions(
@@ -286,11 +291,13 @@ function defaultOfflineTTSModel(provider: string): string {
 function defaultOfflineTTSVoice(provider: string): string {
   if (provider === 'qwen' && isOfflineCosyVoiceCloneOnlyTTS.value) return ''
   if (provider === 'qwen' && isOfflineCosyVoiceBuiltinTTS.value) return DEFAULT_COSYVOICE_V3_VOICE
+  if (provider === 'doubao') return DEFAULT_DOUBAO_TTS_VOICE
   return provider === 'openai' ? 'nova' : DEFAULT_QWEN_TTS_VOICE
 }
 
 function isOfflinePresetVoice(voice: string): boolean {
   return isQwenTTSVoiceType(voice)
+    || isDoubaoTTSVoiceType(voice)
     || isOpenAIVoiceType(voice)
     || isQwenOmniVoiceType(voice)
     || isOfficialVoiceType(voice)
@@ -300,6 +307,7 @@ function isOfflinePresetVoice(voice: string): boolean {
 function isOfflineTTSVoiceValid(provider: string, voice: string): boolean {
   if (!voice.trim()) return false
   if (provider === 'openai') return isOpenAIVoiceType(voice)
+  if (provider === 'doubao') return isDoubaoTTSVoiceType(voice)
   if (provider === 'qwen' && isOfflineCosyVoiceCloneOnlyTTS.value) return !isOfflinePresetVoice(voice)
   if (provider === 'qwen' && isOfflineCosyVoiceBuiltinTTS.value) {
     return offlineCosyVoiceMode.value === 'official'
@@ -1048,6 +1056,9 @@ onUnmounted(() => {
                           v-else
                           v-model="offlineTTSVoice"
                           :options="offlineTTSVoiceOptions"
+                          :searchable="offlineTTSProvider === 'doubao'"
+                          :search-placeholder="t('common.search')"
+                          :empty-label="t('common.noResults')"
                         />
                       </label>
                     </div>
