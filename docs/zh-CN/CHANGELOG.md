@@ -1,5 +1,19 @@
 # 更新日志
 
+### 2026-06-12~2026-06-19
+
+Features:
+- 新增 LiteLLM 作为 LLM 网关 Provider，可通过统一接口接入 AWS Bedrock、Azure、Vertex AI、Mistral、Cohere 等 100+ 模型服务，并补充 `litellm` 可选依赖（[bbd3ef9](https://github.com/dsd2077/CyberVerse/commit/bbd3ef9)）
+- 拆分 Avatar 模型配置，新增 `inference.avatar.model_config_dir`，支持将 `flash_head`、`live_act` 等模型配置放到独立 YAML 文件中统一加载，并保持主配置内联覆盖和配置写回能力（[80d0f94](https://github.com/dsd2077/CyberVerse/commit/80d0f94)）
+
+Others:
+- README 多语言版本将 OOSMetrics 徽章替换为 DeepWiki，并新增 X 社交链接（[58bb572](https://github.com/dsd2077/CyberVerse/commit/58bb572)）
+
+### 2026-06-05~2026-06-12
+
+Features:
+- 豆包实时语音配置新增 `enable_custom_vad` 开关，可控制会话 payload 中是否启用自定义 VAD（[190187a](https://github.com/dsd2077/CyberVerse/commit/190187a)）
+
 ### 2026-05-29~2026-06-05
 
 Features:

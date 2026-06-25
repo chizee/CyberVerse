@@ -1,5 +1,19 @@
 # 변경 이력
 
+## 2026-06-12~2026-06-19
+
+Features:
+- LiteLLM을 LLM 게이트웨이 Provider로 추가하여 AWS Bedrock, Azure, Vertex AI, Mistral, Cohere 등 100개 이상의 모델 서비스를 통합 인터페이스로 사용할 수 있게 했고, 선택 의존성 `litellm`을 추가했습니다 ([bbd3ef9](https://github.com/dsd2077/CyberVerse/commit/bbd3ef9))
+- Avatar 모델 설정을 분리하고 `inference.avatar.model_config_dir`을 추가했습니다. `flash_head`, `live_act` 등의 모델 설정을 독립 YAML 파일에서 로드할 수 있으며, 메인 설정의 inline override와 설정 write-back 기능은 유지됩니다 ([80d0f94](https://github.com/dsd2077/CyberVerse/commit/80d0f94))
+
+Others:
+- 다국어 README에서 OOSMetrics 배지를 DeepWiki로 교체하고 X 소셜 링크를 추가했습니다 ([58bb572](https://github.com/dsd2077/CyberVerse/commit/58bb572))
+
+## 2026-06-05~2026-06-12
+
+Features:
+- Doubao 실시간 음성 설정에 `enable_custom_vad` 스위치를 추가하여 session payload에서 custom VAD 활성화 여부를 제어할 수 있게 했습니다 ([190187a](https://github.com/dsd2077/CyberVerse/commit/190187a))
+
 ## 2026-05-29~2026-06-05
 
 Features:

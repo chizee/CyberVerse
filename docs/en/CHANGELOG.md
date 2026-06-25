@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-06-12~2026-06-19
+
+Features:
+- Added LiteLLM as an LLM gateway provider, enabling access to 100+ model services such as AWS Bedrock, Azure, Vertex AI, Mistral, and Cohere through a unified interface, with the optional `litellm` dependency added ([bbd3ef9](https://github.com/dsd2077/CyberVerse/commit/bbd3ef9))
+- Split Avatar model configuration with the new `inference.avatar.model_config_dir`, allowing models such as `flash_head` and `live_act` to be loaded from separate YAML files while preserving inline overrides in the main config and config write-back support ([80d0f94](https://github.com/dsd2077/CyberVerse/commit/80d0f94))
+
+Others:
+- Replaced the OOSMetrics badge with DeepWiki in multilingual README files and added an X social link ([58bb572](https://github.com/dsd2077/CyberVerse/commit/58bb572))
+
+## 2026-06-05~2026-06-12
+
+Features:
+- Added the `enable_custom_vad` switch to Doubao realtime voice configuration, allowing session payloads to control whether custom VAD is enabled ([190187a](https://github.com/dsd2077/CyberVerse/commit/190187a))
+
 ## 2026-05-29~2026-06-05
 
 Features:
