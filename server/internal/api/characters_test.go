@@ -298,6 +298,36 @@ func TestTestCharacterVoiceSupportsQwenOmniProvider(t *testing.T) {
 	}
 }
 
+func TestTestCharacterVoiceSupportsQwenTTS(t *testing.T) {
+	inf := &fakeInferenceService{
+		ttsConfigs: make(chan inference.TTSConfig, 1),
+		ttsChunks:  []*pb.AudioChunk{{Data: []byte{1, 2, 3}, SampleRate: 16000, Channels: 1, Format: "pcm"}},
+	}
+	r := newTestRouterWithInference(inf)
+
+	req := httptest.NewRequest(
+		"POST",
+		"/api/v1/characters/test-voice",
+		strings.NewReader(`{"voice_provider":"qwen","model":"qwen3-tts-flash-realtime","voice_type":"Momo"}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.Handler().ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	select {
+	case config := <-inf.ttsConfigs:
+		if config.Provider != "qwen" || config.Model != "qwen3-tts-flash-realtime" || config.Voice != "Momo" {
+			t.Fatalf("unexpected tts config: %+v", config)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for tts config")
+	}
+}
+
 func TestTestCharacterVoiceSupportsCosyVoiceTTS(t *testing.T) {
 	inf := &fakeInferenceService{
 		ttsConfigs: make(chan inference.TTSConfig, 1),
@@ -321,6 +351,51 @@ func TestTestCharacterVoiceSupportsCosyVoiceTTS(t *testing.T) {
 	select {
 	case config := <-inf.ttsConfigs:
 		if config.Provider != "qwen" || config.Model != "cosyvoice-v3.5-flash" || config.Voice != "cosyvoice-v3.5-flash-peiyin-abc" {
+			t.Fatalf("unexpected tts config: %+v", config)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for tts config")
+	}
+}
+
+func TestTestCharacterVoiceSupportsOpenAITTS(t *testing.T) {
+	inf := &fakeInferenceService{
+		ttsConfigs: make(chan inference.TTSConfig, 1),
+		ttsChunks:  []*pb.AudioChunk{{Data: []byte{1, 2, 3}, SampleRate: 16000, Channels: 1, Format: "pcm"}},
+	}
+	r := newTestRouterWithInference(inf)
+	configPath := filepath.Join(t.TempDir(), "cyberverse_config.yaml")
+	if err := os.WriteFile(configPath, []byte(`
+inference:
+  tts:
+    default: "qwen"
+    qwen:
+      plugin_class: "inference.plugins.tts.qwen_tts_plugin.QwenTTSPlugin"
+      model: "qwen3-tts-flash-realtime"
+    openai:
+      plugin_class: "inference.plugins.tts.openai_tts_plugin.OpenAITTSPlugin"
+      model: "tts-1"
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	r.configPath = configPath
+
+	req := httptest.NewRequest(
+		"POST",
+		"/api/v1/characters/test-voice",
+		strings.NewReader(`{"voice_provider":"openai","voice_type":"nova"}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.Handler().ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	select {
+	case config := <-inf.ttsConfigs:
+		if config.Provider != "openai" || config.Voice != "nova" {
 			t.Fatalf("unexpected tts config: %+v", config)
 		}
 	case <-time.After(time.Second):

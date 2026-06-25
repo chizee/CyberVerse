@@ -211,7 +211,8 @@ const canSave = computed(() =>
 const canCheckVoice = computed(() =>
   (usesDoubaoVoice.value && (voiceMode.value === 'official' || !!trimmedCustomVoiceType.value))
   || (usesQwenOmniVoice.value && !!form.value.voice_type.trim())
-  || (usesCosyVoiceTTS.value && !!form.value.voice_type.trim())
+  || (form.value.mode !== 'omni' && selectedTTS.value === 'qwen' && !!form.value.voice_type.trim())
+  || (isOpenAIVoice.value && !!form.value.voice_type.trim())
 )
 const voiceCheckSucceeded = computed(() => voiceTestStatus.value === 'success')
 
@@ -677,7 +678,7 @@ async function handleCheckVoice() {
     await testCharacterVoice({
       voice_provider: resolveVoiceProviderForCheck(),
       voice_type: voiceType,
-      model: (usesCosyVoiceTTS.value || usesDoubaoTTS.value) ? selectedTTSModel.value : undefined,
+      model: ((form.value.mode !== 'omni' && selectedTTS.value === 'qwen') || usesDoubaoTTS.value) ? selectedTTSModel.value : undefined,
     })
     voiceTestStatus.value = 'success'
     voiceTestMessage.value = ''
@@ -1048,7 +1049,7 @@ const pageTitle = computed(() =>
                   </div>
                   <template v-else-if="usesCosyVoiceBuiltinTTS">
                     <div class="mt-1.5 grid gap-3 lg:grid-cols-[184px_minmax(0,1fr)_96px]">
-                      <div class="cv-pi-segment h-[42px] grid-cols-2 text-[11px]">
+                      <div class="cv-pi-segment h-[42px] min-w-0 grid-cols-2 text-[11px]">
                         <button
                           type="button"
                           @click="setCosyVoiceMode('official')"
@@ -1097,18 +1098,29 @@ const pageTitle = computed(() =>
                         @click="handleCheckVoice"
                         :disabled="testingVoice || !canCheckVoice"
                         :class="{ 'opacity-40 cursor-not-allowed': testingVoice || !canCheckVoice }"
-                        class="cv-pi-button cv-pi-button--compact h-[42px] w-[96px] shrink-0 px-2 disabled:opacity-40 disabled:cursor-not-allowed"
+                        class="cv-pi-button cv-pi-button--compact h-[42px] w-full min-w-0 px-2 disabled:opacity-40 disabled:cursor-not-allowed"
                       >
                         {{ t('common.check') }}
                       </button>
                     </div>
                   </template>
-                  <CvSelect
-                    v-else
-                    v-model="form.voice_type"
-                    :options="qwenTTSVoiceOptions"
-                    class="mt-1.5"
-                  />
+                  <div v-else class="mt-1.5 grid gap-3 lg:grid-cols-[minmax(0,1fr)_96px]">
+                    <CvSelect
+                      v-model="form.voice_type"
+                      :options="qwenTTSVoiceOptions"
+                      :success="voiceCheckSucceeded"
+                      class="min-w-0"
+                    />
+                    <button
+                      type="button"
+                      @click="handleCheckVoice"
+                      :disabled="testingVoice || !canCheckVoice"
+                      :class="{ 'opacity-40 cursor-not-allowed': testingVoice || !canCheckVoice }"
+                      class="cv-pi-button cv-pi-button--compact h-[42px] w-full min-w-0 px-2 disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      {{ t('common.check') }}
+                    </button>
+                  </div>
                 </label>
                 <p
                   v-if="usesCosyVoiceCloneOnlyTTS"
@@ -1152,24 +1164,42 @@ const pageTitle = computed(() =>
                   {{ voiceError }}
                 </p>
                 <p
-                  v-if="usesCosyVoiceTTS && voiceTestStatus === 'error' && voiceTestMessage"
+                  v-if="voiceTestStatus === 'error' && voiceTestMessage"
                   class="text-[11px] leading-5 text-cv-danger whitespace-pre-wrap break-all md:col-span-2 md:col-start-2 md:-mt-1"
                 >
                   {{ voiceTestMessage }}
                 </p>
               </template>
-              <label v-else-if="isOpenAIVoice" class="block md:col-span-2 md:col-start-2">
+              <div v-else-if="isOpenAIVoice" class="block md:col-span-2 md:col-start-2">
                 <span class="text-[12px] font-medium text-cv-text-muted">{{ t('common.voice') }}</span>
-                <CvSelect
-                  v-model="form.voice_type"
-                  :options="openAIVoiceOptions"
-                  class="mt-1.5"
-                />
-              </label>
+                <div class="mt-1.5 grid gap-3 lg:grid-cols-[minmax(0,1fr)_96px]">
+                  <CvSelect
+                    v-model="form.voice_type"
+                    :options="openAIVoiceOptions"
+                    :success="voiceCheckSucceeded"
+                    class="min-w-0"
+                  />
+                  <button
+                    type="button"
+                    @click="handleCheckVoice"
+                    :disabled="testingVoice || !canCheckVoice"
+                    :class="{ 'opacity-40 cursor-not-allowed': testingVoice || !canCheckVoice }"
+                    class="cv-pi-button cv-pi-button--compact h-[42px] w-full min-w-0 px-2 disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    {{ t('common.check') }}
+                  </button>
+                </div>
+                <p
+                  v-if="voiceTestStatus === 'error' && voiceTestMessage"
+                  class="mt-2 text-[11px] leading-5 text-cv-danger whitespace-pre-wrap break-all"
+                >
+                  {{ voiceTestMessage }}
+                </p>
+              </div>
               <div v-else class="block md:col-span-2 md:col-start-2">
                 <span class="text-[12px] font-medium text-cv-text-muted">{{ t('common.voice') }}</span>
-                <div class="mt-1.5 grid gap-3 lg:grid-cols-[240px_minmax(0,1fr)_auto]">
-                  <div class="cv-pi-segment h-[42px] grid-cols-2">
+                <div class="mt-1.5 grid gap-3 lg:grid-cols-[184px_minmax(0,1fr)_96px]">
+                  <div class="cv-pi-segment h-[42px] min-w-0 grid-cols-2">
                     <button
                       type="button"
                       @click="setVoiceMode('official')"
@@ -1221,7 +1251,7 @@ const pageTitle = computed(() =>
                     @click="handleCheckVoice"
                     :disabled="testingVoice || !canCheckVoice"
                     :class="{ 'opacity-40 cursor-not-allowed': testingVoice || !canCheckVoice }"
-                    class="cv-pi-button cv-pi-button--compact h-[42px] shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
+                    class="cv-pi-button cv-pi-button--compact h-[42px] w-full min-w-0 disabled:opacity-40 disabled:cursor-not-allowed"
                   >
                     {{ t('common.check') }}
                   </button>
