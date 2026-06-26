@@ -1,5 +1,25 @@
 # 변경 이력
 
+## 2026-06-19~2026-06-26
+
+Features:
+- Baidu Xiling 디지털 휴먼을 사용할 수 있게 했습니다. 캐릭터 생성 시 Xiling 인물을 선택하고, 설정 화면에서 확인한 뒤 대화 세션에서 바로 사용할 수 있습니다 ([41395b2](https://github.com/dsd2077/CyberVerse/commit/41395b2), [f52a6e2](https://github.com/dsd2077/CyberVerse/commit/f52a6e2))
+- 오프라인 비디오 생성을 추가했습니다. 텍스트나 오디오로 디지털 휴먼 영상을 만들고, 화면에서 진행 상황, 실패 원인, 재시도, 생성 결과 미리보기를 확인할 수 있습니다 ([fe1c04b](https://github.com/dsd2077/CyberVerse/commit/fe1c04b), [2b5d969](https://github.com/dsd2077/CyberVerse/commit/2b5d969), [44b8ddd](https://github.com/dsd2077/CyberVerse/commit/44b8ddd), [7fe35e3](https://github.com/dsd2077/CyberVerse/commit/7fe35e3), [2e56b04](https://github.com/dsd2077/CyberVerse/commit/2e56b04))
+- 더 많은 TTS Provider를 추가했습니다: CosyVoice와 Doubao TTS를 지원합니다 ([b618778](https://github.com/dsd2077/CyberVerse/commit/b618778), [c886d49](https://github.com/dsd2077/CyberVerse/commit/c886d49))
+- Qwen TTS와 OpenAI TTS 음색 check를 지원해 캐릭터 설정 시 음색 사용 가능 여부를 확인하기 쉬워졌습니다 ([0383563](https://github.com/dsd2077/CyberVerse/commit/0383563))
+- 세션 페이지의 채팅 사이드바를 드래그로 리사이즈할 수 있게 했습니다 ([f41474e](https://github.com/dsd2077/CyberVerse/commit/f41474e))
+
+Changes:
+- Persona의 복잡한 작업 실행 방식을 단순화해 작업 처리 흐름을 더 통일했습니다 ([2979363](https://github.com/dsd2077/CyberVerse/commit/2979363))
+- Doubao 세션에 더 풍부한 캐릭터 대화 배경을 전달해 답변이 캐릭터 설정에 더 잘 맞도록 했습니다 ([fcc515d](https://github.com/dsd2077/CyberVerse/commit/fcc515d))
+- 페이지 제목과 레이아웃을 정리해 화면을 이동할 때 현재 위치를 더 알기 쉽게 했습니다 ([a26cfdc](https://github.com/dsd2077/CyberVerse/commit/a26cfdc))
+
+Bugs:
+- Qwen ASR 연결이 예기치 않게 닫힐 때 처리가 불안정하던 문제를 수정했습니다 ([30faeac](https://github.com/dsd2077/CyberVerse/commit/30faeac))
+
+Others:
+- WeChat 그룹 QR 이미지를 업데이트하고 음성 클론 샘플 오디오를 추가했습니다 ([747e11b](https://github.com/dsd2077/CyberVerse/commit/747e11b), [80a97af](https://github.com/dsd2077/CyberVerse/commit/80a97af))
+
 ## 2026-06-12~2026-06-19
 
 Features:

@@ -1,5 +1,21 @@
 # 更新日志
 
+### 2026-06-19~2026-06-26
+
+Features:
+- 新增百度曦灵数字人接入：创建角色时可以选择曦灵形象，启动会话后直接使用曦灵数字人展示和互动（[41395b2](https://github.com/dsd2077/CyberVerse/commit/41395b2)，[f52a6e2](https://github.com/dsd2077/CyberVerse/commit/f52a6e2)）
+- 新增离线视频生成功能：可以用文本或音频生成数字人视频，并在页面查看进度、失败原因、重试任务和预览结果（[fe1c04b](https://github.com/dsd2077/CyberVerse/commit/fe1c04b)，[2b5d969](https://github.com/dsd2077/CyberVerse/commit/2b5d969)，[44b8ddd](https://github.com/dsd2077/CyberVerse/commit/44b8ddd)，[7fe35e3](https://github.com/dsd2077/CyberVerse/commit/7fe35e3)，[2e56b04](https://github.com/dsd2077/CyberVerse/commit/2e56b04)）
+- 新增更多 TTS Provider：支持 CosyVoice 和 Doubao TTS（[b618778](https://github.com/dsd2077/CyberVerse/commit/b618778)，[c886d49](https://github.com/dsd2077/CyberVerse/commit/c886d49)）
+- 支持 Qwen TTS 和 OpenAI TTS 音色 check，方便在角色配置时确认音色是否可用（[0383563](https://github.com/dsd2077/CyberVerse/commit/0383563)）
+- 会话页聊天侧栏支持拖拽调整宽度（[f41474e](https://github.com/dsd2077/CyberVerse/commit/f41474e)）
+
+Changes:
+- Doubao 会话会带上更完整的角色对话背景，让回复更贴近角色设定（[fcc515d](https://github.com/dsd2077/CyberVerse/commit/fcc515d)）
+- 前端页面标题和布局做了整理，页面切换时更清晰（[a26cfdc](https://github.com/dsd2077/CyberVerse/commit/a26cfdc)）
+
+Bugs:
+- 修复 Qwen ASR 连接异常关闭时处理不稳定的问题（[30faeac](https://github.com/dsd2077/CyberVerse/commit/30faeac)）
+
 ### 2026-06-12~2026-06-19
 
 Features:

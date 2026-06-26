@@ -1,5 +1,25 @@
 # Changelog
 
+## 2026-06-19~2026-06-26
+
+Features:
+- Added Baidu Xiling digital human support: characters can now use Xiling figures, preview them during setup, and run sessions with the Xiling avatar ([41395b2](https://github.com/dsd2077/CyberVerse/commit/41395b2), [f52a6e2](https://github.com/dsd2077/CyberVerse/commit/f52a6e2))
+- Added offline video generation: create digital human videos from text or audio, track progress, view failure reasons, retry jobs, and preview results in the page ([fe1c04b](https://github.com/dsd2077/CyberVerse/commit/fe1c04b), [2b5d969](https://github.com/dsd2077/CyberVerse/commit/2b5d969), [44b8ddd](https://github.com/dsd2077/CyberVerse/commit/44b8ddd), [7fe35e3](https://github.com/dsd2077/CyberVerse/commit/7fe35e3), [2e56b04](https://github.com/dsd2077/CyberVerse/commit/2e56b04))
+- Added more TTS providers: CosyVoice and Doubao TTS ([b618778](https://github.com/dsd2077/CyberVerse/commit/b618778), [c886d49](https://github.com/dsd2077/CyberVerse/commit/c886d49))
+- Added voice check support for Qwen TTS and OpenAI TTS, making it easier to verify voice availability during character setup ([0383563](https://github.com/dsd2077/CyberVerse/commit/0383563))
+- The session chat sidebar can now be resized by dragging ([f41474e](https://github.com/dsd2077/CyberVerse/commit/f41474e))
+
+Changes:
+- Simplified Persona task execution so complex task orchestration is more consistent ([2979363](https://github.com/dsd2077/CyberVerse/commit/2979363))
+- Doubao sessions now carry richer character conversation background, making replies better match the character setting ([fcc515d](https://github.com/dsd2077/CyberVerse/commit/fcc515d))
+- Page titles and layout were cleaned up so navigation is clearer ([a26cfdc](https://github.com/dsd2077/CyberVerse/commit/a26cfdc))
+
+Bugs:
+- Fixed unstable handling when Qwen ASR connections close unexpectedly ([30faeac](https://github.com/dsd2077/CyberVerse/commit/30faeac))
+
+Others:
+- Updated the WeChat group QR image and added voice cloning sample audio ([747e11b](https://github.com/dsd2077/CyberVerse/commit/747e11b), [80a97af](https://github.com/dsd2077/CyberVerse/commit/80a97af))
+
 ## 2026-06-12~2026-06-19
 
 Features:
