@@ -10,13 +10,14 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   renderError: [{ message?: string; body?: unknown }]
-  stateChanged: [{ streamReady: boolean }]
+  stateChanged: [{ streamReady: boolean; autoplayBlocked: boolean }]
 }>()
 
 const { t } = useI18n()
 
 const videoRef = ref<HTMLVideoElement | null>(null)
 const streamReady = ref(false)
+const autoplayBlocked = ref(false)
 const statusText = ref('')
 const errorText = ref('')
 
@@ -32,10 +33,15 @@ const canUseFlv = computed(() => {
 })
 
 function emitState() {
-  emit('stateChanged', { streamReady: streamReady.value })
+  emit('stateChanged', {
+    streamReady: streamReady.value,
+    autoplayBlocked: autoplayBlocked.value,
+  })
 }
 
 function setupPlayer() {
+  streamReady.value = false
+  autoplayBlocked.value = false
   errorText.value = ''
   statusText.value = ''
   resetPlaybackStats()
@@ -80,20 +86,28 @@ function setupPlayer() {
     autoCleanupMinBackwardDuration: 10,
   })
   player.on(mpegts.Events.ERROR, (_type, _detail, info) => {
-    streamReady.value = false
-    errorText.value = t('session.xunfeiPlaybackError')
+    markPlaybackError(t('session.xunfeiPlaybackError'))
     emit('renderError', { message: errorText.value, body: info })
-    emitState()
   })
   player.attachMediaElement(video)
   bindPlaybackDiagnostics(video)
   player.load()
-  void video.play().catch(() => {
-    errorText.value = t('session.xunfeiAutoplayBlocked')
-  })
+  void playVideo(true)
+  emitState()
+}
 
+function markPlaybackReady() {
   streamReady.value = true
-  statusText.value = t('session.xunfeiReady')
+  autoplayBlocked.value = false
+  errorText.value = ''
+  statusText.value = ''
+  emitState()
+}
+
+function markPlaybackError(message: string) {
+  streamReady.value = false
+  autoplayBlocked.value = false
+  errorText.value = message
   emitState()
 }
 
@@ -144,9 +158,19 @@ function onPlaybackStalled() {
   playbackStalledCount += 1
 }
 
+function onPlaybackPlaying() {
+  markPlaybackReady()
+}
+
+function onNativePlaybackError() {
+  markPlaybackError(t('session.xunfeiPlaybackError'))
+}
+
 function bindPlaybackDiagnostics(video: HTMLVideoElement) {
   video.addEventListener('waiting', onPlaybackWaiting)
   video.addEventListener('stalled', onPlaybackStalled)
+  video.addEventListener('playing', onPlaybackPlaying)
+  video.addEventListener('error', onNativePlaybackError)
   playbackStatsTimer = window.setInterval(() => logPlaybackStats(video), 5000)
 }
 
@@ -155,6 +179,8 @@ function unbindPlaybackDiagnostics() {
   if (video) {
     video.removeEventListener('waiting', onPlaybackWaiting)
     video.removeEventListener('stalled', onPlaybackStalled)
+    video.removeEventListener('playing', onPlaybackPlaying)
+    video.removeEventListener('error', onNativePlaybackError)
   }
   if (playbackStatsTimer) {
     window.clearInterval(playbackStatsTimer)
@@ -170,21 +196,31 @@ function muteAudio(mute: boolean) {
   if (video) video.muted = mute
 }
 
-function playVideo(play: boolean) {
+async function playVideo(play: boolean): Promise<boolean> {
   const video = videoRef.value
-  if (!video) return
+  if (!video) return false
   if (play) {
-    void video.play().catch(() => {
+    try {
+      await video.play()
+      autoplayBlocked.value = false
+      emitState()
+      return true
+    } catch {
+      streamReady.value = false
+      autoplayBlocked.value = true
       errorText.value = t('session.xunfeiAutoplayBlocked')
-    })
-  } else {
-    video.pause()
+      emitState()
+      return false
+    }
   }
+  video.pause()
+  return true
 }
 
 onMounted(setupPlayer)
 onUnmounted(() => {
   streamReady.value = false
+  autoplayBlocked.value = false
   emitState()
   destroyPlayer()
 })

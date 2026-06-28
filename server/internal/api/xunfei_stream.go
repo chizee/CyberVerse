@@ -51,15 +51,18 @@ func (r *Router) handleXunfeiAvatarStream(w http.ResponseWriter, req *http.Reque
 		return
 	}
 	if r.orch == nil {
+		logXunfeiStreamError(id, xunfeiStreamTransportUnknown, fmt.Errorf("orchestrator unavailable"))
 		writeJSON(w, http.StatusServiceUnavailable, ErrorResponse{Error: "Xunfei stream proxy requires the orchestrator"})
 		return
 	}
 	_, streamURL, ok := r.orch.XunfeiAvatarStream(id)
 	if !ok {
+		logXunfeiStreamError(id, xunfeiStreamTransportUnknown, fmt.Errorf("stream unavailable"))
 		writeJSON(w, http.StatusNotFound, ErrorResponse{Error: "Xunfei avatar stream is not available"})
 		return
 	}
-	switch detectXunfeiStreamTransport(streamURL) {
+	transport := detectXunfeiStreamTransport(streamURL)
+	switch transport {
 	case xunfeiStreamTransportRTMP:
 		r.proxyXunfeiRTMPStream(w, req, id, streamURL)
 		return
@@ -67,12 +70,14 @@ func (r *Router) handleXunfeiAvatarStream(w http.ResponseWriter, req *http.Reque
 		r.proxyXunfeiHTTPStream(w, req, id, streamURL)
 		return
 	}
+	logXunfeiStreamError(id, transport, fmt.Errorf("unsupported stream transport"))
 	writeJSON(w, http.StatusBadRequest, ErrorResponse{Error: "Xunfei stream proxy only supports RTMP or HTTP-FLV streams"})
 }
 
 func (r *Router) proxyXunfeiRTMPStream(w http.ResponseWriter, req *http.Request, id string, streamURL string) {
 	ffmpegPath, err := exec.LookPath("ffmpeg")
 	if err != nil {
+		logXunfeiStreamError(id, xunfeiStreamTransportRTMP, err)
 		writeJSON(w, http.StatusServiceUnavailable, ErrorResponse{Error: "ffmpeg is required for Xunfei RTMP playback"})
 		return
 	}
@@ -90,15 +95,18 @@ func (r *Router) proxyXunfeiRTMPStream(w http.ResponseWriter, req *http.Request,
 	)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
+		logXunfeiStreamError(id, xunfeiStreamTransportRTMP, err)
 		writeJSON(w, http.StatusInternalServerError, ErrorResponse{Error: "failed to prepare Xunfei stream proxy"})
 		return
 	}
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Start(); err != nil {
+		logXunfeiStreamError(id, xunfeiStreamTransportRTMP, err)
 		writeJSON(w, http.StatusBadGateway, ErrorResponse{Error: "failed to start Xunfei stream proxy"})
 		return
 	}
+	logXunfeiStreamConnected(id, xunfeiStreamTransportRTMP)
 
 	w.Header().Set("Content-Type", "video/x-flv")
 	w.Header().Set("Cache-Control", "no-store")
@@ -109,13 +117,18 @@ func (r *Router) proxyXunfeiRTMPStream(w http.ResponseWriter, req *http.Request,
 		return
 	}
 	if waitErr != nil {
-		log.Printf("Xunfei stream proxy exited session=%s: %v stderr=%s", id, waitErr, strings.TrimSpace(stderr.String()))
+		errText := strings.TrimSpace(stderr.String())
+		if errText != "" {
+			waitErr = fmt.Errorf("%w: %s", waitErr, errText)
+		}
+		logXunfeiStreamError(id, xunfeiStreamTransportRTMP, waitErr)
 	}
 }
 
 func (r *Router) proxyXunfeiHTTPStream(w http.ResponseWriter, req *http.Request, id string, streamURL string) {
 	upstreamReq, err := http.NewRequestWithContext(req.Context(), http.MethodGet, streamURL, nil)
 	if err != nil {
+		logXunfeiStreamError(id, xunfeiStreamTransportHTTPFLV, err)
 		writeJSON(w, http.StatusBadRequest, ErrorResponse{Error: "invalid Xunfei HTTP-FLV stream URL"})
 		return
 	}
@@ -124,14 +137,17 @@ func (r *Router) proxyXunfeiHTTPStream(w http.ResponseWriter, req *http.Request,
 
 	resp, err := xunfeiStreamHTTPClient().Do(upstreamReq)
 	if err != nil {
+		logXunfeiStreamError(id, xunfeiStreamTransportHTTPFLV, err)
 		writeJSON(w, http.StatusBadGateway, ErrorResponse{Error: "failed to connect Xunfei HTTP-FLV stream: " + err.Error()})
 		return
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		logXunfeiStreamError(id, xunfeiStreamTransportHTTPFLV, fmt.Errorf("upstream returned %s", resp.Status))
 		writeJSON(w, http.StatusBadGateway, ErrorResponse{Error: fmt.Sprintf("Xunfei HTTP-FLV stream returned %s", resp.Status)})
 		return
 	}
+	logXunfeiStreamConnected(id, xunfeiStreamTransportHTTPFLV)
 
 	w.Header().Set("Content-Type", "video/x-flv")
 	w.Header().Set("Cache-Control", "no-store")
@@ -145,15 +161,12 @@ func copyXunfeiStream(w http.ResponseWriter, req *http.Request, id string, reade
 		flusher.Flush()
 	}
 
-	startedAt := time.Now()
-	var bytesCopied int64
 	var copyErr error
 	buf := make([]byte, 32*1024)
 	for {
 		n, readErr := reader.Read(buf)
 		if n > 0 {
 			written, writeErr := w.Write(buf[:n])
-			bytesCopied += int64(written)
 			if canFlush {
 				flusher.Flush()
 			}
@@ -176,10 +189,20 @@ func copyXunfeiStream(w http.ResponseWriter, req *http.Request, id string, reade
 	if req.Context().Err() != nil {
 		return
 	}
-	log.Printf("Xunfei stream proxy ended session=%s bytes=%d elapsed_ms=%d", id, bytesCopied, time.Since(startedAt).Milliseconds())
 	if copyErr != nil {
-		log.Printf("Xunfei stream proxy copy failed session=%s: %v", id, copyErr)
+		logXunfeiStreamError(id, xunfeiStreamTransportUnknown, copyErr)
 	}
+}
+
+func logXunfeiStreamConnected(sessionID string, transport xunfeiStreamTransport) {
+	log.Printf("Xunfei stream proxy connected session=%s transport=%s", sessionID, transport)
+}
+
+func logXunfeiStreamError(sessionID string, transport xunfeiStreamTransport, err error) {
+	if err == nil {
+		return
+	}
+	log.Printf("Xunfei stream proxy error session=%s transport=%s err=%v", sessionID, transport, err)
 }
 
 func detectXunfeiStreamTransport(streamURL string) xunfeiStreamTransport {

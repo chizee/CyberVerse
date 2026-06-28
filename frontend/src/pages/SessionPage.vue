@@ -6,7 +6,6 @@ import VideoPlayer from '../components/VideoPlayer.vue'
 import BaiduXilingPlayer from '../components/BaiduXilingPlayer.vue'
 import XunfeiAvatarPlayer from '../components/XunfeiAvatarPlayer.vue'
 import ChatPanel from '../components/ChatPanel.vue'
-import VoiceWaveform from '../components/VoiceWaveform.vue'
 import { useWebRTC } from '../composables/useWebRTC'
 import { useDirectWebRTC } from '../composables/useDirectWebRTC'
 import { useChat, type BaiduXilingAudioEvent } from '../composables/useChat'
@@ -110,9 +109,12 @@ const webrtcDisconnect = isDirectMode ? dp.disconnect : lk.disconnect
 const setAVSyncLoggingEnabled = isDirectMode ? dp.setAVSyncLoggingEnabled : lk.setAVSyncLoggingEnabled
 
 const baiduOutputMuted = ref(false)
-const xunfeiConnectionState = ref({ streamReady: false })
+const xunfeiConnectionState = ref({ streamReady: false, autoplayBlocked: false })
 const outputMutedVisual = computed(() => isExternalAvatarSession.value ? baiduOutputMuted.value : isOutputMuted.value)
 const outputButtonTitle = computed(() => {
+  if (isXunfeiSession.value && xunfeiConnectionState.value.autoplayBlocked) {
+    return t('session.xunfeiAutoplayBlocked')
+  }
   return outputMutedVisual.value ? t('session.outputUnmute') : t('session.outputMute')
 })
 const mediaConnected = computed(() => {
@@ -632,9 +634,12 @@ async function handleOutputButtonClick() {
     return
   }
   if (isXunfeiSession.value) {
+    if (!xunfeiConnectionState.value.streamReady || xunfeiConnectionState.value.autoplayBlocked) {
+      await xunfeiPlayerRef.value?.playVideo(true)
+      return
+    }
     baiduOutputMuted.value = !baiduOutputMuted.value
     xunfeiPlayerRef.value?.muteAudio(baiduOutputMuted.value)
-    xunfeiPlayerRef.value?.playVideo(true)
     return
   }
   await toggleOutputMute()
@@ -644,6 +649,11 @@ function formatTime(s: number): string {
   const m = Math.floor(s / 60)
   const sec = s % 60
   return `${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`
+}
+
+function micDockBarHeight(level: number): string {
+  if (isMuted.value) return '1px'
+  return `${2 + Math.min(1, Math.max(0, level || 0)) * 14}px`
 }
 </script>
 
@@ -774,16 +784,6 @@ function formatTime(s: number): string {
         </div>
       </div>
 
-      <!-- Local mic input level (Web Audio analyser, not avatar state) -->
-      <div v-if="hasAudioInputCapability" class="absolute bottom-14 left-5 z-10 max-w-[min(100%,28rem)]">
-        <VoiceWaveform
-          type="user"
-          :label="t('session.micInput')"
-          :levels="micBarLevels"
-          :muted="isMuted"
-        />
-      </div>
-
       <div
         v-if="hasVisualInputCapability && visualInput.error.value"
         class="absolute bottom-24 left-1/2 -translate-x-1/2 z-10 max-w-[min(90vw,28rem)] px-3 py-2 bg-black/80 border border-red-400/30 text-red-100 text-xs rounded-cv-md"
@@ -822,7 +822,16 @@ function formatTime(s: number): string {
       </div>
 
       <!-- Control bar (bottom center, floating) -->
-      <div class="absolute bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-4 px-6 py-2.5 bg-black/70 backdrop-blur-xl rounded-2xl border border-white/10 shadow-[0_4px_16px_rgba(0,0,0,0.3)] z-10">
+      <div class="absolute bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-4 px-6 py-2.5 bg-black/70 backdrop-blur-xl rounded-2xl border border-white/10 shadow-[0_4px_16px_rgba(0,0,0,0.3)] z-10 overflow-hidden">
+        <div v-if="hasAudioInputCapability" class="dock-waveform-background" aria-hidden="true">
+          <span
+            v-for="(level, index) in micBarLevels"
+            :key="index"
+            class="dock-waveform-bar"
+            :style="{ height: micDockBarHeight(level) }"
+          />
+        </div>
+
         <!-- User video input (standard and qwen_omni voice sessions) -->
         <button
           v-if="hasVisualInputCapability"
@@ -830,7 +839,7 @@ function formatTime(s: number): string {
           :disabled="!canUseVisualInput || visualInput.isStarting.value"
           :title="visualInput.isCameraActive.value ? t('session.cameraOff') : t('session.cameraOn')"
           :aria-label="visualInput.isCameraActive.value ? t('session.cameraOff') : t('session.cameraOn')"
-          class="w-12 h-12 rounded-full flex items-center justify-center transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+          class="relative z-10 w-12 h-12 rounded-full flex items-center justify-center transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
           :class="visualInput.isCameraActive.value ? 'bg-cv-accent text-white' : 'bg-white/10 text-cv-text hover:bg-white/16'"
           @click="visualInput.toggleCamera()"
         >
@@ -846,7 +855,7 @@ function formatTime(s: number): string {
           type="button"
           :title="outputButtonTitle"
           :aria-label="outputButtonTitle"
-          class="w-12 h-12 rounded-full flex items-center justify-center transition-colors cursor-pointer"
+          class="relative z-10 w-12 h-12 rounded-full flex items-center justify-center transition-colors cursor-pointer"
           :class="outputMutedVisual ? 'bg-cv-danger text-white' : 'bg-white/10 text-cv-text hover:bg-white/16'"
           @click="handleOutputButtonClick"
         >
@@ -860,7 +869,7 @@ function formatTime(s: number): string {
         <!-- Mic button -->
         <button v-if="hasAudioInputCapability"
                 @click="toggleMute()"
-                class="w-12 h-12 rounded-full flex items-center justify-center transition-colors cursor-pointer"
+                class="relative z-10 w-12 h-12 rounded-full flex items-center justify-center transition-colors cursor-pointer"
                 :class="isMuted ? 'bg-cv-danger' : 'bg-cv-accent shadow-[0_2px_8px_rgba(59,130,246,0.3)]'">
           <svg class="w-5 h-5 text-white" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5">
             <rect x="7" y="2" width="6" height="10" rx="3" />
@@ -870,14 +879,14 @@ function formatTime(s: number): string {
         </button>
 
         <!-- Timer -->
-        <div class="flex items-center gap-2">
+        <div class="relative z-10 flex items-center gap-2">
           <span class="w-1.5 h-1.5 rounded-full" :class="mediaConnected ? 'bg-cv-success' : 'bg-cv-danger'" />
           <span class="text-[11px] text-cv-text-muted font-mono">{{ formatTime(elapsed) }}</span>
         </div>
 
         <!-- Disconnect -->
         <button @click="handleDisconnect"
-                class="w-10 h-10 rounded-full bg-cv-danger flex items-center justify-center text-white hover:bg-red-600 transition-colors cursor-pointer">
+                class="relative z-10 w-10 h-10 rounded-full bg-cv-danger flex items-center justify-center text-white hover:bg-red-600 transition-colors cursor-pointer">
           <svg class="w-4 h-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M4 4l8 8M12 4l-8 8" stroke-linecap="round" />
           </svg>
@@ -1092,6 +1101,32 @@ function formatTime(s: number): string {
 
 .chat-expand-button:hover {
   background: rgba(0, 0, 0, 0.9);
+}
+
+.dock-waveform-background {
+  position: absolute;
+  right: 0;
+  bottom: 7px;
+  left: 0;
+  z-index: 0;
+  display: flex;
+  height: 18px;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 3px;
+  pointer-events: none;
+  opacity: 0.28;
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 12%, #000 88%, transparent);
+  mask-image: linear-gradient(90deg, transparent, #000 12%, #000 88%, transparent);
+}
+
+.dock-waveform-bar {
+  width: 3px;
+  max-height: 16px;
+  border-radius: 999px;
+  background: var(--color-cv-success);
+  box-shadow: 0 0 8px rgba(34, 197, 94, 0.32);
+  transition: height 75ms ease;
 }
 
 .visual-preview {
