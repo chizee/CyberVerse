@@ -31,6 +31,7 @@ type Character struct {
 	AvatarImage     string           `json:"avatar_image"`
 	AvatarBackend   string           `json:"avatar_backend"`
 	BaiduXiling     *BaiduXiling     `json:"baidu_xiling,omitempty"`
+	Xunfei          *XunfeiAvatar    `json:"xunfei,omitempty"`
 	OfflineVideoTTS *OfflineVideoTTS `json:"offline_video_tts,omitempty"`
 	UseFaceCrop     bool             `json:"use_face_crop"`
 	Mode            string           `json:"mode"`
@@ -74,9 +75,30 @@ type BaiduXiling struct {
 	Height          int    `json:"height"`
 }
 
+type XunfeiAvatar struct {
+	AvatarID        string `json:"avatar_id"`
+	AvatarName      string `json:"avatar_name,omitempty"`
+	SceneID         string `json:"scene_id,omitempty"`
+	VCN             string `json:"vcn"`
+	ThumbnailURL    string `json:"thumbnail_url,omitempty"`
+	PreviewVideoURL string `json:"preview_video_url,omitempty"`
+	SourceImageURL  string `json:"source_image_url,omitempty"`
+	Status          string `json:"status,omitempty"`
+	Protocol        string `json:"protocol,omitempty"`
+	Width           int    `json:"width,omitempty"`
+	Height          int    `json:"height,omitempty"`
+	FPS             int    `json:"fps,omitempty"`
+	Bitrate         int    `json:"bitrate,omitempty"`
+	Speed           int    `json:"speed,omitempty"`
+	Pitch           int    `json:"pitch,omitempty"`
+	Volume          int    `json:"volume,omitempty"`
+	Air             int    `json:"air,omitempty"`
+}
+
 const DefaultIdleVideoProfile = "breathing10s_v1"
 const AvatarBackendLocalImage = "local_image"
 const AvatarBackendBaiduXiling = "baidu_xiling"
+const AvatarBackendXunfei = "xunfei"
 
 func DefaultComponents() Components {
 	return Components{LLM: "qwen", ASR: "qwen", TTS: "qwen"}
@@ -126,6 +148,8 @@ func normalizeAvatarBackend(backend string) string {
 	switch strings.TrimSpace(backend) {
 	case AvatarBackendBaiduXiling:
 		return AvatarBackendBaiduXiling
+	case AvatarBackendXunfei:
+		return AvatarBackendXunfei
 	default:
 		return AvatarBackendLocalImage
 	}
@@ -150,6 +174,77 @@ func normalizeBaiduXilingConfig(cfg *BaiduXiling) *BaiduXiling {
 		out.Height = 0
 	}
 	return &out
+}
+
+func clampXunfeiRange(value, fallback, minValue, maxValue int) int {
+	if value == 0 {
+		return fallback
+	}
+	if value < minValue {
+		return minValue
+	}
+	if value > maxValue {
+		return maxValue
+	}
+	return value
+}
+
+func normalizeXunfeiConfig(cfg *XunfeiAvatar) *XunfeiAvatar {
+	if cfg == nil {
+		return nil
+	}
+	out := *cfg
+	out.AvatarID = strings.TrimSpace(out.AvatarID)
+	out.AvatarName = strings.TrimSpace(out.AvatarName)
+	out.SceneID = strings.TrimSpace(out.SceneID)
+	out.VCN = strings.TrimSpace(out.VCN)
+	out.ThumbnailURL = strings.TrimSpace(out.ThumbnailURL)
+	out.PreviewVideoURL = strings.TrimSpace(out.PreviewVideoURL)
+	out.SourceImageURL = strings.TrimSpace(out.SourceImageURL)
+	out.Status = strings.TrimSpace(out.Status)
+	switch strings.TrimSpace(strings.ToLower(out.Protocol)) {
+	case "xrtc", "rtmp", "webrtc", "flv":
+		out.Protocol = strings.TrimSpace(strings.ToLower(out.Protocol))
+	default:
+		out.Protocol = "flv"
+	}
+	if out.Width == 0 {
+		out.Width = 720
+	}
+	if out.Height == 0 {
+		out.Height = 1280
+	}
+	if out.Width < 300 {
+		out.Width = 300
+	}
+	if out.Height < 300 {
+		out.Height = 300
+	}
+	if out.Width > 4096 {
+		out.Width = 4096
+	}
+	if out.Height > 4096 {
+		out.Height = 4096
+	}
+	if rem := out.Width % 4; rem != 0 {
+		out.Width -= rem
+	}
+	if rem := out.Height % 4; rem != 0 {
+		out.Height -= rem
+	}
+	out.FPS = clampXunfeiRange(out.FPS, 25, 13, 25)
+	out.Bitrate = clampXunfeiRange(out.Bitrate, 2000, 200, 20000)
+	out.Speed = clampXunfeiRange(out.Speed, 50, 0, 100)
+	out.Pitch = clampXunfeiRange(out.Pitch, 50, 0, 100)
+	out.Volume = clampXunfeiRange(out.Volume, 50, 0, 100)
+	if out.Air != 1 {
+		out.Air = 0
+	}
+	return &out
+}
+
+func NormalizeXunfeiAvatarConfig(cfg *XunfeiAvatar) *XunfeiAvatar {
+	return normalizeXunfeiConfig(cfg)
 }
 
 func NormalizeOfflineVideoTTS(cfg *OfflineVideoTTS) *OfflineVideoTTS {
@@ -191,9 +286,19 @@ func normalizeAvatarFields(c *Character, fallback *Character) {
 		if c.BaiduXiling == nil && fallback != nil && fallback.AvatarBackend == AvatarBackendBaiduXiling {
 			c.BaiduXiling = normalizeBaiduXilingConfig(fallback.BaiduXiling)
 		}
+		c.Xunfei = nil
+		return
+	}
+	if c.AvatarBackend == AvatarBackendXunfei {
+		c.Xunfei = normalizeXunfeiConfig(c.Xunfei)
+		if c.Xunfei == nil && fallback != nil && fallback.AvatarBackend == AvatarBackendXunfei {
+			c.Xunfei = normalizeXunfeiConfig(fallback.Xunfei)
+		}
+		c.BaiduXiling = nil
 		return
 	}
 	c.BaiduXiling = nil
+	c.Xunfei = nil
 }
 
 type Store struct {

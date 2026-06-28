@@ -5,6 +5,7 @@ export type SessionVisualInputConfig = NonNullable<CreateSessionResponse['visual
 export type SessionAudioInputConfig = NonNullable<CreateSessionResponse['audio_input']>
 export type AvatarIdleStrategy = NonNullable<CreateSessionResponse['idle_strategy']>
 export type BaiduXilingSessionConfig = NonNullable<CreateSessionResponse['baidu_xiling']>
+export type XunfeiSessionConfig = NonNullable<CreateSessionResponse['xunfei']>
 
 export interface SessionLaunchState {
   session_id: string
@@ -16,6 +17,7 @@ export interface SessionLaunchState {
   idle_strategy?: AvatarIdleStrategy
   audio_input?: SessionAudioInputConfig
   baidu_xiling?: BaiduXilingSessionConfig
+  xunfei?: XunfeiSessionConfig
   livekit_url?: string
   livekit_token?: string
   idle_video_url?: string
@@ -86,6 +88,7 @@ export function buildSessionLaunchState(
     idle_strategy: normalizeIdleStrategy(response.idle_strategy || ''),
     audio_input: response.audio_input,
     baidu_xiling: response.baidu_xiling,
+    xunfei: response.xunfei,
     livekit_url: response.livekit_url,
     livekit_token: response.livekit_token,
     idle_video_url: response.idle_video_url,
@@ -120,6 +123,7 @@ export function loadSessionLaunchState(sessionId: string): SessionLaunchState | 
     idle_strategy: normalizeIdleStrategy(parsed.idle_strategy || ''),
     audio_input: parsed.audio_input,
     baidu_xiling: parsed.baidu_xiling,
+    xunfei: parsed.xunfei,
     livekit_url: parsed.livekit_url,
     livekit_token: parsed.livekit_token,
     idle_video_url: parsed.idle_video_url,
@@ -151,10 +155,11 @@ export function sessionLaunchStateFromQuery(
   const idleImageUrl = firstQueryValue(query.idle_image_url)
   const audioInput = parseJSON<SessionAudioInputConfig>(firstQueryValue(query.audio_input))
   const baiduXiling = parseJSON<BaiduXilingSessionConfig>(firstQueryValue(query.baidu_xiling))
+  const xunfei = parseJSON<XunfeiSessionConfig>(firstQueryValue(query.xunfei))
   const visualInput = parseJSON<SessionVisualInputConfig>(firstQueryValue(query.visual_input))
   const returnPath = normalizeReturnPath(firstQueryValue(query.return_path))
 
-  if (!streamingMode && !mode && !avatarEnabled && !idleStrategy && !characterId && !livekitUrl && !livekitToken && !idleVideoUrl && !idleVideoUrls && !idleImageUrl && !audioInput && !baiduXiling && !visualInput && !returnPath) {
+  if (!streamingMode && !mode && !avatarEnabled && !idleStrategy && !characterId && !livekitUrl && !livekitToken && !idleVideoUrl && !idleVideoUrls && !idleImageUrl && !audioInput && !baiduXiling && !xunfei && !visualInput && !returnPath) {
     return null
   }
 
@@ -167,6 +172,7 @@ export function sessionLaunchStateFromQuery(
     avatar_enabled: avatarEnabled ? avatarEnabled === 'true' : undefined,
     idle_strategy: normalizeIdleStrategy(idleStrategy),
     baidu_xiling: baiduXiling,
+    xunfei,
     livekit_url: livekitUrl || undefined,
     livekit_token: livekitToken || undefined,
     idle_video_url: idleVideoUrl || undefined,

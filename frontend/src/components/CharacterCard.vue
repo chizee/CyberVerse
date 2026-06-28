@@ -10,10 +10,21 @@ const { t, locale } = useI18n()
 const props = defineProps<{ character: Character }>()
 const emit = defineEmits<{ delete: [id: string] }>()
 const isBaiduXiling = computed(() => props.character.avatar_backend === 'baidu_xiling')
+const isXunfei = computed(() => props.character.avatar_backend === 'xunfei')
+const isExternalAvatar = computed(() => isBaiduXiling.value || isXunfei.value)
 const baiduFigureId = computed(() => props.character.baidu_xiling?.figure_id || '')
+const xunfeiAvatarId = computed(() => props.character.xunfei?.avatar_id || '')
+const externalAvatarLabel = computed(() =>
+  isXunfei.value ? t('characterCard.xunfeiDigitalHuman') : t('characterCard.baiduDigitalHuman')
+)
+const externalAvatarId = computed(() => isXunfei.value ? xunfeiAvatarId.value : baiduFigureId.value)
 const coverImage = computed(() =>
-  isBaiduXiling.value
-    ? (props.character.baidu_xiling?.thumbnail_url || props.character.baidu_xiling?.source_image_url || '')
+  isExternalAvatar.value
+    ? (
+        isXunfei.value
+          ? (props.character.xunfei?.thumbnail_url || props.character.xunfei?.source_image_url || '')
+          : (props.character.baidu_xiling?.thumbnail_url || props.character.baidu_xiling?.source_image_url || '')
+      )
     : props.character.active_image
       ? `/api/v1/characters/${props.character.id}/images/${encodeURIComponent(props.character.active_image)}`
       : props.character.avatar_image
@@ -45,14 +56,14 @@ function edit() {
       <div class="w-full h-full" :style="{ background: coverImage ? undefined : nameToGradient(character.name) }">
         <img v-if="coverImage" :src="coverImage" :alt="character.name" class="w-full h-full object-cover object-top" />
         <div
-          v-else-if="isBaiduXiling"
+          v-else-if="isExternalAvatar"
           class="flex h-full flex-col items-center justify-center px-6 text-center"
         >
           <div class="rounded-cv-sm border border-cv-accent/30 bg-cv-accent/10 px-2 py-1 text-[11px] font-medium text-cv-accent">
-            {{ t('characterCard.baiduDigitalHuman') }}
+            {{ externalAvatarLabel }}
           </div>
           <div class="mt-3 max-w-full break-all text-[12px] leading-5 text-cv-text/70">
-            {{ baiduFigureId }}
+            {{ externalAvatarId }}
           </div>
         </div>
       </div>
@@ -89,12 +100,12 @@ function edit() {
         <!-- Footer -->
         <div class="flex items-center justify-between">
           <div class="flex items-center gap-1.5">
-            <span class="w-1.5 h-1.5 rounded-full" :class="isBaiduXiling ? 'bg-cv-accent' : 'bg-cv-success'" />
+            <span class="w-1.5 h-1.5 rounded-full" :class="isExternalAvatar ? 'bg-cv-accent' : 'bg-cv-success'" />
             <span
               class="max-w-[165px] truncate text-[11px] text-cv-text/60 drop-shadow-[0_1px_2px_rgba(0,0,0,0.75)]"
-              :title="isBaiduXiling ? t('characterCard.baiduDigitalHuman') : formatVoiceTypeDisplay(character.voice_type, t, locale)"
+              :title="isExternalAvatar ? externalAvatarLabel : formatVoiceTypeDisplay(character.voice_type, t, locale)"
             >
-              {{ isBaiduXiling ? t('characterCard.baiduDigitalHuman') : formatVoiceTypeDisplay(character.voice_type, t, locale) }}
+              {{ isExternalAvatar ? externalAvatarLabel : formatVoiceTypeDisplay(character.voice_type, t, locale) }}
             </span>
           </div>
           <button @click.stop="launch"

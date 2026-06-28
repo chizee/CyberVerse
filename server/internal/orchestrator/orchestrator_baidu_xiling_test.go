@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -20,6 +21,97 @@ type baiduXilingInferenceStub struct {
 	llmCalls    int
 	ttsCalls    int
 	avatarCalls int
+}
+
+type xunfeiAvatarRuntimeStub struct {
+	mu       sync.Mutex
+	chunks   [][]byte
+	called   chan struct{}
+	received chan struct{}
+	callOnce sync.Once
+	once     sync.Once
+	stopped  bool
+}
+
+func (f *xunfeiAvatarRuntimeStub) SendPCMStream(ctx context.Context, ch <-chan []byte) error {
+	f.callOnce.Do(func() {
+		if f.called != nil {
+			close(f.called)
+		}
+	})
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case pcm, ok := <-ch:
+			if !ok {
+				return nil
+			}
+			if len(pcm) == 0 {
+				continue
+			}
+			cp := append([]byte(nil), pcm...)
+			f.mu.Lock()
+			f.chunks = append(f.chunks, cp)
+			f.mu.Unlock()
+			f.once.Do(func() {
+				if f.received != nil {
+					close(f.received)
+				}
+			})
+		}
+	}
+}
+
+func (f *xunfeiAvatarRuntimeStub) waitCalled(t *testing.T) {
+	t.Helper()
+	if f.called == nil {
+		t.Fatal("test runtime missing called channel")
+	}
+	select {
+	case <-f.called:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for Xunfei audio driver to start")
+	}
+}
+
+func (f *xunfeiAvatarRuntimeStub) Stop(context.Context) error {
+	f.mu.Lock()
+	f.stopped = true
+	f.mu.Unlock()
+	return nil
+}
+
+func (f *xunfeiAvatarRuntimeStub) isStopped() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.stopped
+}
+
+func (f *xunfeiAvatarRuntimeStub) StreamURL() string { return "rtmp://example.test/live/avatar" }
+
+func (f *xunfeiAvatarRuntimeStub) Protocol() string { return "rtmp" }
+
+func (f *xunfeiAvatarRuntimeStub) audioBytes() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	total := 0
+	for _, chunk := range f.chunks {
+		total += len(chunk)
+	}
+	return total
+}
+
+func (f *xunfeiAvatarRuntimeStub) waitAudio(t *testing.T) {
+	t.Helper()
+	if f.received == nil {
+		t.Fatal("test runtime missing received channel")
+	}
+	select {
+	case <-f.received:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for Xunfei audio driver PCM")
+	}
 }
 
 func (f *baiduXilingInferenceStub) HealthCheck(context.Context) error { return nil }
@@ -64,20 +156,37 @@ func (f *baiduXilingInferenceStub) GenerateLLMStream(context.Context, string, []
 	return ch, errCh
 }
 
-func (f *baiduXilingInferenceStub) SynthesizeSpeechStream(context.Context, <-chan string, inference.TTSConfig) (<-chan *pb.AudioChunk, <-chan error) {
+func (f *baiduXilingInferenceStub) SynthesizeSpeechStream(ctx context.Context, textCh <-chan string, _ inference.TTSConfig) (<-chan *pb.AudioChunk, <-chan error) {
 	f.mu.Lock()
 	f.ttsCalls++
 	f.mu.Unlock()
 	ch := make(chan *pb.AudioChunk, 1)
-	errCh := make(chan error)
-	ch <- &pb.AudioChunk{
-		Data:       []byte{0, 0, 1, 0},
-		SampleRate: 16000,
-		Channels:   1,
-		Format:     "pcm",
-	}
-	close(ch)
-	close(errCh)
+	errCh := make(chan error, 1)
+	go func() {
+		defer close(ch)
+		defer close(errCh)
+		for {
+			select {
+			case <-ctx.Done():
+				errCh <- ctx.Err()
+				return
+			case text, ok := <-textCh:
+				if !ok {
+					return
+				}
+				if strings.TrimSpace(text) == "" {
+					continue
+				}
+				ch <- &pb.AudioChunk{
+					Data:       []byte{0, 0, 1, 0},
+					SampleRate: 16000,
+					Channels:   1,
+					Format:     "pcm",
+				}
+				return
+			}
+		}
+	}()
 	return ch, errCh
 }
 
@@ -177,6 +286,114 @@ func TestBaiduXilingTextTurnUsesTTSAndAudioDataPipeline(t *testing.T) {
 	}
 }
 
+func TestXunfeiTextTurnUsesTTSAndAudioDriverPipeline(t *testing.T) {
+	root := t.TempDir()
+	charStore, err := character.NewStore(filepath.Join(root, "characters"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	char, err := charStore.Create(&character.Character{
+		Name:          "Xunfei",
+		AvatarBackend: character.AvatarBackendXunfei,
+		Xunfei:        &character.XunfeiAvatar{AvatarID: "avatar-1", VCN: "vcn-1"},
+		VoiceType:     "Momo",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sessionMgr := NewSessionManager(4)
+	t.Cleanup(sessionMgr.Stop)
+	session, err := sessionMgr.Create("session-xunfei", ModeStandard, char.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inf := &baiduXilingInferenceStub{}
+	hub := ws.NewHub()
+	client := &ws.Client{SessionID: session.ID, Send: make(chan []byte, 20)}
+	hub.Register(client)
+	orch := New(inf, hub, sessionMgr, nil, charStore)
+	xunfeiRuntime := &xunfeiAvatarRuntimeStub{called: make(chan struct{}), received: make(chan struct{})}
+	orch.RegisterXunfeiAvatarSession(session.ID, xunfeiRuntime)
+	if !orch.isXunfeiAvatarSession(session) {
+		t.Fatal("expected test session to be recognized as Xunfei")
+	}
+	if err := orch.HandleTextInput(context.Background(), session.ID, "请说一句话"); err != nil {
+		t.Fatal(err)
+	}
+	session.WaitPipelineDone(2 * time.Second)
+
+	llmCalls, ttsCalls, avatarCalls := inf.calls()
+	if llmCalls != 1 {
+		t.Fatalf("expected one LLM call, got %d", llmCalls)
+	}
+	if ttsCalls != 1 {
+		t.Fatalf("expected Xunfei to reuse local TTS, got %d calls", ttsCalls)
+	}
+	if avatarCalls != 0 {
+		t.Fatalf("expected Xunfei to skip avatar stream, got %d calls", avatarCalls)
+	}
+	xunfeiRuntime.waitCalled(t)
+	xunfeiRuntime.waitAudio(t)
+	if got := xunfeiRuntime.audioBytes(); got == 0 {
+		t.Fatalf("expected Xunfei audio driver to receive PCM")
+	}
+	if got := session.GetState(); got != StateListening {
+		t.Fatalf("expected session to return to listening, got %s", got)
+	}
+	history := session.HistorySnapshot()
+	if len(history) != 2 || history[0].Role != "user" || history[1].Role != "assistant" {
+		t.Fatalf("expected user and assistant messages, got %+v", history)
+	}
+}
+
+func TestXunfeiIdleEvictionStopsAvatarRuntime(t *testing.T) {
+	root := t.TempDir()
+	charStore, err := character.NewStore(filepath.Join(root, "characters"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	char, err := charStore.Create(&character.Character{
+		Name:          "Xunfei Idle",
+		AvatarBackend: character.AvatarBackendXunfei,
+		Xunfei:        &character.XunfeiAvatar{AvatarID: "avatar-1", VCN: "vcn-1"},
+		VoiceType:     "Momo",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sessionMgr := NewSessionManagerWithTimeout(4, 50*time.Millisecond)
+	t.Cleanup(sessionMgr.Stop)
+	session, err := sessionMgr.Create("session-xunfei-idle", ModeStandard, char.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	orch := New(&baiduXilingInferenceStub{}, ws.NewHub(), sessionMgr, nil, charStore)
+	xunfeiRuntime := &xunfeiAvatarRuntimeStub{}
+	orch.RegisterXunfeiAvatarSession(session.ID, xunfeiRuntime)
+	sessionMgr.OnSessionEnd = func(s *Session) {
+		if err := orch.TeardownEndedSession(s); err != nil {
+			t.Errorf("TeardownEndedSession failed: %v", err)
+		}
+	}
+
+	session.mu.Lock()
+	session.LastActiveAt = time.Now().Add(-time.Hour)
+	session.mu.Unlock()
+	sessionMgr.evictIdle()
+
+	if got := sessionMgr.Count(); got != 0 {
+		t.Fatalf("expected idle session to be evicted, got %d sessions", got)
+	}
+	if !xunfeiRuntime.isStopped() {
+		t.Fatal("expected idle eviction to stop Xunfei runtime")
+	}
+	if _, _, ok := orch.XunfeiAvatarStream(session.ID); ok {
+		t.Fatal("expected idle eviction to unregister Xunfei runtime")
+	}
+}
+
 func TestBaiduXilingOmniTurnUsesVoiceLLMAudioDataPipeline(t *testing.T) {
 	root := t.TempDir()
 	charStore, err := character.NewStore(filepath.Join(root, "characters"))
@@ -265,6 +482,95 @@ func TestBaiduXilingOmniTurnUsesVoiceLLMAudioDataPipeline(t *testing.T) {
 	select {
 	case <-inf.avatarStarted:
 		t.Fatal("GenerateAvatarStream should not be called for Baidu Xiling omni output")
+	default:
+	}
+
+	session.WaitPipelineDone(time.Second)
+	if got := session.GetState(); got != StateListening {
+		t.Fatalf("expected session to return to listening, got %s", got)
+	}
+	history := session.HistorySnapshot()
+	if len(history) != 2 || history[0].Role != "user" || history[1].Role != "assistant" {
+		t.Fatalf("expected user and assistant messages to be saved, got %+v", history)
+	}
+}
+
+func TestXunfeiOmniTurnUsesVoiceLLMAudioDriverPipeline(t *testing.T) {
+	root := t.TempDir()
+	charStore, err := character.NewStore(filepath.Join(root, "characters"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	char, err := charStore.Create(&character.Character{
+		Name:          "Xunfei Omni",
+		AvatarBackend: character.AvatarBackendXunfei,
+		Xunfei:        &character.XunfeiAvatar{AvatarID: "avatar-1", VCN: "vcn-1"},
+		VoiceType:     "Momo",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sessionMgr := NewSessionManager(4)
+	t.Cleanup(sessionMgr.Stop)
+	session, err := sessionMgr.Create("session-xunfei-omni", ModeOmni, char.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	inf := newVoiceRecordingInferenceStub()
+	orch := New(inf, ws.NewHub(), sessionMgr, nil, charStore)
+	xunfeiRuntime := &xunfeiAvatarRuntimeStub{called: make(chan struct{}), received: make(chan struct{})}
+	orch.RegisterXunfeiAvatarSession(session.ID, xunfeiRuntime)
+
+	inputCh := make(chan inference.VoiceLLMInputEvent)
+	close(inputCh)
+	pipelineSeq := session.MarkPipelineRunning()
+	go orch.runVoiceLLMPipelineWithConfig(
+		context.Background(),
+		session,
+		session.ID,
+		inputCh,
+		pipelineSeq,
+		0,
+		inference.VoiceLLMSessionConfig{SessionID: session.ID},
+		false,
+	)
+
+	select {
+	case <-inf.started:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for voice stream start")
+	}
+
+	inf.outputs <- &pb.VoiceLLMOutput{
+		UserTranscript: "你好",
+		QuestionId:     "q1",
+		ReplyId:        "r1",
+	}
+	inf.outputs <- &pb.VoiceLLMOutput{
+		Transcript: "你好，我是讯飞数字人。",
+		Audio: &pb.AudioChunk{
+			Data:       make([]byte, 96000),
+			SampleRate: 24000,
+			Channels:   1,
+			Format:     "pcm",
+		},
+		IsFinal:    true,
+		QuestionId: "q1",
+		ReplyId:    "r1",
+	}
+	close(inf.outputs)
+	close(inf.errs)
+
+	xunfeiRuntime.waitCalled(t)
+	xunfeiRuntime.waitAudio(t)
+	if got := xunfeiRuntime.audioBytes(); got != 64000 {
+		t.Fatalf("expected 24kHz input to be resampled to 64,000 bytes at 16kHz, got %d", got)
+	}
+	select {
+	case <-inf.avatarStarted:
+		t.Fatal("GenerateAvatarStream should not be called for Xunfei omni output")
 	default:
 	}
 

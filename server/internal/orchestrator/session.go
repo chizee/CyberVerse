@@ -414,23 +414,19 @@ func (m *SessionManager) cleanupLoop() {
 }
 
 func (m *SessionManager) evictIdle() {
+	var ended []*Session
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	now := time.Now()
 	for id, s := range m.sessions {
 		s.mu.RLock()
 		idle := now.Sub(s.LastActiveAt) > m.idleTimeout
 		s.mu.RUnlock()
 		if idle {
-			if m.OnSessionEnd != nil {
-				m.OnSessionEnd(s)
-			}
-			s.mu.Lock()
-			s.state = StateClosed
-			s.mu.Unlock()
-			delete(m.sessions, id)
+			ended = append(ended, m.endSessionLocked(id))
 		}
 	}
+	m.mu.Unlock()
+	m.notifySessionEnd(ended...)
 }
 
 func (m *SessionManager) Stop() {
@@ -474,17 +470,34 @@ func (m *SessionManager) Touch(id string) error {
 }
 
 func (m *SessionManager) Delete(id string) {
+	var ended *Session
 	m.mu.Lock()
-	defer m.mu.Unlock()
-	if s, ok := m.sessions[id]; ok {
-		if m.OnSessionEnd != nil {
+	ended = m.endSessionLocked(id)
+	m.mu.Unlock()
+	m.notifySessionEnd(ended)
+}
+
+func (m *SessionManager) endSessionLocked(id string) *Session {
+	s, ok := m.sessions[id]
+	if !ok {
+		return nil
+	}
+	s.mu.Lock()
+	s.state = StateClosed
+	s.mu.Unlock()
+	delete(m.sessions, id)
+	return s
+}
+
+func (m *SessionManager) notifySessionEnd(sessions ...*Session) {
+	if m.OnSessionEnd == nil {
+		return
+	}
+	for _, s := range sessions {
+		if s != nil {
 			m.OnSessionEnd(s)
 		}
-		s.mu.Lock()
-		s.state = StateClosed
-		s.mu.Unlock()
 	}
-	delete(m.sessions, id)
 }
 
 func (m *SessionManager) List() []*Session {

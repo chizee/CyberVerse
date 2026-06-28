@@ -24,20 +24,21 @@ type CreateSessionRequest struct {
 }
 
 type CreateSessionResponse struct {
-	SessionID     string                    `json:"session_id"`
-	Mode          string                    `json:"mode"`
-	StreamingMode string                    `json:"streaming_mode"`
-	AvatarEnabled bool                      `json:"avatar_enabled"`
-	IdleStrategy  string                    `json:"idle_strategy"`
-	AudioInput    *AudioInputResponse       `json:"audio_input,omitempty"`
-	BaiduXiling   *baiduXilingSessionConfig `json:"baidu_xiling,omitempty"`
-	LiveKitURL    string                    `json:"livekit_url,omitempty"`
-	Token         string                    `json:"livekit_token,omitempty"`
-	IdleVideoURL  string                    `json:"idle_video_url,omitempty"`
-	IdleVideoURLs []string                  `json:"idle_video_urls,omitempty"`
-	IdleImageURL  string                    `json:"idle_image_url,omitempty"`
-	Warnings      []string                  `json:"warnings,omitempty"`
-	VisualInput   *VisualInputResponse      `json:"visual_input,omitempty"`
+	SessionID     string                     `json:"session_id"`
+	Mode          string                     `json:"mode"`
+	StreamingMode string                     `json:"streaming_mode"`
+	AvatarEnabled bool                       `json:"avatar_enabled"`
+	IdleStrategy  string                     `json:"idle_strategy"`
+	AudioInput    *AudioInputResponse        `json:"audio_input,omitempty"`
+	BaiduXiling   *baiduXilingSessionConfig  `json:"baidu_xiling,omitempty"`
+	Xunfei        *xunfeiAvatarSessionConfig `json:"xunfei,omitempty"`
+	LiveKitURL    string                     `json:"livekit_url,omitempty"`
+	Token         string                     `json:"livekit_token,omitempty"`
+	IdleVideoURL  string                     `json:"idle_video_url,omitempty"`
+	IdleVideoURLs []string                   `json:"idle_video_urls,omitempty"`
+	IdleImageURL  string                     `json:"idle_image_url,omitempty"`
+	Warnings      []string                   `json:"warnings,omitempty"`
+	VisualInput   *VisualInputResponse       `json:"visual_input,omitempty"`
 }
 
 type AudioInputResponse struct {
@@ -209,10 +210,17 @@ func (r *Router) handleCreateSession(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 	}
+	if sessionCharacter != nil && sessionCharacter.AvatarBackend == character.AvatarBackendXunfei {
+		if sessionCharacter.Xunfei == nil || strings.TrimSpace(sessionCharacter.Xunfei.AvatarID) == "" {
+			writeJSON(w, http.StatusBadRequest, ErrorResponse{Error: "Xunfei avatar_id is required"})
+			return
+		}
+	}
 
 	isBaiduXilingCharacter := sessionCharacter != nil && sessionCharacter.AvatarBackend == character.AvatarBackendBaiduXiling
+	isXunfeiCharacter := sessionCharacter != nil && sessionCharacter.AvatarBackend == character.AvatarBackendXunfei
 
-	if r.orch != nil && body.CharacterID != "" && r.orch.AvatarEnabled() && !isBaiduXilingCharacter {
+	if r.orch != nil && body.CharacterID != "" && r.orch.AvatarEnabled() && !isBaiduXilingCharacter && !isXunfeiCharacter {
 		activeModel, err := r.activeAvatarModel(req.Context())
 		if err != nil {
 			writeJSON(w, http.StatusServiceUnavailable, ErrorResponse{Error: err.Error()})
@@ -288,6 +296,25 @@ func (r *Router) handleCreateSession(w http.ResponseWriter, req *http.Request) {
 			}
 			resp.IdleImageURL = baiduXilingPreviewImageURL(sessionCharacter)
 		}
+	} else if isXunfeiCharacter {
+		if r.orch == nil {
+			r.sessionMgr.Delete(sessionID)
+			writeJSON(w, http.StatusServiceUnavailable, ErrorResponse{Error: "Xunfei avatar sessions require the orchestrator"})
+			return
+		}
+		startCtx, cancel := context.WithTimeout(req.Context(), 30*time.Second)
+		defer cancel()
+		xunfeiRuntime, xunfeiConfig, err := startXunfeiAvatarSession(startCtx, sessionCharacter)
+		if err != nil {
+			r.sessionMgr.Delete(sessionID)
+			writeJSON(w, http.StatusServiceUnavailable, ErrorResponse{Error: err.Error()})
+			return
+		}
+		r.orch.RegisterXunfeiAvatarSession(sessionID, xunfeiRuntime)
+		if detectXunfeiStreamTransport(xunfeiConfig.StreamURL) != xunfeiStreamTransportUnknown {
+			xunfeiConfig.PlaybackURL = "/api/v1/xunfei/sessions/" + sessionID + "/stream.flv"
+		}
+		resp.Xunfei = xunfeiConfig
 	} else if r.orch != nil && body.CharacterID != "" && useCachedIdleVideo && (sessionCharacter == nil || sessionCharacter.AvatarBackend == character.AvatarBackendLocalImage) {
 		target := r.currentIdleVideoTarget(req.Context())
 		// Return any already-cached idle video URLs immediately; generation happens in background.

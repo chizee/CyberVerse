@@ -32,7 +32,7 @@ export interface KnowledgeUploadSkippedFile {
 }
 
 // Character data model
-export type AvatarBackend = 'local_image' | 'baidu_xiling'
+export type AvatarBackend = 'local_image' | 'baidu_xiling' | 'xunfei'
 
 export interface BaiduXilingCharacterConfig {
   figure_id: string
@@ -44,6 +44,27 @@ export interface BaiduXilingCharacterConfig {
   status?: string
   width?: number
   height?: number
+}
+
+export interface XunfeiAvatarConfig {
+  avatar_id: string
+  avatar_name?: string
+  scene_id?: string
+  vcn: string
+  vcns?: string[]
+  thumbnail_url?: string
+  preview_video_url?: string
+  source_image_url?: string
+  status?: string
+  protocol?: 'xrtc' | 'rtmp' | 'webrtc' | 'flv'
+  width?: number
+  height?: number
+  fps?: number
+  bitrate?: number
+  speed?: number
+  pitch?: number
+  volume?: number
+  air?: number
 }
 
 export interface OfflineVideoTTSConfig {
@@ -59,6 +80,7 @@ export interface Character {
   avatar_image: string
   avatar_backend: AvatarBackend
   baidu_xiling?: BaiduXilingCharacterConfig | null
+  xunfei?: XunfeiAvatarConfig | null
   offline_video_tts?: OfflineVideoTTSConfig | null
   idle_video_url?: string
   idle_video_urls?: string[]

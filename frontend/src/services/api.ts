@@ -1,4 +1,4 @@
-import type { AvatarModelInfo, BaiduXilingCharacterConfig, Character, CharacterForm, ComponentsResponse, ImageInfo, KnowledgeSource, KnowledgeUploadSkippedFile, OfflineVideoJob, Settings, LaunchConfig, LaunchConfigUpdate, PipelineMode } from '../types'
+import type { AvatarModelInfo, BaiduXilingCharacterConfig, Character, CharacterForm, ComponentsResponse, ImageInfo, KnowledgeSource, KnowledgeUploadSkippedFile, OfflineVideoJob, Settings, LaunchConfig, LaunchConfigUpdate, PipelineMode, XunfeiAvatarConfig } from '../types'
 
 const API_BASE = import.meta.env.VITE_API_BASE || '/api/v1'
 
@@ -47,6 +47,21 @@ export interface CreateSessionResponse {
     camera_id?: string
     width: number
     height: number
+    audio_sample_rate: number
+    audio_max_pcm_bytes: number
+  }
+  xunfei?: {
+    stream_url: string
+    playback_url?: string
+    avatar_id: string
+    avatar_name?: string
+    scene_id?: string
+    vcn?: string
+    protocol: 'xrtc' | 'rtmp' | 'webrtc' | 'flv'
+    width: number
+    height: number
+    fps: number
+    bitrate: number
     audio_sample_rate: number
     audio_max_pcm_bytes: number
   }
@@ -295,6 +310,10 @@ export async function testCharacterVoice(data: { voice_provider: string; voice_t
 
 export async function getBaiduXilingFigure(figureId: string): Promise<BaiduXilingCharacterConfig> {
   return request(`/baidu-xiling/figures/${encodeURIComponent(figureId)}`)
+}
+
+export async function getXunfeiAvatar(avatarId: string): Promise<XunfeiAvatarConfig> {
+  return request(`/xunfei/avatars/${encodeURIComponent(avatarId)}`)
 }
 
 export async function uploadAvatar(id: string, file: File): Promise<{ path: string; filename?: string }> {

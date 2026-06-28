@@ -156,6 +156,63 @@ func TestBaiduXilingAvatarFieldsPersistAcrossStoreReload(t *testing.T) {
 	}
 }
 
+func TestXunfeiAvatarFieldsPersistAcrossStoreReload(t *testing.T) {
+	baseDir := t.TempDir()
+	store, err := NewStore(baseDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	char, err := store.Create(&Character{
+		Name:          "Xunfei Role",
+		AvatarBackend: AvatarBackendXunfei,
+		Xunfei: &XunfeiAvatar{
+			AvatarID:        " avatar-1 ",
+			AvatarName:      " Avatar One ",
+			SceneID:         " scene-1 ",
+			VCN:             " x4_yezi ",
+			ThumbnailURL:    " https://example.com/thumb.png ",
+			PreviewVideoURL: " https://example.com/preview.mp4 ",
+			SourceImageURL:  " https://example.com/source.png ",
+			Status:          " active ",
+			Protocol:        " flv ",
+			Width:           721,
+			Height:          1281,
+		},
+		VoiceType: "Momo",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	reloaded, err := NewStore(baseDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := reloaded.Get(char.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.AvatarBackend != AvatarBackendXunfei {
+		t.Fatalf("expected xunfei backend, got %q", got.AvatarBackend)
+	}
+	if got.Xunfei == nil {
+		t.Fatal("expected xunfei config")
+	}
+	if got.Xunfei.AvatarID != "avatar-1" || got.Xunfei.AvatarName != "Avatar One" || got.Xunfei.SceneID != "scene-1" || got.Xunfei.VCN != "x4_yezi" {
+		t.Fatalf("expected trimmed Xunfei config, got %+v", got.Xunfei)
+	}
+	if got.Xunfei.ThumbnailURL != "https://example.com/thumb.png" || got.Xunfei.SourceImageURL != "https://example.com/source.png" || got.Xunfei.Status != "active" {
+		t.Fatalf("expected trimmed Xunfei media metadata, got %+v", got.Xunfei)
+	}
+	if got.Xunfei.Protocol != "flv" || got.Xunfei.Width != 720 || got.Xunfei.Height != 1280 {
+		t.Fatalf("expected normalized stream config, got %+v", got.Xunfei)
+	}
+	if got.Xunfei.FPS != 25 || got.Xunfei.Bitrate != 2000 || got.Xunfei.Speed != 50 || got.Xunfei.Pitch != 50 || got.Xunfei.Volume != 50 {
+		t.Fatalf("expected normalized driver defaults, got %+v", got.Xunfei)
+	}
+}
+
 func TestOfflineVideoTTSPersistAcrossStoreReload(t *testing.T) {
 	baseDir := t.TempDir()
 	store, err := NewStore(baseDir)

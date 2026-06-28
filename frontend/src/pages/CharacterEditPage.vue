@@ -7,9 +7,9 @@ import AvatarUpload from '../components/AvatarUpload.vue'
 import CvSelect from '../components/CvSelect.vue'
 import KnowledgeSourceManager from '../components/KnowledgeSourceManager.vue'
 import { useCharacterStore } from '../stores/characters'
-import type { AvatarBackend, BaiduXilingCharacterConfig, CharacterComponents, CharacterForm, ComponentOption, ComponentsResponse, ImageInfo } from '../types'
+import type { AvatarBackend, BaiduXilingCharacterConfig, CharacterComponents, CharacterForm, ComponentOption, ComponentsResponse, ImageInfo, XunfeiAvatarConfig } from '../types'
 import { DOUBAO_TTS_VOICE_OPTIONS, OPENAI_VOICE_OPTIONS, QWEN_OMNI_VOICE_OPTIONS, QWEN_TTS_MODEL_OPTIONS, QWEN_TTS_VOICE_OPTIONS, VOICE_OPTIONS } from '../types'
-import { uploadAvatar, getCharacterImages, deleteCharacterImage, activateCharacterImage, testCharacterVoice, getComponents, getBaiduXilingFigure } from '../services/api'
+import { uploadAvatar, getCharacterImages, deleteCharacterImage, activateCharacterImage, testCharacterVoice, getComponents, getBaiduXilingFigure, getXunfeiAvatar } from '../services/api'
 import {
   DEFAULT_COSYVOICE_V3_VOICE,
   DEFAULT_DOUBAO_TTS_VOICE,
@@ -46,6 +46,7 @@ const form = ref<CharacterForm>({
   avatar_image: '',
   avatar_backend: 'local_image',
   baidu_xiling: null,
+  xunfei: null,
   offline_video_tts: null,
   use_face_crop: false,
   image_mode: 'fixed',
@@ -75,6 +76,8 @@ const showModeHelp = ref(false)
 const hydratingCharacter = ref(false)
 const baiduLookupLoading = ref(false)
 const baiduLookupError = ref('')
+const xunfeiLookupLoading = ref(false)
+const xunfeiLookupError = ref('')
 const OFFICIAL_VOICE_PREVIEW_URL = 'https://console.volcengine.com/speech/new/experience/call'
 const CUSTOM_VOICE_CLONE_URL = 'https://console.volcengine.com/speech/new/experience/clone'
 const DOUBAO_TTS_VOICE_LIST_URL = 'https://www.volcengine.com/docs/6561/1257544?lang=zh#%E8%B1%86%E5%8C%85%E8%AF%AD%E9%9F%B3%E5%90%88%E6%88%90%E6%A8%A1%E5%9E%8B2-0-%E9%9F%B3%E8%89%B2%E5%88%97%E8%A1%A8'
@@ -93,6 +96,7 @@ const visibleImages = computed(() =>
 )
 
 const isBaiduXilingAvatar = computed(() => form.value.avatar_backend === 'baidu_xiling')
+const isLocalAvatar = computed(() => form.value.avatar_backend === 'local_image')
 const baiduFigureId = computed({
   get: () => form.value.baidu_xiling?.figure_id || '',
   set: (value: string) => {
@@ -113,9 +117,53 @@ const baiduFigureLabel = computed(() =>
   || form.value.baidu_xiling?.figure_id
   || ''
 )
-const hasRequiredAvatarConfig = computed(() =>
-  form.value.avatar_backend !== 'baidu_xiling' || !!baiduFigureId.value.trim()
+const xunfeiAvatarId = computed({
+  get: () => form.value.xunfei?.avatar_id || '',
+  set: (value: string) => {
+    form.value.xunfei = {
+      ...(form.value.xunfei || emptyXunfeiConfig()),
+      avatar_id: value,
+    }
+    xunfeiLookupError.value = ''
+  },
+})
+const xunfeiSceneId = computed({
+  get: () => form.value.xunfei?.scene_id || '',
+  set: (value: string) => {
+    form.value.xunfei = {
+      ...(form.value.xunfei || emptyXunfeiConfig()),
+      scene_id: value,
+    }
+  },
+})
+const xunfeiVcn = computed({
+  get: () => form.value.xunfei?.vcn || '',
+  set: (value: string) => {
+    form.value.xunfei = {
+      ...(form.value.xunfei || emptyXunfeiConfig()),
+      vcn: value,
+    }
+  },
+})
+const xunfeiPreviewImage = computed(() =>
+  form.value.xunfei?.thumbnail_url
+  || form.value.xunfei?.source_image_url
+  || ''
 )
+const xunfeiAvatarLabel = computed(() =>
+  form.value.xunfei?.avatar_name
+  || form.value.xunfei?.avatar_id
+  || ''
+)
+const hasRequiredAvatarConfig = computed(() => {
+  if (form.value.avatar_backend === 'baidu_xiling') {
+    return !!baiduFigureId.value.trim()
+  }
+  if (form.value.avatar_backend === 'xunfei') {
+    return !!xunfeiAvatarId.value.trim()
+  }
+  return true
+})
 const avatarBackendModel = computed({
   get: () => form.value.avatar_backend,
   set: (value: string) => selectAvatarBackend(normalizeAvatarBackend(value)),
@@ -123,6 +171,7 @@ const avatarBackendModel = computed({
 const avatarBackendOptions = computed(() => [
   { label: t('characterEdit.localAvatar'), value: 'local_image' },
   { label: t('characterEdit.baiduDigitalHuman'), value: 'baidu_xiling' },
+  { label: t('characterEdit.xunfeiDigitalHuman'), value: 'xunfei' },
 ])
 const trimmedCustomVoiceType = computed(() => customVoiceType.value.trim())
 const selectedTTS = computed(() => form.value.components?.tts || DEFAULT_COMPONENTS.tts)
@@ -270,18 +319,47 @@ function normalizeMode(mode?: string): CharacterForm['mode'] {
 }
 
 function normalizeAvatarBackend(backend?: string): AvatarBackend {
-  return backend === 'baidu_xiling' ? 'baidu_xiling' : 'local_image'
+  if (backend === 'baidu_xiling') return 'baidu_xiling'
+  if (backend === 'xunfei') return 'xunfei'
+  return 'local_image'
 }
 
 function emptyBaiduXilingConfig(figureId = ''): BaiduXilingCharacterConfig {
   return { figure_id: figureId }
 }
 
+function emptyXunfeiConfig(): XunfeiAvatarConfig {
+  return {
+    avatar_id: '',
+    avatar_name: '',
+    scene_id: '',
+    vcn: '',
+    vcns: [],
+    thumbnail_url: '',
+    preview_video_url: '',
+    source_image_url: '',
+    status: '',
+    protocol: 'flv',
+    width: 720,
+    height: 1280,
+    fps: 25,
+    bitrate: 2000,
+    speed: 50,
+    pitch: 50,
+    volume: 50,
+    air: 0,
+  }
+}
+
 function selectAvatarBackend(backend: AvatarBackend) {
   form.value.avatar_backend = backend
   baiduLookupError.value = ''
+  xunfeiLookupError.value = ''
   if (backend === 'baidu_xiling' && !form.value.baidu_xiling) {
     form.value.baidu_xiling = emptyBaiduXilingConfig()
+  }
+  if (backend === 'xunfei' && !form.value.xunfei) {
+    form.value.xunfei = emptyXunfeiConfig()
   }
 }
 
@@ -321,6 +399,50 @@ async function lookupBaiduFigure() {
     baiduLookupError.value = e instanceof Error ? e.message : String(e)
   } finally {
     baiduLookupLoading.value = false
+  }
+}
+
+function applyXunfeiAvatar(avatar: XunfeiAvatarConfig) {
+  const avatarName = avatar.avatar_name || ''
+  form.value.xunfei = {
+    ...emptyXunfeiConfig(),
+    ...(form.value.xunfei || {}),
+    avatar_id: avatar.avatar_id || xunfeiAvatarId.value.trim(),
+    avatar_name: avatarName,
+    scene_id: avatar.scene_id || xunfeiSceneId.value.trim(),
+    vcn: avatar.vcn || avatar.vcns?.[0] || xunfeiVcn.value.trim(),
+    vcns: avatar.vcns || [],
+    thumbnail_url: avatar.thumbnail_url || '',
+    preview_video_url: avatar.preview_video_url || '',
+    source_image_url: avatar.source_image_url || '',
+    status: avatar.status || '',
+    width: avatar.width || 720,
+    height: avatar.height || 1280,
+  }
+  if (avatarName) {
+    form.value.name = avatarName
+  }
+}
+
+async function lookupXunfeiAvatar() {
+  const avatarId = xunfeiAvatarId.value.trim()
+  xunfeiLookupError.value = ''
+  if (!avatarId) {
+    xunfeiLookupError.value = t('characterEdit.xunfeiAvatarRequired')
+    return
+  }
+  xunfeiLookupLoading.value = true
+  try {
+    const avatar = await getXunfeiAvatar(avatarId)
+    applyXunfeiAvatar(avatar)
+  } catch (e) {
+    form.value.xunfei = {
+      ...(form.value.xunfei || emptyXunfeiConfig()),
+      avatar_id: avatarId,
+    }
+    xunfeiLookupError.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    xunfeiLookupLoading.value = false
   }
 }
 
@@ -578,6 +700,7 @@ onMounted(async () => {
           avatar_image: c.avatar_image,
           avatar_backend: normalizeAvatarBackend(c.avatar_backend),
           baidu_xiling: c.baidu_xiling ? { ...c.baidu_xiling } : null,
+          xunfei: c.xunfei ? { ...emptyXunfeiConfig(), ...c.xunfei } : null,
           offline_video_tts: c.offline_video_tts ? { ...c.offline_video_tts } : null,
           use_face_crop: c.use_face_crop,
           image_mode: c.image_mode || 'fixed',
@@ -613,7 +736,7 @@ async function loadImages() {
 }
 
 async function handleFileSelected(file: File, options?: { activate?: boolean }) {
-  if (form.value.avatar_backend === 'baidu_xiling') return
+  if (form.value.avatar_backend !== 'local_image') return
   if (isEdit.value) {
     // Edit mode: upload immediately
     try {
@@ -715,8 +838,27 @@ async function save() {
         ...(payload.baidu_xiling || emptyBaiduXilingConfig()),
         figure_id: (payload.baidu_xiling?.figure_id || '').trim(),
       }
+      payload.xunfei = null
       payload.use_face_crop = false
       payload.image_mode = 'fixed'
+    } else if (payload.avatar_backend === 'xunfei') {
+      payload.xunfei = {
+        ...emptyXunfeiConfig(),
+        ...(payload.xunfei || {}),
+        avatar_id: (payload.xunfei?.avatar_id || '').trim(),
+        avatar_name: (payload.xunfei?.avatar_name || '').trim(),
+        vcn: (payload.xunfei?.vcn || '').trim(),
+        thumbnail_url: (payload.xunfei?.thumbnail_url || '').trim(),
+        preview_video_url: (payload.xunfei?.preview_video_url || '').trim(),
+        source_image_url: (payload.xunfei?.source_image_url || '').trim(),
+        status: (payload.xunfei?.status || '').trim(),
+      }
+      payload.baidu_xiling = null
+      payload.use_face_crop = false
+      payload.image_mode = 'fixed'
+    } else {
+      payload.baidu_xiling = null
+      payload.xunfei = null
     }
 
     let id: string
@@ -777,10 +919,10 @@ const pageTitle = computed(() =>
             v-model="avatarBackendModel"
             :options="avatarBackendOptions"
           />
-          <p v-if="!isBaiduXilingAvatar" class="mt-2 text-[11px] leading-5 text-cv-text-muted">
+          <p v-if="isLocalAvatar" class="mt-2 text-[11px] leading-5 text-cv-text-muted">
             {{ t('characterEdit.localAvatarBackendHint') }}
           </p>
-          <p v-else class="mt-2 text-[11px] leading-5 text-cv-text-muted">
+          <p v-else-if="isBaiduXilingAvatar" class="mt-2 text-[11px] leading-5 text-cv-text-muted">
             <span>{{ t('characterEdit.baiduAvatarBackendHint') }}</span>
             <a
               :href="BAIDU_XILING_OVERVIEW_URL"
@@ -796,10 +938,13 @@ const pageTitle = computed(() =>
               </svg>
             </a>
           </p>
+          <p v-else class="mt-2 text-[11px] leading-5 text-cv-text-muted">
+            {{ t('characterEdit.xunfeiAvatarBackendHint') }}
+          </p>
         </div>
 
         <AvatarUpload
-          v-if="!isBaiduXilingAvatar"
+          v-if="isLocalAvatar"
           :use-face-crop="form.use_face_crop"
           :images="visibleImages"
           :character-id="isEdit ? characterId : undefined"
@@ -814,7 +959,7 @@ const pageTitle = computed(() =>
           @activate-image="handleActivateImage"
         />
 
-        <div v-else class="rounded-cv-lg border border-cv-border bg-cv-surface p-4">
+        <div v-else-if="isBaiduXilingAvatar" class="rounded-cv-lg border border-cv-border bg-cv-surface p-4">
           <div class="grid grid-cols-[minmax(0,1fr)_82px] gap-2">
             <label class="flex h-11 overflow-hidden rounded-cv-md border border-cv-border bg-cv-elevated transition-all focus-within:border-cv-accent focus-within:shadow-[0_0_0_2px_rgba(59,130,246,0.15)]">
               <span class="flex h-full w-[74px] shrink-0 items-center border-r border-cv-border px-3 text-[13px] font-medium text-cv-text-secondary">{{ t('characterEdit.baiduFigureId') }}</span>
@@ -856,6 +1001,73 @@ const pageTitle = computed(() =>
           </div>
         </div>
 
+        <div v-else class="rounded-cv-lg border border-cv-border bg-cv-surface p-4">
+          <div class="space-y-3">
+            <div>
+              <div class="grid grid-cols-[minmax(0,1fr)_82px] gap-2">
+                <label class="flex h-11 overflow-hidden rounded-cv-md border border-cv-border bg-cv-elevated transition-all focus-within:border-cv-accent focus-within:shadow-[0_0_0_2px_rgba(59,130,246,0.15)]">
+                  <span class="flex h-full w-[74px] shrink-0 items-center border-r border-cv-border px-3 text-[13px] font-medium text-cv-text-secondary">{{ t('characterEdit.xunfeiAvatarId') }}</span>
+                  <input
+                    id="xunfei-avatar-id-input"
+                    v-model="xunfeiAvatarId"
+                    type="text"
+                    :placeholder="t('characterEdit.xunfeiAvatarIdPlaceholder')"
+                    class="h-full min-w-0 flex-1 border-0 bg-transparent px-3 text-sm text-cv-text placeholder:text-cv-text-muted focus:outline-none"
+                  />
+                </label>
+                <button
+                  type="button"
+                  @click="lookupXunfeiAvatar"
+                  :disabled="xunfeiLookupLoading || !xunfeiAvatarId.trim()"
+                  class="cv-pi-button cv-pi-button--compact h-11"
+                >
+                  {{ xunfeiLookupLoading ? t('characterEdit.xunfeiAvatarChecking') : t('characterEdit.xunfeiAvatarLookup') }}
+                </button>
+              </div>
+              <p v-if="xunfeiLookupError" class="mt-2 break-words text-[11px] leading-5 text-cv-danger">
+                {{ xunfeiLookupError }}
+              </p>
+            </div>
+            <label class="block">
+              <span class="text-[13px] font-medium text-cv-text-secondary">{{ t('characterEdit.xunfeiSceneId') }}</span>
+              <input
+                id="xunfei-scene-id-input"
+                v-model="xunfeiSceneId"
+                type="text"
+                :placeholder="t('characterEdit.xunfeiSceneIdPlaceholder')"
+                class="mt-1.5 h-[42px] w-full rounded-cv-md border border-cv-border bg-cv-elevated px-3 text-sm text-cv-text placeholder:text-cv-text-muted transition-all focus:border-cv-accent focus:outline-none focus:shadow-[0_0_0_2px_rgba(59,130,246,0.15)]"
+              />
+            </label>
+            <label class="block">
+              <span class="text-[13px] font-medium text-cv-text-secondary">{{ t('characterEdit.xunfeiVcn') }}</span>
+              <input
+                id="xunfei-vcn-input"
+                v-model="xunfeiVcn"
+                type="text"
+                :placeholder="t('characterEdit.xunfeiVcnPlaceholder')"
+                class="mt-1.5 h-[42px] w-full rounded-cv-md border border-cv-border bg-cv-elevated px-3 text-sm text-cv-text placeholder:text-cv-text-muted transition-all focus:border-cv-accent focus:outline-none focus:shadow-[0_0_0_2px_rgba(59,130,246,0.15)]"
+              />
+            </label>
+          </div>
+          <div class="mt-4 overflow-hidden rounded-cv-md border border-cv-border bg-cv-elevated">
+            <img
+              v-if="xunfeiPreviewImage"
+              :src="xunfeiPreviewImage"
+              :alt="xunfeiAvatarLabel"
+              class="block h-auto w-full"
+            />
+            <div v-else class="flex h-[180px] flex-col items-center justify-center px-4 text-center">
+              <svg aria-hidden="true" width="28" height="28" viewBox="0 0 24 24" fill="none" class="text-cv-text-muted">
+                <path d="M4 6.5A2.5 2.5 0 0 1 6.5 4h11A2.5 2.5 0 0 1 20 6.5v11a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 17.5v-11Z" stroke="currentColor" stroke-width="1.6" />
+                <path d="m5 16 4.2-4.2a1.2 1.2 0 0 1 1.7 0L14 15l1.2-1.2a1.2 1.2 0 0 1 1.7 0L20 17" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+                <path d="M15.5 8.5h.01" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" />
+              </svg>
+              <p class="mt-3 text-[13px] font-medium text-cv-text-secondary">{{ t('characterEdit.xunfeiPreviewPlaceholderTitle') }}</p>
+              <p class="mt-1 text-[12px] leading-5 text-cv-text-muted">{{ t('characterEdit.xunfeiPreviewPlaceholderBody') }}</p>
+            </div>
+          </div>
+        </div>
+
         <button
           v-if="isEdit"
           type="button"
@@ -866,7 +1078,7 @@ const pageTitle = computed(() =>
         </button>
 
         <!-- Image mode toggle -->
-        <div v-if="!isBaiduXilingAvatar && isEdit && visibleImages.length > 1"
+        <div v-if="isLocalAvatar && isEdit && visibleImages.length > 1"
              class="mt-4 bg-cv-surface border border-cv-border rounded-cv-lg p-4">
           <div class="flex items-center justify-between">
             <div>

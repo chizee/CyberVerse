@@ -38,9 +38,14 @@ const runtimeConfigMismatch = computed(() =>
   activeAvatarModel.value !== configuredDefaultModel.value
 )
 const isBaiduXilingCharacter = computed(() => store.current?.avatar_backend === 'baidu_xiling')
+const isXunfeiCharacter = computed(() => store.current?.avatar_backend === 'xunfei')
+const isExternalAvatarCharacter = computed(() => isBaiduXilingCharacter.value || isXunfeiCharacter.value)
 const canLaunch = computed(() => {
   if (isBaiduXilingCharacter.value) {
     return !!store.current?.baidu_xiling?.figure_id
+  }
+  if (isXunfeiCharacter.value) {
+    return !!store.current?.xunfei?.avatar_id
   }
   return !!activeAvatarModel.value
 })
@@ -49,6 +54,9 @@ const characterCoverImage = computed(() => {
   if (!character) return ''
   if (character.avatar_backend === 'baidu_xiling') {
     return character.baidu_xiling?.thumbnail_url || character.baidu_xiling?.source_image_url || ''
+  }
+  if (character.avatar_backend === 'xunfei') {
+    return character.xunfei?.thumbnail_url || character.xunfei?.source_image_url || ''
   }
   return character.avatar_image || ''
 })
@@ -62,6 +70,14 @@ const baiduXilingResolution = computed(() => {
 const baiduXilingInfoRows = computed(() => {
   return [
     { label: t('launch.baiduResolution'), value: baiduXilingResolution.value },
+  ]
+})
+const xunfeiInfoRows = computed(() => {
+  const config = store.current?.xunfei
+  return [
+    { label: t('launch.xunfeiAvatarId'), value: config?.avatar_id || t('common.emptyDash') },
+    { label: t('launch.xunfeiSceneId'), value: config?.scene_id || t('common.emptyDash') },
+    { label: t('launch.xunfeiVcn'), value: config?.vcn || t('common.emptyDash') },
   ]
 })
 
@@ -116,7 +132,7 @@ onMounted(async () => {
   saveLaunchWorkspaceMode('live')
   await store.fetchOne(characterId.value).catch(() => {})
 
-  if (!isBaiduXilingCharacter.value) {
+  if (!isExternalAvatarCharacter.value) {
     // Fetch local avatar model config only for local-avatar characters.
     try {
       avatarModelInfo.value = await getAvatarModelInfo()
@@ -258,6 +274,17 @@ async function launch() {
             <div v-if="isBaiduXilingCharacter" class="config-card">
               <div
                 v-for="row in baiduXilingInfoRows"
+                :key="row.label"
+                class="config-row"
+              >
+                <p class="row-label">{{ row.label }}</p>
+                <p class="row-value" :title="row.value">{{ row.value }}</p>
+              </div>
+            </div>
+
+            <div v-else-if="isXunfeiCharacter" class="config-card">
+              <div
+                v-for="row in xunfeiInfoRows"
                 :key="row.label"
                 class="config-row"
               >

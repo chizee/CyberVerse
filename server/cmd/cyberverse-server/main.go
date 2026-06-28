@@ -131,6 +131,9 @@ func main() {
 	sessionMgr.OnSessionEnd = func(s *orchestrator.Session) {
 		sessionID, characterID, _, _, history := s.ConversationSnapshot()
 		log.Printf("OnSessionEnd: session=%s character=%s historyLen=%d", sessionID, characterID, len(history))
+		if err := orch.TeardownEndedSession(s); err != nil {
+			log.Printf("Failed to cleanup resources for ended session %s: %v", sessionID, err)
+		}
 		saved, err := orch.PersistSessionConversation(s)
 		if err != nil {
 			log.Printf("Failed to save conversation for session %s: %v", sessionID, err)

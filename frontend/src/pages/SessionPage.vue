@@ -4,6 +4,7 @@ import { useRouter, useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import VideoPlayer from '../components/VideoPlayer.vue'
 import BaiduXilingPlayer from '../components/BaiduXilingPlayer.vue'
+import XunfeiAvatarPlayer from '../components/XunfeiAvatarPlayer.vue'
 import ChatPanel from '../components/ChatPanel.vue'
 import VoiceWaveform from '../components/VoiceWaveform.vue'
 import { useWebRTC } from '../composables/useWebRTC'
@@ -25,6 +26,7 @@ const sessionId = computed(() => route.params.id as string)
 
 const videoPlayerRef = ref<InstanceType<typeof VideoPlayer> | null>(null)
 const baiduPlayerRef = ref<InstanceType<typeof BaiduXilingPlayer> | null>(null)
+const xunfeiPlayerRef = ref<InstanceType<typeof XunfeiAvatarPlayer> | null>(null)
 const pendingBaiduAudioEvents: BaiduXilingAudioEvent[] = []
 const sessionVideoShellRef = ref<HTMLElement | null>(null)
 const visualPreviewShellRef = ref<HTMLElement | null>(null)
@@ -55,10 +57,13 @@ if (queryLaunchState) {
 const launchState = ref(loadSessionLaunchState(sessionId.value) || queryLaunchState)
 const streamingMode = launchState.value?.streaming_mode || 'direct'
 const baiduXilingConfig = computed(() => launchState.value?.baidu_xiling)
+const xunfeiConfig = computed(() => launchState.value?.xunfei)
 const isBaiduXilingSession = computed(() => !!baiduXilingConfig.value)
+const isXunfeiSession = computed(() => !!xunfeiConfig.value)
+const isExternalAvatarSession = computed(() => isBaiduXilingSession.value || isXunfeiSession.value)
 const audioInputConfig = computed(() => launchState.value?.audio_input)
 const hasAudioInputCapability = computed(() => audioInputConfig.value?.enabled ?? true)
-const usesMediaPeerOutput = computed(() => !isBaiduXilingSession.value)
+const usesMediaPeerOutput = computed(() => !isExternalAvatarSession.value)
 const shouldUseMediaPeer = computed(() => usesMediaPeerOutput.value || hasAudioInputCapability.value)
 
 function truthyDebugFlag(value: unknown): boolean {
@@ -105,18 +110,24 @@ const webrtcDisconnect = isDirectMode ? dp.disconnect : lk.disconnect
 const setAVSyncLoggingEnabled = isDirectMode ? dp.setAVSyncLoggingEnabled : lk.setAVSyncLoggingEnabled
 
 const baiduOutputMuted = ref(false)
-const outputMutedVisual = computed(() => isBaiduXilingSession.value ? baiduOutputMuted.value : isOutputMuted.value)
+const xunfeiConnectionState = ref({ streamReady: false })
+const outputMutedVisual = computed(() => isExternalAvatarSession.value ? baiduOutputMuted.value : isOutputMuted.value)
 const outputButtonTitle = computed(() => {
   return outputMutedVisual.value ? t('session.outputUnmute') : t('session.outputMute')
 })
 const mediaConnected = computed(() => {
-  if (!shouldUseMediaPeer.value) return chatConnected.value
   if (isBaiduXilingSession.value) return chatConnected.value && connectionState.value === 'connected'
+  if (isXunfeiSession.value) {
+    return chatConnected.value
+      && xunfeiConnectionState.value.streamReady
+      && (!shouldUseMediaPeer.value || connectionState.value === 'connected')
+  }
+  if (!shouldUseMediaPeer.value) return chatConnected.value
   return connectionState.value === 'connected'
 })
 
 watchEffect(() => {
-  if (isBaiduXilingSession.value) {
+  if (isExternalAvatarSession.value) {
     videoElement.value = null
     return
   }
@@ -214,7 +225,7 @@ const chatSidebarStyle = computed<Record<string, string> | undefined>(() => {
 })
 
 watch([chatConnected, connectionState], ([chatReady, mediaState]) => {
-  if (!shouldUseMediaPeer.value || isBaiduXilingSession.value) return
+  if (!shouldUseMediaPeer.value || isExternalAvatarSession.value) return
   if (startupGreetingReadySent.value) return
   if (idleStrategy.value !== 'silent_inference') return
   if (!chatReady || mediaState !== 'connected') return
@@ -620,6 +631,12 @@ async function handleOutputButtonClick() {
     baiduPlayerRef.value?.muteAudio(baiduOutputMuted.value)
     return
   }
+  if (isXunfeiSession.value) {
+    baiduOutputMuted.value = !baiduOutputMuted.value
+    xunfeiPlayerRef.value?.muteAudio(baiduOutputMuted.value)
+    xunfeiPlayerRef.value?.playVideo(true)
+    return
+  }
   await toggleOutputMute()
 }
 
@@ -640,6 +657,13 @@ function formatTime(s: number): string {
         :config="baiduXilingConfig"
         class="w-full flex-1 min-h-0"
       />
+      <XunfeiAvatarPlayer
+        v-else-if="isXunfeiSession && xunfeiConfig"
+        ref="xunfeiPlayerRef"
+        :config="xunfeiConfig"
+        class="w-full flex-1 min-h-0"
+        @state-changed="xunfeiConnectionState = $event"
+      />
       <VideoPlayer
         v-else
         ref="videoPlayerRef"
@@ -658,7 +682,7 @@ function formatTime(s: number): string {
       </button>
 
       <!-- FPS indicator (top-right, glass) — click to toggle diagnostics -->
-      <button v-if="!isBaiduXilingSession && connectionState === 'connected'"
+      <button v-if="!isExternalAvatarSession && connectionState === 'connected'"
               @click="showDiag = !showDiag"
               class="absolute top-5 right-5 px-2.5 py-1.5 bg-black/70 backdrop-blur-sm rounded-cv-md text-xs font-mono text-cv-text z-10 cursor-pointer hover:bg-black/90 transition-colors">
         {{ debugState.fps }} FPS
@@ -681,7 +705,7 @@ function formatTime(s: number): string {
       </button>
 
       <!-- Diagnostics panel -->
-      <div v-if="!isBaiduXilingSession && showDiag && connectionState === 'connected'"
+      <div v-if="!isExternalAvatarSession && showDiag && connectionState === 'connected'"
            class="absolute top-14 right-5 w-80 max-h-[70vh] overflow-y-auto bg-black/85 backdrop-blur-md rounded-lg border border-white/10 p-3 text-[11px] font-mono text-cv-text z-20 space-y-2">
         <div class="text-xs font-semibold text-cv-accent mb-1">{{ t('session.frameJitter') }}</div>
         <div class="grid grid-cols-2 gap-x-3 gap-y-0.5">

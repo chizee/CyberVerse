@@ -360,3 +360,35 @@ func TestSessionManagerDeleteSetsStateClosed(t *testing.T) {
 		t.Errorf("expected StateClosed after delete, got %v", s.GetState())
 	}
 }
+
+func TestSessionManagerOnSessionEndRunsOutsideManagerLock(t *testing.T) {
+	mgr := NewSessionManager(10)
+	defer mgr.Stop()
+	if _, err := mgr.Create("s1", ModeOmni, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	called := make(chan struct{})
+	mgr.OnSessionEnd = func(*Session) {
+		_ = mgr.Count()
+		close(called)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		mgr.Delete("s1")
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("Delete deadlocked while running OnSessionEnd")
+	}
+
+	select {
+	case <-called:
+	default:
+		t.Fatal("expected OnSessionEnd to be called")
+	}
+}

@@ -62,6 +62,7 @@ const (
 	qwenOmniMaxVisualFrameBytes  = 500 * 1024
 	baiduXilingAudioSampleRate   = 16000
 	baiduXilingAudioMaxPCMBytes  = 48000
+	xunfeiAvatarAudioSampleRate  = 16000
 )
 
 const standardGlobalSystemPrompt = `你需要遵守以下通用回复规范，这些规范优先于角色设定。
@@ -98,6 +99,13 @@ type voiceAVSyncBuffer struct {
 	// Carries fractional samples from frames*sampleRate/fps to avoid
 	// long-session drift caused by per-segment integer rounding.
 	sampleCarryNumer int64
+}
+
+type xunfeiAvatarRuntime interface {
+	SendPCMStream(context.Context, <-chan []byte) error
+	Stop(context.Context) error
+	StreamURL() string
+	Protocol() string
 }
 
 func newVoiceAVSyncBuffer(maxBufferSamples int) *voiceAVSyncBuffer {
@@ -233,11 +241,17 @@ type voicePipelineTurn struct {
 	baiduAudioRequestID string
 	baiduAudioPending   []byte
 	baiduAudioStarted   bool
+	xunfeiAudioStarted  bool
+	xunfeiSpeaking      bool
+	xunfeiInputClosed   bool
 	syncBuf             *voiceAVSyncBuffer
 	avatarStarted       bool
 	audioOnlyStarted    bool
 	avatarInputClosed   bool
 	avatarAudioCh       chan *pb.AudioChunk
+	xunfeiPCMCh         chan []byte
+	xunfeiCtx           context.Context
+	xunfeiCancel        context.CancelFunc
 	avatarCtx           context.Context
 	avatarCancel        context.CancelFunc
 	doneCh              chan voicePipelineTurnResult
@@ -647,6 +661,7 @@ type Orchestrator struct {
 	avatarMu       sync.Mutex
 	silentMu       sync.Mutex
 	silentRuntimes map[string]*silentAvatarRuntime
+	xunfeiSessions map[string]xunfeiAvatarRuntime
 	mu             sync.RWMutex
 }
 
@@ -660,6 +675,7 @@ func New(inferenceClient inference.InferenceService, hub *ws.Hub, sessionMgr *Se
 		peers:          make(map[string]mediapeer.MediaPeer),
 		directPeers:    make(map[string]*direct.DirectPeer),
 		silentRuntimes: make(map[string]*silentAvatarRuntime),
+		xunfeiSessions: make(map[string]xunfeiAvatarRuntime),
 		recorder:       recorder,
 	}
 	if len(pipelineCfg) > 0 {
@@ -1443,6 +1459,14 @@ func (o *Orchestrator) isBaiduXilingSession(session *Session) bool {
 	return err == nil && c.AvatarBackend == character.AvatarBackendBaiduXiling
 }
 
+func (o *Orchestrator) isXunfeiAvatarSession(session *Session) bool {
+	if o == nil || o.charStore == nil || session == nil || session.CharacterID == "" {
+		return false
+	}
+	c, err := o.charStore.Get(session.CharacterID)
+	return err == nil && c.AvatarBackend == character.AvatarBackendXunfei
+}
+
 func (o *Orchestrator) broadcastBaiduXilingAudioChunk(sessionID string, turnSeq uint64, requestID string, audio []byte, first bool, last bool) {
 	if len(audio) == 0 && !last {
 		return
@@ -1455,6 +1479,84 @@ func (o *Orchestrator) broadcastBaiduXilingAudioChunk(sessionID string, turnSeq 
 		"last":       last,
 		"turn_seq":   turnSeq,
 	})
+}
+
+func (o *Orchestrator) RegisterXunfeiAvatarSession(sessionID string, runtime xunfeiAvatarRuntime) {
+	if o == nil || strings.TrimSpace(sessionID) == "" || runtime == nil {
+		return
+	}
+	o.mu.Lock()
+	if o.xunfeiSessions == nil {
+		o.xunfeiSessions = make(map[string]xunfeiAvatarRuntime)
+	}
+	previous := o.xunfeiSessions[sessionID]
+	o.xunfeiSessions[sessionID] = runtime
+	o.mu.Unlock()
+	if previous != nil && previous != runtime {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_ = previous.Stop(ctx)
+		cancel()
+	}
+}
+
+func (o *Orchestrator) xunfeiAvatarSession(sessionID string) xunfeiAvatarRuntime {
+	if o == nil {
+		return nil
+	}
+	o.mu.RLock()
+	defer o.mu.RUnlock()
+	return o.xunfeiSessions[sessionID]
+}
+
+func (o *Orchestrator) XunfeiAvatarStream(sessionID string) (protocol string, streamURL string, ok bool) {
+	runtime := o.xunfeiAvatarSession(sessionID)
+	if runtime == nil {
+		return "", "", false
+	}
+	protocol = strings.TrimSpace(strings.ToLower(runtime.Protocol()))
+	streamURL = strings.TrimSpace(runtime.StreamURL())
+	return protocol, streamURL, protocol != "" && streamURL != ""
+}
+
+func (o *Orchestrator) stopXunfeiAvatarSession(sessionID string) xunfeiAvatarRuntime {
+	if o == nil {
+		return nil
+	}
+	o.mu.Lock()
+	runtime := o.xunfeiSessions[sessionID]
+	delete(o.xunfeiSessions, sessionID)
+	o.mu.Unlock()
+	if runtime != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if err := runtime.Stop(ctx); err != nil {
+			log.Printf("Xunfei avatar stop failed session=%s: %v", sessionID, err)
+		}
+		cancel()
+	}
+	return runtime
+}
+
+func (o *Orchestrator) stopAllXunfeiAvatarSessions() {
+	if o == nil {
+		return
+	}
+	o.mu.Lock()
+	runtimes := make(map[string]xunfeiAvatarRuntime, len(o.xunfeiSessions))
+	for sessionID, runtime := range o.xunfeiSessions {
+		runtimes[sessionID] = runtime
+	}
+	o.xunfeiSessions = make(map[string]xunfeiAvatarRuntime)
+	o.mu.Unlock()
+	for sessionID, runtime := range runtimes {
+		if runtime == nil {
+			continue
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if err := runtime.Stop(ctx); err != nil {
+			log.Printf("Xunfei avatar stop failed session=%s: %v", sessionID, err)
+		}
+		cancel()
+	}
 }
 
 func (o *Orchestrator) setAvatarFromCharacterImage(ctx context.Context, sessionID, characterID, imageFilename string) error {
@@ -1616,18 +1718,19 @@ loop:
 // When roomMgr is nil (direct mode), a DirectPeer is created instead of a LiveKit Bot.
 func (o *Orchestrator) SetupSession(ctx context.Context, session *Session, roomMgr *livekit.RoomManager) (mediapeer.MediaPeer, []string, error) {
 	warnings := []string{}
-	if o.useSilentInference() && session != nil && o.hasOtherSilentAvatarRuntime(session.ID) {
+	isExternalAvatarSession := o.isBaiduXilingSession(session) || o.isXunfeiAvatarSession(session)
+	if !isExternalAvatarSession && o.useSilentInference() && session != nil && o.hasOtherSilentAvatarRuntime(session.ID) {
 		return nil, warnings, errors.New("silent_inference currently supports one active avatar session")
 	}
 
 	// Best-effort: apply the character's active avatar image when realtime
 	// avatar inference is enabled. Pure voice sessions keep cached idle videos
 	// but do not touch the avatar model.
-	if o.AvatarEnabled() && session != nil && session.CharacterID != "" {
-		characterRecord, err := o.charStore.Get(session.CharacterID)
+	if !isExternalAvatarSession && o.AvatarEnabled() && session != nil && session.CharacterID != "" {
+		_, err := o.charStore.Get(session.CharacterID)
 		if err != nil {
 			log.Printf("SetupSession: could not resolve character %s: %v", session.CharacterID, err)
-		} else if characterRecord.AvatarBackend != character.AvatarBackendBaiduXiling {
+		} else {
 			_, imageFilename, err := o.activeCharacterImage(session.CharacterID)
 			if err != nil {
 				log.Printf("SetupSession: could not resolve active image for character %s: %v", session.CharacterID, err)
@@ -1692,7 +1795,9 @@ func (o *Orchestrator) SetupSession(ctx context.Context, session *Session, roomM
 	o.peers[session.ID] = peer
 	o.mu.Unlock()
 
-	o.startSilentAvatarRuntime(context.Background(), session)
+	if !isExternalAvatarSession {
+		o.startSilentAvatarRuntime(context.Background(), session)
+	}
 
 	session.SetState(StateConnected)
 	return peer, warnings, nil
@@ -2174,6 +2279,107 @@ func (o *Orchestrator) runBaiduXilingSpeechAudio(
 	}
 	if pending != nil {
 		sendPart(pending, true)
+	}
+	return nil
+}
+
+func (o *Orchestrator) runXunfeiAvatarSpeechAudio(
+	ctx context.Context,
+	session *Session,
+	sessionID string,
+	turnSeq uint64,
+	ttsAudioCh <-chan *pb.AudioChunk,
+	ttsErrCh <-chan error,
+	appendRecAudio func([]byte, int),
+) error {
+	runtime := o.xunfeiAvatarSession(sessionID)
+	if runtime == nil {
+		return fmt.Errorf("Xunfei avatar session is not started")
+	}
+
+	sendCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	pcmCh := make(chan []byte, 8)
+	defer func() {
+		if pcmCh != nil {
+			close(pcmCh)
+		}
+	}()
+	sendErrCh := make(chan error, 1)
+	go func() {
+		sendErrCh <- runtime.SendPCMStream(sendCtx, pcmCh)
+	}()
+
+	speakingBroadcasted := false
+	sendPCM := func(pcm []byte) error {
+		if len(pcm) == 0 {
+			return nil
+		}
+		if !speakingBroadcasted {
+			speakingBroadcasted = true
+			session.SetState(StateSpeaking)
+			o.broadcastStatusTurn(sessionID, "speaking", turnSeq)
+		}
+		select {
+		case pcmCh <- pcm:
+			return nil
+		case err := <-sendErrCh:
+			if err != nil {
+				return err
+			}
+			return fmt.Errorf("Xunfei avatar audio driver stopped")
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+
+	for ttsAudioCh != nil || ttsErrCh != nil {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case err := <-sendErrCh:
+			if err != nil {
+				return err
+			}
+			return fmt.Errorf("Xunfei avatar audio driver stopped")
+		case chunk, ok := <-ttsAudioCh:
+			if !ok {
+				ttsAudioCh = nil
+				continue
+			}
+			pcm, sampleRate := audioChunkToPCM16(chunk)
+			if len(pcm) == 0 {
+				continue
+			}
+			if appendRecAudio != nil {
+				appendRecAudio(pcm, sampleRate)
+			}
+			if channels := int(chunk.GetChannels()); channels > 1 {
+				pcm = downmixPCM16ToMono(pcm, channels)
+			}
+			if sampleRate <= 0 {
+				sampleRate = xunfeiAvatarAudioSampleRate
+			}
+			if sampleRate != xunfeiAvatarAudioSampleRate {
+				pcm = resamplePCM16Linear(pcm, sampleRate, xunfeiAvatarAudioSampleRate)
+			}
+			if err := sendPCM(pcm); err != nil {
+				return err
+			}
+		case err, ok := <-ttsErrCh:
+			if !ok {
+				ttsErrCh = nil
+				continue
+			}
+			if err != nil {
+				return err
+			}
+		}
+	}
+	close(pcmCh)
+	pcmCh = nil
+	if err := <-sendErrCh; err != nil {
+		return err
 	}
 	return nil
 }
@@ -2726,6 +2932,18 @@ func (o *Orchestrator) runStandardPipeline(ctx context.Context, session *Session
 		return
 	}
 
+	if o.isXunfeiAvatarSession(session) {
+		if err := o.runXunfeiAvatarSpeechAudio(ctx, session, sessionID, turnSeq, ttsAudioCh, ttsErrCh, appendRecAudio); err != nil {
+			if errors.Is(err, context.Canceled) || ctx.Err() != nil {
+				return
+			}
+			log.Printf("Xunfei avatar audio stream error for session %s: %v", sessionID, err)
+			o.broadcastError(sessionID, "Xunfei avatar audio render failed")
+			return
+		}
+		return
+	}
+
 	if !o.AvatarEnabled() {
 		speakingBroadcasted := false
 		for ttsAudioCh != nil || ttsErrCh != nil {
@@ -3147,6 +3365,9 @@ func (o *Orchestrator) runVoiceLLMPipelineWithConfig(
 		if turn.avatarCancel != nil {
 			turn.avatarCancel()
 		}
+		if turn.xunfeiCancel != nil {
+			turn.xunfeiCancel()
+		}
 	}
 
 	saveAssistantMessage := func(turn *voicePipelineTurn) {
@@ -3298,6 +3519,81 @@ func (o *Orchestrator) runVoiceLLMPipelineWithConfig(
 		if final && turn.baiduAudioPending != nil {
 			sendBaiduVoiceAudioPart(turn, turn.baiduAudioPending, true)
 			turn.baiduAudioPending = nil
+		}
+	}
+
+	startXunfeiVoiceAudioWorker := func(turn *voicePipelineTurn) {
+		if turn == nil || turn.aborted || turn.xunfeiAudioStarted {
+			return
+		}
+		turn.xunfeiAudioStarted = true
+		turn.doneCh = make(chan voicePipelineTurnResult, 1)
+		turn.xunfeiPCMCh = make(chan []byte, 64)
+		turn.xunfeiCtx, turn.xunfeiCancel = context.WithCancel(ctx)
+		currentTurnDone = turn.doneCh
+		runtime := o.xunfeiAvatarSession(sessionID)
+		go func(turn *voicePipelineTurn) {
+			result := voicePipelineTurnResult{turn: turn}
+			defer func() {
+				turn.doneCh <- result
+			}()
+			if runtime == nil {
+				result.err = errors.New("Xunfei avatar session is not started")
+				return
+			}
+			if err := runtime.SendPCMStream(turn.xunfeiCtx, turn.xunfeiPCMCh); err != nil && !errors.Is(err, context.Canceled) {
+				result.err = err
+			}
+		}(turn)
+	}
+
+	sendXunfeiVoiceAudio := func(turn *voicePipelineTurn, audio *pb.AudioChunk) {
+		if turn == nil || audio == nil || len(audio.GetData()) == 0 {
+			return
+		}
+		if !turn.xunfeiAudioStarted {
+			startXunfeiVoiceAudioWorker(turn)
+		}
+		if turn.xunfeiPCMCh == nil || turn.xunfeiCtx == nil {
+			return
+		}
+		pcm, sampleRate := audioChunkToPCM16(audio)
+		if len(pcm) == 0 {
+			return
+		}
+		if channels := int(audio.GetChannels()); channels > 1 {
+			pcm = downmixPCM16ToMono(pcm, channels)
+		}
+		if sampleRate <= 0 {
+			sampleRate = xunfeiAvatarAudioSampleRate
+		}
+		if sampleRate != xunfeiAvatarAudioSampleRate {
+			pcm = resamplePCM16Linear(pcm, sampleRate, xunfeiAvatarAudioSampleRate)
+		}
+		if len(pcm) == 0 {
+			return
+		}
+		if !turn.xunfeiSpeaking && session.IsCurrentPipeline(pipelineSeq) && session.IsCurrentTurn(turn.seq) {
+			turn.xunfeiSpeaking = true
+			session.SetState(StateSpeaking)
+			o.broadcastStatusTurn(sessionID, "speaking", turn.seq)
+		}
+		select {
+		case turn.xunfeiPCMCh <- pcm:
+		case <-turn.xunfeiCtx.Done():
+		case <-ctx.Done():
+		}
+	}
+
+	closeXunfeiVoiceAudio := func(turn *voicePipelineTurn) {
+		if turn == nil || !turn.xunfeiAudioStarted || turn.xunfeiInputClosed {
+			return
+		}
+		close(turn.xunfeiPCMCh)
+		turn.xunfeiInputClosed = true
+		turn.avatarInputClosedAt = time.Now()
+		if turn.firstVideoAt.IsZero() {
+			logVoiceTrace("go_xunfei_audio_input_closed", sessionID, turn.seq, turn.replyID, turn.questionID, turn.userFinalAt)
 		}
 	}
 
@@ -3694,9 +3990,17 @@ func (o *Orchestrator) runVoiceLLMPipelineWithConfig(
 			currentTurn = nil
 			currentTurnDone = nil
 			if result.err != nil && !turn.aborted {
-				log.Printf("Avatar stream error for session %s (omni): %v", sessionID, result.err)
+				if o.isXunfeiAvatarSession(session) {
+					log.Printf("Xunfei avatar audio stream error for session %s (omni): %v", sessionID, result.err)
+				} else {
+					log.Printf("Avatar stream error for session %s (omni): %v", sessionID, result.err)
+				}
 				if session.IsCurrentPipeline(pipelineSeq) {
-					o.broadcastError(sessionID, "Avatar generation failed")
+					if o.isXunfeiAvatarSession(session) {
+						o.broadcastError(sessionID, "Xunfei avatar audio render failed")
+					} else {
+						o.broadcastError(sessionID, "Avatar generation failed")
+					}
 				}
 			}
 			if turn.aborted {
@@ -3707,6 +4011,9 @@ func (o *Orchestrator) runVoiceLLMPipelineWithConfig(
 		case output, ok := <-outputCh:
 			if !ok {
 				outputCh = nil
+				if currentTurn != nil && o.isXunfeiAvatarSession(session) && currentTurn.xunfeiAudioStarted {
+					closeXunfeiVoiceAudio(currentTurn)
+				}
 				if currentTurn != nil && !o.AvatarEnabled() && !currentTurn.avatarStarted {
 					turn := currentTurn
 					currentTurn = nil
@@ -3903,6 +4210,8 @@ func (o *Orchestrator) runVoiceLLMPipelineWithConfig(
 				}
 				if o.isBaiduXilingSession(session) {
 					sendBaiduVoiceAudio(currentTurn, audio, false)
+				} else if o.isXunfeiAvatarSession(session) {
+					sendXunfeiVoiceAudio(currentTurn, audio)
 				} else if !o.AvatarEnabled() {
 					if len(pcm) > 0 {
 						if !currentTurn.audioOnlyStarted && session.IsCurrentPipeline(pipelineSeq) && session.IsCurrentTurn(currentTurn.seq) {
@@ -3962,9 +4271,15 @@ func (o *Orchestrator) runVoiceLLMPipelineWithConfig(
 			if o.isBaiduXilingSession(session) {
 				sendBaiduVoiceAudio(currentTurn, nil, true)
 			}
+			if o.isXunfeiAvatarSession(session) {
+				closeXunfeiVoiceAudio(currentTurn)
+			}
 
 			if currentTurn.avatarStarted {
 				closeTurnInput(currentTurn)
+				continue
+			}
+			if currentTurn.xunfeiAudioStarted {
 				continue
 			}
 
@@ -4085,7 +4400,19 @@ func (o *Orchestrator) TeardownSession(sessionID string) error {
 	if err != nil {
 		return err
 	}
+	return o.teardownSessionResources(sessionID, session)
+}
 
+// TeardownEndedSession cleans up resources for a session that has already been
+// removed from the SessionManager, such as idle eviction.
+func (o *Orchestrator) TeardownEndedSession(session *Session) error {
+	if session == nil {
+		return ErrSessionNotFound
+	}
+	return o.teardownSessionResources(session.ID, session)
+}
+
+func (o *Orchestrator) teardownSessionResources(sessionID string, session *Session) error {
 	o.cancelPipeline(session)
 
 	// Wait for pipeline goroutine to finish storing messages (up to 3s)
@@ -4094,6 +4421,7 @@ func (o *Orchestrator) TeardownSession(sessionID string) error {
 	if runtime := o.stopSilentAvatarRuntime(sessionID); runtime != nil {
 		runtime.wait(3 * time.Second)
 	}
+	o.stopXunfeiAvatarSession(sessionID)
 
 	// Disconnect media peer
 	o.mu.Lock()
@@ -4110,7 +4438,9 @@ func (o *Orchestrator) TeardownSession(sessionID string) error {
 	}
 
 	// Close WebSocket connections
-	o.wsHub.CloseSession(sessionID)
+	if o.wsHub != nil {
+		o.wsHub.CloseSession(sessionID)
+	}
 
 	session.SetState(StateClosed)
 	return nil
@@ -4119,6 +4449,7 @@ func (o *Orchestrator) TeardownSession(sessionID string) error {
 // TeardownAll cleans up all sessions. Called during server shutdown.
 func (o *Orchestrator) TeardownAll() {
 	o.stopAllSilentAvatarRuntimes()
+	o.stopAllXunfeiAvatarSessions()
 
 	o.mu.Lock()
 	peers := make(map[string]mediapeer.MediaPeer, len(o.peers))
@@ -4275,6 +4606,17 @@ func (o *Orchestrator) runAssistantSpeechPipeline(ctx context.Context, session *
 			log.Printf("Baidu Xiling assistant speech error for session %s: %v", sessionID, err)
 			o.broadcastError(sessionID, "Baidu Xiling audio render failed")
 			return
+		}
+		return
+	}
+
+	if o.isXunfeiAvatarSession(session) {
+		if err := o.runXunfeiAvatarSpeechAudio(ctx, session, sessionID, turnSeq, ttsAudioCh, ttsErrCh, nil); err != nil {
+			if errors.Is(err, context.Canceled) || ctx.Err() != nil {
+				return
+			}
+			log.Printf("Xunfei avatar assistant speech error for session %s: %v", sessionID, err)
+			o.broadcastError(sessionID, "Xunfei avatar audio render failed")
 		}
 		return
 	}

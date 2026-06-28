@@ -19,6 +19,7 @@ import (
 	"github.com/cyberverse/server/internal/orchestrator"
 	pb "github.com/cyberverse/server/internal/pb"
 	"github.com/cyberverse/server/internal/ws"
+	"github.com/gorilla/websocket"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -262,8 +263,9 @@ inference:
 	inf := &fakeInferenceService{
 		avatarInfo: &pb.AvatarInfo{ModelName: "avatar." + activeModel, OutputFps: 24, OutputWidth: 320, OutputHeight: 480},
 	}
-	orch := orchestrator.New(inf, nil, orchestrator.NewSessionManager(4), nil, charStore)
-	return NewRouter(orchestrator.NewSessionManager(4), orch, nil, nil, cfg, charStore, "", configPath), charStore
+	sessionMgr := orchestrator.NewSessionManager(4)
+	orch := orchestrator.New(inf, ws.NewHub(), sessionMgr, nil, charStore)
+	return NewRouter(sessionMgr, orch, nil, nil, cfg, charStore, "", configPath), charStore
 }
 
 func newExternalAvatarModelTestRouter(t *testing.T, activeModel string) (*Router, string) {
@@ -338,8 +340,9 @@ live_act:
 	inf := &fakeInferenceService{
 		avatarInfo: &pb.AvatarInfo{ModelName: "avatar." + activeModel, OutputFps: 24, OutputWidth: 320, OutputHeight: 480},
 	}
-	orch := orchestrator.New(inf, nil, orchestrator.NewSessionManager(4), nil, charStore)
-	return NewRouter(orchestrator.NewSessionManager(4), orch, nil, nil, cfg, charStore, "", configPath), modelDir
+	sessionMgr := orchestrator.NewSessionManager(4)
+	orch := orchestrator.New(inf, ws.NewHub(), sessionMgr, nil, charStore)
+	return NewRouter(sessionMgr, orch, nil, nil, cfg, charStore, "", configPath), modelDir
 }
 
 func TestGetAvatarModelInfoUsesRuntimeModel(t *testing.T) {
@@ -890,6 +893,140 @@ func TestCreateSessionBaiduCharacterReturnsH5AudioConfig(t *testing.T) {
 	}
 	if resp.BaiduXiling.AudioSampleRate != 16000 || resp.BaiduXiling.AudioMaxPCMBytes != 48000 {
 		t.Fatalf("unexpected Baidu audio limits: %+v", resp.BaiduXiling)
+	}
+}
+
+func TestCreateSessionXunfeiCharacterReturnsAvatarConfig(t *testing.T) {
+	stopCh := make(chan struct{}, 1)
+	upgrader := websocket.Upgrader{}
+	xunfeiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if req.URL.Path != "/v1/interact" {
+			t.Fatalf("unexpected Xunfei path %s", req.URL.Path)
+		}
+		conn, err := upgrader.Upgrade(w, req, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer conn.Close()
+		for {
+			var packet struct {
+				Header struct {
+					Ctrl      string `json:"ctrl"`
+					RequestID string `json:"request_id"`
+					SceneID   string `json:"scene_id"`
+				} `json:"header"`
+			}
+			if err := conn.ReadJSON(&packet); err != nil {
+				t.Fatal(err)
+			}
+			switch packet.Header.Ctrl {
+			case "start":
+				if packet.Header.SceneID != "scene-1" {
+					t.Fatalf("expected scene_id scene-1, got %+v", packet.Header)
+				}
+				_ = conn.WriteJSON(map[string]any{
+					"header": map[string]any{
+						"code":    0,
+						"message": "success",
+						"session": "xf-session",
+						"sid":     "xf-sid",
+						"status":  0,
+					},
+					"payload": map[string]any{
+						"avatar": map[string]any{
+							"request_id": packet.Header.RequestID,
+							"event_type": "stream_info",
+							"stream_url": "https://example.test/live/avatar.flv",
+						},
+					},
+				})
+			case "stop":
+				_ = conn.WriteJSON(map[string]any{
+					"header": map[string]any{"code": 0, "message": "success", "session": "xf-session"},
+					"payload": map[string]any{
+						"avatar": map[string]any{
+							"request_id": packet.Header.RequestID,
+							"event_type": "stop",
+						},
+					},
+				})
+				stopCh <- struct{}{}
+				return
+			default:
+				t.Fatalf("unexpected Xunfei ctrl %q", packet.Header.Ctrl)
+			}
+		}
+	}))
+	t.Cleanup(xunfeiServer.Close)
+	t.Setenv("XUNFEI_AVATAR_APP_ID", "app-id")
+	t.Setenv("XUNFEI_AVATAR_API_KEY", "api-key")
+	t.Setenv("XUNFEI_AVATAR_API_SECRET", "api-secret")
+	t.Setenv("XUNFEI_AVATAR_INTERACT_URL", "ws"+strings.TrimPrefix(xunfeiServer.URL, "http")+"/v1/interact")
+
+	r, charStore := newAvatarModelTestRouter(t, "flash_head")
+	char, err := charStore.Create(&character.Character{
+		Name:          "Xunfei Character",
+		AvatarBackend: character.AvatarBackendXunfei,
+		Xunfei: &character.XunfeiAvatar{
+			AvatarID: "avatar-1",
+			SceneID:  "scene-1",
+			VCN:      "vcn-1",
+		},
+		VoiceType: "Momo",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	body := `{"mode":"omni","character_id":"` + char.ID + `"}`
+	req := httptest.NewRequest("POST", "/api/v1/sessions", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.Handler().ServeHTTP(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp CreateSessionResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Xunfei == nil {
+		t.Fatal("expected Xunfei session config")
+	}
+	if resp.Mode != "omni" {
+		t.Fatalf("expected Xunfei session to preserve requested omni mode, got %q", resp.Mode)
+	}
+	if resp.BaiduXiling != nil {
+		t.Fatalf("expected no Baidu config for Xunfei session, got %+v", resp.BaiduXiling)
+	}
+	if resp.Xunfei.StreamURL != "https://example.test/live/avatar.flv" || resp.Xunfei.AvatarID != "avatar-1" {
+		t.Fatalf("unexpected Xunfei config: %+v", resp.Xunfei)
+	}
+	if resp.Xunfei.Protocol != "flv" || resp.Xunfei.Width != 720 || resp.Xunfei.Height != 1280 {
+		t.Fatalf("expected default FLV stream config, got %+v", resp.Xunfei)
+	}
+	expectedPlaybackURL := "/api/v1/xunfei/sessions/" + resp.SessionID + "/stream.flv"
+	if resp.Xunfei.PlaybackURL != expectedPlaybackURL {
+		t.Fatalf("expected proxied FLV playback URL %q, got %+v", expectedPlaybackURL, resp.Xunfei)
+	}
+	if resp.Xunfei.AudioSampleRate != 16000 || resp.Xunfei.AudioMaxPCMBytes != 10240 {
+		t.Fatalf("unexpected Xunfei audio limits: %+v", resp.Xunfei)
+	}
+	if resp.AudioInput == nil || !resp.AudioInput.Enabled {
+		t.Fatalf("expected audio input to be enabled for Xunfei session, got %+v", resp.AudioInput)
+	}
+	deleteReq := httptest.NewRequest("DELETE", "/api/v1/sessions/"+resp.SessionID, nil)
+	deleteReq.SetPathValue("id", resp.SessionID)
+	deleteW := httptest.NewRecorder()
+	r.Handler().ServeHTTP(deleteW, deleteReq)
+	if deleteW.Code != http.StatusNoContent {
+		t.Fatalf("expected 204 deleting Xunfei session, got %d: %s", deleteW.Code, deleteW.Body.String())
+	}
+	select {
+	case <-stopCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for Xunfei stop")
 	}
 }
 
