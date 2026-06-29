@@ -166,6 +166,9 @@ const characterCoverImage = computed(() => {
   if (character.avatar_backend === 'baidu_xiling') {
     return character.baidu_xiling?.thumbnail_url || character.baidu_xiling?.source_image_url || ''
   }
+  if (character.avatar_backend === 'xunfei') {
+    return character.xunfei?.thumbnail_url || character.xunfei?.source_image_url || ''
+  }
   return character.avatar_image || ''
 })
 const audioHint = computed(() =>

@@ -410,7 +410,7 @@ function applyXunfeiAvatar(avatar: XunfeiAvatarConfig) {
     avatar_id: avatar.avatar_id || xunfeiAvatarId.value.trim(),
     avatar_name: avatarName,
     scene_id: avatar.scene_id || xunfeiSceneId.value.trim(),
-    vcn: avatar.vcn || avatar.vcns?.[0] || xunfeiVcn.value.trim(),
+    vcn: xunfeiVcn.value.trim(),
     vcns: avatar.vcns || [],
     thumbnail_url: avatar.thumbnail_url || '',
     preview_video_url: avatar.preview_video_url || '',
@@ -1028,26 +1028,6 @@ const pageTitle = computed(() =>
                 {{ xunfeiLookupError }}
               </p>
             </div>
-            <label class="block">
-              <span class="text-[13px] font-medium text-cv-text-secondary">{{ t('characterEdit.xunfeiSceneId') }}</span>
-              <input
-                id="xunfei-scene-id-input"
-                v-model="xunfeiSceneId"
-                type="text"
-                :placeholder="t('characterEdit.xunfeiSceneIdPlaceholder')"
-                class="mt-1.5 h-[42px] w-full rounded-cv-md border border-cv-border bg-cv-elevated px-3 text-sm text-cv-text placeholder:text-cv-text-muted transition-all focus:border-cv-accent focus:outline-none focus:shadow-[0_0_0_2px_rgba(59,130,246,0.15)]"
-              />
-            </label>
-            <label class="block">
-              <span class="text-[13px] font-medium text-cv-text-secondary">{{ t('characterEdit.xunfeiVcn') }}</span>
-              <input
-                id="xunfei-vcn-input"
-                v-model="xunfeiVcn"
-                type="text"
-                :placeholder="t('characterEdit.xunfeiVcnPlaceholder')"
-                class="mt-1.5 h-[42px] w-full rounded-cv-md border border-cv-border bg-cv-elevated px-3 text-sm text-cv-text placeholder:text-cv-text-muted transition-all focus:border-cv-accent focus:outline-none focus:shadow-[0_0_0_2px_rgba(59,130,246,0.15)]"
-              />
-            </label>
           </div>
           <div class="mt-4 overflow-hidden rounded-cv-md border border-cv-border bg-cv-elevated">
             <img

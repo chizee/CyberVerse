@@ -31,13 +31,13 @@ const (
 	defaultAudioSampleRate = 16000
 	defaultAudioMaxBytes   = 10 * 1024
 	defaultAudioEndBytes   = 1024
+	defaultVCN             = "x7_yachen_pro"
 )
 
 type Client struct {
 	appID       string
 	apiKey      string
 	apiSecret   string
-	uid         string
 	sceneID     string
 	interactURL string
 	dialer      *websocket.Dialer
@@ -47,7 +47,6 @@ type Session struct {
 	client     *Client
 	conn       *websocket.Conn
 	appID      string
-	uid        string
 	sceneID    string
 	session    string
 	sid        string
@@ -126,7 +125,6 @@ func NewClientFromEnv() (*Client, error) {
 		appID:       appID,
 		apiKey:      apiKey,
 		apiSecret:   apiSecret,
-		uid:         strings.TrimSpace(os.Getenv("XUNFEI_AVATAR_UID")),
 		sceneID:     strings.TrimSpace(os.Getenv("XUNFEI_AVATAR_SCENE_ID")),
 		interactURL: envOrDefaultURL("XUNFEI_AVATAR_INTERACT_URL", envOrDefaultURL("XUNFEI_AVATAR_SERVER_URL", interactFallback)),
 		dialer:      websocket.DefaultDialer,
@@ -138,6 +136,13 @@ func envOrDefaultURL(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func defaultAvatarVCN() string {
+	if value := strings.TrimSpace(os.Getenv("XUNFEI_AVATAR_DEFAULT_VCN")); value != "" {
+		return value
+	}
+	return defaultVCN
 }
 
 func (c *Client) Start(ctx context.Context, cfg *character.XunfeiAvatar) (*Session, error) {
@@ -152,6 +157,7 @@ func (c *Client) Start(ctx context.Context, cfg *character.XunfeiAvatar) (*Sessi
 	if sceneID == "" {
 		return nil, fmt.Errorf("Xunfei scene_id is required")
 	}
+	normalized.VCN = firstNonEmpty(normalized.VCN, defaultAvatarVCN())
 
 	signed, err := signedURL(c.interactURL, c.apiKey, c.apiSecret, http.MethodGet, time.Now().UTC())
 	if err != nil {
@@ -208,7 +214,6 @@ func (c *Client) Start(ctx context.Context, cfg *character.XunfeiAvatar) (*Sessi
 		client:     c,
 		conn:       conn,
 		appID:      c.appID,
-		uid:        c.uid,
 		sceneID:    sceneID,
 		session:    resp.Header.Session,
 		sid:        resp.Header.SID,
@@ -258,15 +263,11 @@ func (c *Client) startRequest(requestID, sceneID string, cfg *character.XunfeiAv
 }
 
 func (c *Client) requestHeader(ctrl, requestID string) map[string]any {
-	header := map[string]any{
+	return map[string]any{
 		"app_id":     c.appID,
 		"ctrl":       ctrl,
 		"request_id": requestID,
 	}
-	if c.uid != "" {
-		header["uid"] = c.uid
-	}
-	return header
 }
 
 func (s *Session) FrontendConfig() FrontendConfig {

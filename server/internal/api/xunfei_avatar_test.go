@@ -44,6 +44,9 @@ func TestStartXunfeiAvatarSessionConfig(t *testing.T) {
 							Protocol string `json:"protocol"`
 						} `json:"stream"`
 					} `json:"avatar"`
+					TTS struct {
+						VCN string `json:"vcn"`
+					} `json:"tts"`
 				} `json:"parameter"`
 			}
 			if err := conn.ReadJSON(&packet); err != nil {
@@ -53,6 +56,9 @@ func TestStartXunfeiAvatarSessionConfig(t *testing.T) {
 			case "start":
 				if packet.Header.SceneID != "scene-1" || packet.Parameter.Avatar.AvatarID != "avatar-1" {
 					t.Fatalf("unexpected start packet: %+v", packet)
+				}
+				if packet.Parameter.TTS.VCN != "default-vcn" {
+					t.Fatalf("expected default VCN in start packet, got %+v", packet.Parameter.TTS)
 				}
 				_ = conn.WriteJSON(map[string]any{
 					"header": map[string]any{
@@ -93,13 +99,13 @@ func TestStartXunfeiAvatarSessionConfig(t *testing.T) {
 	t.Setenv("XUNFEI_AVATAR_API_KEY", "api-key")
 	t.Setenv("XUNFEI_AVATAR_API_SECRET", "api-secret")
 	t.Setenv("XUNFEI_AVATAR_INTERACT_URL", "ws"+strings.TrimPrefix(apiServer.URL, "http")+"/v1/interact")
+	t.Setenv("XUNFEI_AVATAR_DEFAULT_VCN", "default-vcn")
 
 	runtime, cfg, err := startXunfeiAvatarSession(context.Background(), &character.Character{
 		AvatarBackend: character.AvatarBackendXunfei,
 		Xunfei: &character.XunfeiAvatar{
 			AvatarID: " avatar-1 ",
 			SceneID:  " scene-1 ",
-			VCN:      " vcn-1 ",
 			Width:    721,
 			Height:   1281,
 		},
@@ -113,7 +119,7 @@ func TestStartXunfeiAvatarSessionConfig(t *testing.T) {
 	if cfg.StreamURL != "https://example.test/live/avatar.flv" {
 		t.Fatalf("expected stream URL from start response, got %+v", cfg)
 	}
-	if cfg.AvatarID != "avatar-1" || cfg.SceneID != "scene-1" || cfg.VCN != "vcn-1" {
+	if cfg.AvatarID != "avatar-1" || cfg.SceneID != "scene-1" || cfg.VCN != "default-vcn" {
 		t.Fatalf("expected trimmed avatar config, got %+v", cfg)
 	}
 	if cfg.Protocol != "flv" || cfg.Width != 720 || cfg.Height != 1280 || cfg.FPS != 25 || cfg.Bitrate != 2000 {
@@ -160,7 +166,7 @@ func TestStartXunfeiAvatarSessionRequiresSceneID(t *testing.T) {
 	}
 }
 
-func TestCharacterForXunfeiFillsCatalogVCN(t *testing.T) {
+func TestCharacterForXunfeiDoesNotInventVCN(t *testing.T) {
 	cfg := characterForXunfei(&character.Character{
 		AvatarBackend: character.AvatarBackendXunfei,
 		Xunfei:        &character.XunfeiAvatar{AvatarID: "201165002"},
@@ -168,8 +174,11 @@ func TestCharacterForXunfeiFillsCatalogVCN(t *testing.T) {
 	if cfg == nil {
 		t.Fatal("expected Xunfei config")
 	}
-	if cfg.VCN != "x7_yachen_pro" {
-		t.Fatalf("expected catalog VCN fallback, got %+v", cfg)
+	if cfg.VCN != "" {
+		t.Fatalf("expected VCN to stay empty when the catalog has no VCN, got %+v", cfg)
+	}
+	if cfg.SourceImageURL == "" {
+		t.Fatalf("expected catalog media metadata, got %+v", cfg)
 	}
 }
 

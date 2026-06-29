@@ -87,7 +87,7 @@ func TestHandleGetXunfeiAvatarFromInlineCatalog(t *testing.T) {
 	}
 }
 
-func TestHandleGetXunfeiAvatarFromBuiltinCatalog(t *testing.T) {
+func TestHandleGetXunfeiAvatarFromEmbeddedCatalogKnownAvatar(t *testing.T) {
 	t.Setenv("XUNFEI_AVATAR_CATALOG", "")
 	t.Setenv("XUNFEI_AVATAR_RESOURCES", "")
 	t.Setenv("XUNFEI_AVATAR_CATALOG_FILE", "")
@@ -106,11 +106,11 @@ func TestHandleGetXunfeiAvatarFromBuiltinCatalog(t *testing.T) {
 	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
 		t.Fatal(err)
 	}
-	if resp.AvatarID != "201165002" || resp.AvatarName != "昭昭-4.0" || resp.VCN != "x7_yachen_pro" {
-		t.Fatalf("unexpected builtin response: %#v", resp)
+	if resp.AvatarID != "201165002" || resp.AvatarName != "昭昭-4.0" || resp.VCN != "" {
+		t.Fatalf("unexpected embedded response: %#v", resp)
 	}
 	if resp.SourceImageURL == "" {
-		t.Fatalf("expected builtin response to include source image URL: %#v", resp)
+		t.Fatalf("expected embedded response to include source image URL: %#v", resp)
 	}
 }
 
@@ -138,7 +138,7 @@ func TestHandleGetXunfeiAvatarFromEmbeddedCatalog(t *testing.T) {
 	}
 }
 
-func TestXunfeiAvatarCatalogOverridesBuiltin(t *testing.T) {
+func TestXunfeiAvatarCatalogOverridesEmbedded(t *testing.T) {
 	t.Setenv("XUNFEI_AVATAR_CATALOG", `[{"avatar_id":"201165002","avatar_name":"Custom Zhaozhao","vcn":"custom_vcn"}]`)
 	t.Setenv("XUNFEI_AVATAR_RESOURCES", "")
 	t.Setenv("XUNFEI_AVATAR_CATALOG_FILE", "")
@@ -155,8 +155,8 @@ func TestXunfeiAvatarCatalogOverridesBuiltin(t *testing.T) {
 			break
 		}
 	}
-	if got.AvatarName != "Custom Zhaozhao" || got.VCN != "custom_vcn" {
-		t.Fatalf("expected inline catalog to override builtin, got %#v", got)
+	if got.AvatarName != "Custom Zhaozhao" || got.VCN != "custom_vcn" || got.SourceImageURL == "" {
+		t.Fatalf("expected inline catalog to override embedded catalog and keep media metadata, got %#v", got)
 	}
 }
 

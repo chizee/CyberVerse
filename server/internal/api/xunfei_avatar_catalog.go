@@ -52,17 +52,6 @@ type xunfeiAvatarCatalogObject struct {
 
 var errXunfeiAvatarNotFound = errors.New("Xunfei avatar not found")
 
-var builtinXunfeiAvatarResources = []xunfeiAvatarResourceRaw{
-	{
-		AvatarID:   "201165002",
-		AvatarName: "昭昭-4.0",
-		VCN:        "x7_yachen_pro",
-		Status:     "authorized",
-		Width:      720,
-		Height:     1280,
-	},
-}
-
 func (r *Router) handleGetXunfeiAvatar(w http.ResponseWriter, req *http.Request) {
 	avatarID := strings.TrimSpace(req.PathValue("avatar_id"))
 	if avatarID == "" {
@@ -113,7 +102,7 @@ func (r *Router) lookupXunfeiAvatar(avatarID string) (xunfeiAvatarResource, erro
 }
 
 func loadXunfeiAvatarCatalog() ([]xunfeiAvatarResource, error) {
-	resources := normalizeXunfeiAvatarResources(builtinXunfeiAvatarResources)
+	resources := []xunfeiAvatarResource{}
 
 	if len(embeddedXunfeiAvatarCatalog) > 0 {
 		embeddedResources, err := parseXunfeiAvatarCatalog(embeddedXunfeiAvatarCatalog)
