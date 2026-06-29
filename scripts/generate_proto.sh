@@ -13,18 +13,55 @@ GO_OUT_DIR="$REPO_ROOT/server/internal/pb"
 # protoc is not a Go module; pin for reproducible server/internal/pb headers.
 # protobuf 5.29.x prints "libprotoc 29.3" from `protoc --version`.
 REQUIRED_LIBPROTOC_VERSION="29.3"
+PINNED_PROTOC="${HOME}/.local/cyberverse-tools/protobuf-${REQUIRED_LIBPROTOC_VERSION}/bin/protoc"
+
+resolve_go_protoc() {
+    local candidate="${PROTOC:-}"
+    if [[ -n "$candidate" ]]; then
+        if [[ "$candidate" == */* ]]; then
+            if [[ ! -x "$candidate" ]]; then
+                echo "ERROR: PROTOC is not executable: $candidate" >&2
+                exit 1
+            fi
+            printf '%s\n' "$candidate"
+            return
+        fi
+        if command -v "$candidate" &>/dev/null; then
+            command -v "$candidate"
+            return
+        fi
+        echo "ERROR: PROTOC command not found: $candidate" >&2
+        exit 1
+    fi
+
+    if [[ -x "$PINNED_PROTOC" ]]; then
+        printf '%s\n' "$PINNED_PROTOC"
+        return
+    fi
+
+    if command -v protoc &>/dev/null; then
+        command -v protoc
+        return
+    fi
+
+    echo "ERROR: protoc not found (required for Go proto generation)." >&2
+    echo "Set PROTOC=/path/to/protoc or install protobuf 5.29.3 at $PINNED_PROTOC." >&2
+    exit 1
+}
 
 verify_protoc_for_go() {
-    if ! command -v protoc &>/dev/null; then
-        echo "ERROR: protoc not found in PATH (required for Go proto generation)." >&2
+    local protoc_bin="$1"
+    if [[ ! -x "$protoc_bin" ]]; then
+        echo "ERROR: protoc is not executable: $protoc_bin" >&2
         exit 1
     fi
     local pv
-    pv=$(protoc --version 2>&1 | tr -d '\r')
+    pv=$("$protoc_bin" --version 2>&1 | tr -d '\r')
     if [[ "$pv" != "libprotoc ${REQUIRED_LIBPROTOC_VERSION}" ]]; then
         echo "ERROR: protoc version mismatch for reproducible Go codegen." >&2
         echo "  Expected: libprotoc ${REQUIRED_LIBPROTOC_VERSION} (protobuf 5.29.3)" >&2
-        echo "  Got:      ${pv}" >&2
+        echo "  Got:      ${pv} (${protoc_bin})" >&2
+        echo "Set PROTOC=/path/to/protoc or install protobuf 5.29.3 at $PINNED_PROTOC." >&2
         exit 1
     fi
 }
@@ -71,10 +108,11 @@ echo "Python proto generation complete: $OUT_DIR"
 mkdir -p "$GO_OUT_DIR"
 
 if command -v go &> /dev/null && [[ -f "$SERVER_DIR/go.mod" ]]; then
-    verify_protoc_for_go
+    GO_PROTOC_BIN=$(resolve_go_protoc)
+    verify_protoc_for_go "$GO_PROTOC_BIN"
     PLUGIN_GEN_GO=$(go -C "$SERVER_DIR" tool -n protoc-gen-go)
     PLUGIN_GEN_GO_GRPC=$(go -C "$SERVER_DIR" tool -n protoc-gen-go-grpc)
-    protoc -I "$PROTO_DIR" \
+    "$GO_PROTOC_BIN" -I "$PROTO_DIR" \
         --plugin=protoc-gen-go="$PLUGIN_GEN_GO" \
         --plugin=protoc-gen-go-grpc="$PLUGIN_GEN_GO_GRPC" \
         --go_out="$GO_OUT_DIR" --go_opt=paths=source_relative \

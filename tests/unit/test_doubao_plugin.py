@@ -84,6 +84,48 @@ class TestDoubaoRealtimePlugin:
         assert plugin._config.ws_url == "wss://openspeech.bytedance.com/api/v3/realtime/dialogue"
 
     @pytest.mark.asyncio
+    async def test_initialize_api_key_uses_new_auth_headers(self):
+        plugin = DoubaoRealtimePlugin()
+        config = PluginConfig(
+            plugin_name="omni.doubao",
+            params={
+                "api_key": "new-console-key",
+                "access_token": "${DOUBAO_ACCESS_TOKEN}",
+                "app_id": "${DOUBAO_APP_ID}",
+            },
+        )
+
+        await plugin.initialize(config)
+        headers = plugin._config.build_ws_headers("connect-id")
+
+        assert plugin._config.api_key == "new-console-key"
+        assert plugin._config.access_token == ""
+        assert plugin._config.app_id == ""
+        assert headers["X-Api-Key"] == "new-console-key"
+        assert headers["X-Api-Resource-Id"] == "volc.speech.dialog"
+        assert headers["X-Api-Connect-Id"] == "connect-id"
+        assert "X-Api-App-ID" not in headers
+        assert "X-Api-Access-Key" not in headers
+        assert "X-Api-App-Key" not in headers
+
+    @pytest.mark.asyncio
+    async def test_initialize_access_token_uses_legacy_auth_headers(self):
+        plugin = DoubaoRealtimePlugin()
+        config = PluginConfig(
+            plugin_name="omni.doubao",
+            params={"access_token": "legacy-token", "app_id": "legacy-app"},
+        )
+
+        await plugin.initialize(config)
+        headers = plugin._config.build_ws_headers("connect-id")
+
+        assert headers["X-Api-App-ID"] == "legacy-app"
+        assert headers["X-Api-Access-Key"] == "legacy-token"
+        assert headers["X-Api-App-Key"] == "PlgvMymc7f3tQnJ6"
+        assert headers["X-Api-Resource-Id"] == "volc.speech.dialog"
+        assert "X-Api-Key" not in headers
+
+    @pytest.mark.asyncio
     async def test_initialize_empty_ws_url_raises(self):
         plugin = DoubaoRealtimePlugin()
         config = PluginConfig(

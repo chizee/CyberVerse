@@ -61,8 +61,9 @@ def _format_dialog_context_for_manifest(dialog_context: list[dict]) -> str:
 class DoubaoSessionConfig:
     """Configuration for Doubao realtime session."""
 
-    access_token: str
-    app_id: str
+    access_token: str = ""
+    app_id: str = ""
+    api_key: str = ""
     ws_url: str = DEFAULT_DOUBAO_WS_URL
     voice_type: str = "温柔文雅"
     bot_name: str = "豆包"
@@ -97,9 +98,23 @@ class DoubaoSessionConfig:
         Raises:
             ValueError: If required fields are missing or explicitly empty
         """
-        # Extract token - prefer access_token, fallback to api_key
-        token = config.params.get("access_token", "") or config.params.get("api_key", "")
-        app_id = config.params.get("app_id", "")
+        api_key = cls._config_string(
+            config.params.get("api_key"), os.environ.get("DOUBAO_API_KEY")
+        )
+        token = cls._config_string(
+            config.params.get("access_token"),
+            config.params.get("access_key"),
+            config.params.get("token"),
+            os.environ.get("DOUBAO_ACCESS_TOKEN")
+            or os.environ.get("DOUBAO_ACCESS_KEY")
+            or os.environ.get("DOUBAO_TOKEN"),
+        )
+        app_id = cls._config_string(
+            config.params.get("app_id"),
+            config.params.get("appid"),
+            config.params.get("appId"),
+            os.environ.get("DOUBAO_APP_ID"),
+        )
         if "ws_url" in config.params and not config.params.get("ws_url"):
             raise ValueError("ws_url is required but not provided")
         ws_url = (
@@ -109,8 +124,8 @@ class DoubaoSessionConfig:
         )
 
         # Validate required fields
-        if not token:
-            raise ValueError("access_token (or api_key) is required but not provided")
+        if not api_key and not token:
+            raise ValueError("api_key or access_token is required but not provided")
 
         # Extract other config values with defaults
         voice_type = config.params.get("voice_type", "温柔文雅")
@@ -133,6 +148,7 @@ class DoubaoSessionConfig:
         return cls(
             access_token=token,
             app_id=app_id,
+            api_key=api_key,
             ws_url=ws_url,
             voice_type=voice_type,
             bot_name=bot_name,
@@ -203,13 +219,29 @@ class DoubaoSessionConfig:
         Returns:
             Dict of HTTP headers for WebSocket connection
         """
-        return {
-            "X-Api-App-ID": self.app_id,
-            "X-Api-Access-Key": self.access_token,
+        headers = {
             "X-Api-Resource-Id": "volc.speech.dialog",
-            "X-Api-App-Key": "PlgvMymc7f3tQnJ6",
             "X-Api-Connect-Id": connect_id,
         }
+        if self.api_key:
+            headers["X-Api-Key"] = self.api_key
+            return headers
+        headers.update(
+            {
+                "X-Api-App-ID": self.app_id,
+                "X-Api-Access-Key": self.access_token,
+                "X-Api-App-Key": "PlgvMymc7f3tQnJ6",
+            }
+        )
+        return headers
+
+    @staticmethod
+    def _config_string(*values: object) -> str:
+        for value in values:
+            text = str(value or "").strip()
+            if text and not (text.startswith("${") and text.endswith("}")):
+                return text
+        return ""
 
     def build_start_session_payload(self, dialog_id: str | None = None) -> dict:
         """
