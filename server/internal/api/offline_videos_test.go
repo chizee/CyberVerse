@@ -319,6 +319,70 @@ func TestBuildXunfeiOfflineDrivingPCMAddsTailSilenceAfterAudio(t *testing.T) {
 	}
 }
 
+func TestXunfeiOfflineOutputTargetDurationUsesRawAudioAndTail(t *testing.T) {
+	t.Setenv("XUNFEI_AVATAR_OFFLINE_OUTPUT_TAIL_MS", "3000")
+
+	pcm := make([]byte, xunfeiOfflineAudioSampleRate*2)
+	got := xunfeiOfflineOutputTargetDuration(pcm)
+	if got != 4*time.Second {
+		t.Fatalf("expected 1s raw audio plus 3s tail, got %s", got)
+	}
+}
+
+func TestParseXunfeiOfflineTrailingSilenceDetectsFinalSegment(t *testing.T) {
+	output := `
+[Parsed_silencedetect_0 @ 0x1] silence_start: 6.113437
+[Parsed_silencedetect_0 @ 0x1] silence_end: 6.711875 | silence_duration: 0.598438
+[Parsed_silencedetect_0 @ 0x1] silence_start: 46.287562
+[Parsed_silencedetect_0 @ 0x1] silence_end: 69.056 | silence_duration: 22.768438
+`
+	got, ok, err := parseXunfeiOfflineTrailingSilence(output, 69056*time.Millisecond)
+	if err != nil {
+		t.Fatalf("expected trailing silence parse to succeed, got %v", err)
+	}
+	if !ok {
+		t.Fatalf("expected trailing silence to be detected")
+	}
+	if got < 46280*time.Millisecond || got > 46300*time.Millisecond {
+		t.Fatalf("expected trailing silence near 46.288s, got %s", got)
+	}
+}
+
+func TestParseXunfeiOfflineTrailingSilenceIgnoresMiddleSilence(t *testing.T) {
+	output := `
+[Parsed_silencedetect_0 @ 0x1] silence_start: 6.113437
+[Parsed_silencedetect_0 @ 0x1] silence_end: 6.711875 | silence_duration: 0.598438
+`
+	_, ok, err := parseXunfeiOfflineTrailingSilence(output, 20*time.Second)
+	if err != nil {
+		t.Fatalf("expected silence parse to succeed, got %v", err)
+	}
+	if ok {
+		t.Fatalf("expected middle silence to be ignored")
+	}
+}
+
+func TestIsRetryableXunfeiOfflineAttemptErrorOnlyRetriesDriveClose(t *testing.T) {
+	if !isRetryableXunfeiOfflineAttemptError(xunfeiOfflineAttemptError{
+		stage: "drive",
+		err:   errors.New("websocket: close sent"),
+	}) {
+		t.Fatalf("expected drive websocket close to be retryable")
+	}
+	if isRetryableXunfeiOfflineAttemptError(xunfeiOfflineAttemptError{
+		stage: "start",
+		err:   errors.New("websocket: close sent"),
+	}) {
+		t.Fatalf("expected start websocket close not to be retried by offline drive retry")
+	}
+	if isRetryableXunfeiOfflineAttemptError(xunfeiOfflineAttemptError{
+		stage: "drive",
+		err:   errors.New("Xunfei avatar drive failed: code=100 message=bad audio"),
+	}) {
+		t.Fatalf("expected semantic drive errors not to be retried")
+	}
+}
+
 func addOfflineVideoAvatarImage(t *testing.T, store *character.Store, characterID string) {
 	t.Helper()
 	image := character.ImageInfo{

@@ -78,7 +78,7 @@ let highlightTimer: ReturnType<typeof setTimeout> | null = null
 let offlineTTSSaveTimer: ReturnType<typeof setTimeout> | null = null
 let hydratingOfflineTTS = false
 
-const JOBS_PER_PAGE = 8
+const JOBS_PER_PAGE = 9
 const BAIDU_XILING_COMMON_ASSETS_URL = 'https://xiling.cloud.baidu.com/open/commonAssets/list'
 const DEFAULT_COMPONENTS: ComponentsResponse = {
   llm: [{ id: 'qwen', name: 'Qwen', model: 'qwen3.6-plus', default: true, available: true }],

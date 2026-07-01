@@ -16,6 +16,8 @@ import (
 	"github.com/cyberverse/server/internal/recording"
 )
 
+const offlineTTSTextSegmentSoftLimit = 120
+
 type OfflineAudioInput struct {
 	PCM16      []byte
 	SampleRate int
@@ -193,32 +195,38 @@ func (o *Orchestrator) offlineAudioChunks(ctx context.Context, in OfflineVideoGe
 }
 
 func (o *Orchestrator) synthesizeOfflineText(ctx context.Context, text string, cfg inference.TTSConfig) ([]*pb.AudioChunk, []byte, int, error) {
-	textCh := make(chan string, 1)
-	textCh <- text
-	close(textCh)
-
-	audioCh, errCh := o.inference.SynthesizeSpeechStream(ctx, textCh, cfg)
+	segments := splitOfflineTTSText(text)
 	chunks := make([]*pb.AudioChunk, 0)
 	var pcm []byte
 	sampleRate := 0
-	for chunk := range audioCh {
-		if chunk == nil || len(chunk.Data) == 0 {
-			continue
+	for _, segment := range segments {
+		textCh := make(chan string, 1)
+		textCh <- segment
+		close(textCh)
+
+		audioCh, errCh := o.inference.SynthesizeSpeechStream(ctx, textCh, cfg)
+		for chunk := range audioCh {
+			if chunk == nil || len(chunk.Data) == 0 {
+				continue
+			}
+			chunkCopy := *chunk
+			chunkCopy.Data = append([]byte(nil), chunk.Data...)
+			chunkCopy.IsFinal = false
+			chunks = append(chunks, &chunkCopy)
+			chunkPCM, sr, err := audioChunkPCM16Mono(chunk)
+			if err != nil {
+				return nil, nil, 0, err
+			}
+			if sampleRate == 0 {
+				sampleRate = sr
+			} else if sr != sampleRate {
+				return nil, nil, 0, fmt.Errorf("tts sample rate changed from %d to %d", sampleRate, sr)
+			}
+			pcm = append(pcm, chunkPCM...)
 		}
-		chunkCopy := *chunk
-		chunkCopy.Data = append([]byte(nil), chunk.Data...)
-		chunks = append(chunks, &chunkCopy)
-		chunkPCM, sr, err := audioChunkPCM16Mono(chunk)
-		if err != nil {
+		if err := <-errCh; err != nil {
 			return nil, nil, 0, err
 		}
-		if sampleRate == 0 {
-			sampleRate = sr
-		}
-		pcm = append(pcm, chunkPCM...)
-	}
-	if err := <-errCh; err != nil {
-		return nil, nil, 0, err
 	}
 	if len(chunks) > 0 {
 		chunks[len(chunks)-1].IsFinal = true
@@ -227,6 +235,95 @@ func (o *Orchestrator) synthesizeOfflineText(ctx context.Context, text string, c
 		sampleRate = 16000
 	}
 	return chunks, pcm, sampleRate, nil
+}
+
+func splitOfflineTTSText(text string) []string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return nil
+	}
+	primary := splitOfflineTextByDelimiters(text, "。！？!?；;\n")
+	segments := make([]string, 0, len(primary))
+	for _, segment := range primary {
+		segments = append(segments, splitOfflineTTSTextSegment(segment)...)
+	}
+	return segments
+}
+
+func splitOfflineTTSTextSegment(text string) []string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return nil
+	}
+	if len([]rune(text)) <= offlineTTSTextSegmentSoftLimit {
+		return []string{text}
+	}
+	parts := splitOfflineTextByDelimiters(text, "，,、：:")
+	segments := make([]string, 0, len(parts))
+	current := ""
+	for _, part := range parts {
+		if len([]rune(part)) > offlineTTSTextSegmentSoftLimit {
+			if current != "" {
+				segments = append(segments, current)
+				current = ""
+			}
+			segments = append(segments, hardSplitOfflineTTSText(part)...)
+			continue
+		}
+		if current == "" {
+			current = part
+			continue
+		}
+		if len([]rune(current))+len([]rune(part)) <= offlineTTSTextSegmentSoftLimit {
+			current += part
+			continue
+		}
+		segments = append(segments, current)
+		current = part
+	}
+	if current != "" {
+		segments = append(segments, current)
+	}
+	return segments
+}
+
+func splitOfflineTextByDelimiters(text string, delimiters string) []string {
+	delimiterSet := make(map[rune]bool, len(delimiters))
+	for _, delimiter := range delimiters {
+		delimiterSet[delimiter] = true
+	}
+	var segments []string
+	var builder strings.Builder
+	for _, r := range text {
+		builder.WriteRune(r)
+		if delimiterSet[r] {
+			if segment := strings.TrimSpace(builder.String()); segment != "" {
+				segments = append(segments, segment)
+			}
+			builder.Reset()
+		}
+	}
+	if segment := strings.TrimSpace(builder.String()); segment != "" {
+		segments = append(segments, segment)
+	}
+	return segments
+}
+
+func hardSplitOfflineTTSText(text string) []string {
+	runes := []rune(strings.TrimSpace(text))
+	if len(runes) == 0 {
+		return nil
+	}
+	segments := make([]string, 0, (len(runes)+offlineTTSTextSegmentSoftLimit-1)/offlineTTSTextSegmentSoftLimit)
+	for len(runes) > 0 {
+		take := offlineTTSTextSegmentSoftLimit
+		if len(runes) < take {
+			take = len(runes)
+		}
+		segments = append(segments, strings.TrimSpace(string(runes[:take])))
+		runes = runes[take:]
+	}
+	return segments
 }
 
 func audioChunkPCM16Mono(chunk *pb.AudioChunk) ([]byte, int, error) {

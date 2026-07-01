@@ -24,11 +24,29 @@ const (
 	xunfeiOfflineAudioSampleRate = 16000
 	xunfeiOfflineCaptureWait     = 200 * time.Millisecond
 	xunfeiOfflinePrerollWait     = 3 * time.Second
-	xunfeiOfflineTailWait        = 4 * time.Second
+	xunfeiOfflineTailWait        = 2 * time.Second
+	xunfeiOfflineOutputTailWait  = 2 * time.Second
 	xunfeiOfflineRenderDrainWait = 1 * time.Second
+	xunfeiOfflineDurationWait    = 8 * time.Second
+	xunfeiOfflineDurationSlack   = 250 * time.Millisecond
 	xunfeiOfflineStopTimeout     = 5 * time.Second
 	xunfeiOfflineRemuxTimeout    = 2 * time.Minute
+	xunfeiOfflineMaxAttempts     = 2
+	xunfeiOfflineRetryWait       = 2 * time.Second
 )
+
+type xunfeiOfflineAttemptError struct {
+	stage string
+	err   error
+}
+
+func (e xunfeiOfflineAttemptError) Error() string {
+	return e.err.Error()
+}
+
+func (e xunfeiOfflineAttemptError) Unwrap() error {
+	return e.err
+}
 
 func (r *Router) handleCreateXunfeiOfflineVideo(w http.ResponseWriter, req *http.Request, ch *character.Character, inputType, text string) {
 	if ch == nil || ch.Xunfei == nil || strings.TrimSpace(ch.Xunfei.AvatarID) == "" {
@@ -148,6 +166,12 @@ func (r *Router) runXunfeiOfflineVideoJob(in xunfeiOfflineVideoRunInput) {
 			job.AudioSampleRate = sampleRate
 		})
 	}
+	pcm, err := os.ReadFile(pcmPath)
+	if err != nil {
+		fail("audio", err)
+		return
+	}
+	targetOutputDuration := xunfeiOfflineOutputTargetDuration(pcm)
 
 	ch, err := r.charStore.Get(in.CharacterID)
 	if err != nil {
@@ -155,62 +179,26 @@ func (r *Router) runXunfeiOfflineVideoJob(in xunfeiOfflineVideoRunInput) {
 		return
 	}
 	sessionCharacter := xunfeiOfflineCharacter(ch)
-	update("start", 22, "Starting Xunfei avatar stream")
-	startCtx, startCancel := context.WithTimeout(ctx, 30*time.Second)
-	runtime, cfg, err := startXunfeiAvatarSession(startCtx, sessionCharacter)
-	startCancel()
+	cfg, err := r.runXunfeiOfflineVideoAttempt(ctx, in, sessionCharacter, pcm, targetOutputDuration, 1, update)
+	if err != nil && isRetryableXunfeiOfflineAttemptError(err) {
+		update("retrying", 60, "Retrying Xunfei avatar stream")
+		if waitErr := waitForXunfeiOfflineRetry(ctx); waitErr != nil {
+			fail("drive", waitErr)
+			return
+		}
+		cfg, err = r.runXunfeiOfflineVideoAttempt(ctx, in, sessionCharacter, pcm, targetOutputDuration, 2, update)
+	}
 	if err != nil {
-		fail("start", err)
-		return
-	}
-	defer func() {
-		stopCtx, stopCancel := context.WithTimeout(context.Background(), 5*time.Second)
-		_ = runtime.Stop(stopCtx)
-		stopCancel()
-	}()
-	if err := ensureXunfeiOfflineStreamSupported(cfg.StreamURL); err != nil {
-		fail("start", err)
-		return
-	}
-
-	update("recording", 34, "Recording Xunfei avatar stream")
-	capturePath := filepath.Join(jobDir, "capture.flv")
-	recordCtx, stopRecording := context.WithCancel(context.Background())
-	recordDone := make(chan error, 1)
-	go func() {
-		recordDone <- recordXunfeiOfflineStream(recordCtx, cfg.StreamURL, capturePath, in.OutputPath, in.CRF)
-	}()
-	defer stopRecording()
-	if err := waitForXunfeiOfflineCapture(ctx, capturePath, recordDone); err != nil {
-		fail("recording", err)
-		return
-	}
-
-	update("drive", 58, "Sending audio to Xunfei avatar")
-	pcm, err := os.ReadFile(pcmPath)
-	if err != nil {
+		var attemptErr xunfeiOfflineAttemptError
+		if errors.As(err, &attemptErr) && attemptErr.stage != "" {
+			fail(attemptErr.stage, attemptErr.err)
+			return
+		}
 		fail("drive", err)
-		return
-	}
-	drivingPCM := buildXunfeiOfflineDrivingPCM(pcm)
-	driveStartedAt := time.Now()
-	if err := sendXunfeiOfflinePCM(ctx, runtime, drivingPCM); err != nil {
-		fail("drive", err)
-		return
-	}
-
-	update("rendering", 76, "Waiting for Xunfei avatar render")
-	if err := waitForXunfeiOfflineRender(ctx, drivingPCM, driveStartedAt); err != nil {
-		fail("rendering", err)
 		return
 	}
 
 	update("encoding", 88, "Finalizing Xunfei video")
-	stopRecording()
-	if err := <-recordDone; err != nil {
-		fail("encoding", err)
-		return
-	}
 	_ = r.updateOfflineVideoJob(in.CharacterID, in.JobID, func(job *offlineVideoJob) {
 		job.Status = "completed"
 		job.Stage = "completed"
@@ -223,6 +211,105 @@ func (r *Router) runXunfeiOfflineVideoJob(in xunfeiOfflineVideoRunInput) {
 		job.AudioSampleRate = xunfeiOfflineAudioSampleRate
 		job.FinishedAt = time.Now().UTC().Format(time.RFC3339)
 	})
+}
+
+func (r *Router) runXunfeiOfflineVideoAttempt(ctx context.Context, in xunfeiOfflineVideoRunInput, sessionCharacter *character.Character, pcm []byte, targetOutputDuration time.Duration, attempt int, update func(stage string, progress int, message string)) (*xunfeiAvatarSessionConfig, error) {
+	jobDir := filepath.Dir(in.OutputPath)
+	capturePath := filepath.Join(jobDir, fmt.Sprintf("capture-attempt-%d.flv", attempt))
+	outputPath := filepath.Join(jobDir, fmt.Sprintf("output-attempt-%d.mp4", attempt))
+
+	update("start", 22, "Starting Xunfei avatar stream")
+	startCtx, startCancel := context.WithTimeout(ctx, 30*time.Second)
+	runtime, cfg, err := startXunfeiAvatarSession(startCtx, sessionCharacter)
+	startCancel()
+	if err != nil {
+		return nil, xunfeiOfflineAttemptError{stage: "start", err: err}
+	}
+	defer func() {
+		stopCtx, stopCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_ = runtime.Stop(stopCtx)
+		stopCancel()
+	}()
+	if err := ensureXunfeiOfflineStreamSupported(cfg.StreamURL); err != nil {
+		return nil, xunfeiOfflineAttemptError{stage: "start", err: err}
+	}
+
+	update("recording", 34, "Recording Xunfei avatar stream")
+	recordCtx, stopRecording := context.WithCancel(context.Background())
+	recordDone := make(chan error, 1)
+	go func() {
+		recordDone <- recordXunfeiOfflineStream(recordCtx, cfg.StreamURL, capturePath, outputPath, in.CRF, targetOutputDuration)
+	}()
+	defer stopRecording()
+	if err := waitForXunfeiOfflineCapture(ctx, capturePath, recordDone); err != nil {
+		return nil, xunfeiOfflineAttemptError{stage: "recording", err: err}
+	}
+
+	update("drive", 58, "Sending audio to Xunfei avatar")
+	drivingPCM := buildXunfeiOfflineDrivingPCM(pcm)
+	driveStartedAt := time.Now()
+	if err := sendXunfeiOfflinePCM(ctx, runtime, drivingPCM); err != nil {
+		stopRecording()
+		waitForXunfeiOfflineRecordDone(recordDone)
+		return nil, xunfeiOfflineAttemptError{stage: "drive", err: err}
+	}
+
+	update("rendering", 76, "Waiting for Xunfei avatar render")
+	if err := waitForXunfeiOfflineRender(ctx, drivingPCM, driveStartedAt); err != nil {
+		return nil, xunfeiOfflineAttemptError{stage: "rendering", err: err}
+	}
+	if err := waitForXunfeiOfflineCaptureDuration(ctx, capturePath, targetOutputDuration); err != nil {
+		return nil, xunfeiOfflineAttemptError{stage: "rendering", err: err}
+	}
+
+	stopRecording()
+	if err := <-recordDone; err != nil {
+		return nil, xunfeiOfflineAttemptError{stage: "encoding", err: err}
+	}
+	if outputPath != in.OutputPath {
+		_ = os.Remove(in.OutputPath)
+		if err := os.Rename(outputPath, in.OutputPath); err != nil {
+			return nil, xunfeiOfflineAttemptError{stage: "encoding", err: err}
+		}
+	}
+	finalCapturePath := filepath.Join(jobDir, "capture.flv")
+	if capturePath != finalCapturePath {
+		_ = os.Remove(finalCapturePath)
+		_ = os.Rename(capturePath, finalCapturePath)
+	}
+	return cfg, nil
+}
+
+func waitForXunfeiOfflineRetry(ctx context.Context) error {
+	timer := time.NewTimer(xunfeiOfflineRetryWait)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func waitForXunfeiOfflineRecordDone(recordDone <-chan error) {
+	timer := time.NewTimer(xunfeiOfflineStopTimeout)
+	defer timer.Stop()
+	select {
+	case <-recordDone:
+	case <-timer.C:
+	}
+}
+
+func isRetryableXunfeiOfflineAttemptError(err error) bool {
+	var attemptErr xunfeiOfflineAttemptError
+	if !errors.As(err, &attemptErr) || attemptErr.stage != "drive" {
+		return false
+	}
+	message := strings.ToLower(attemptErr.err.Error())
+	return strings.Contains(message, "websocket: close sent") ||
+		strings.Contains(message, "connection closed") ||
+		strings.Contains(message, "close 1000") ||
+		strings.Contains(message, "close 1001")
 }
 
 func (r *Router) prepareXunfeiOfflineAudio(ctx context.Context, in xunfeiOfflineVideoRunInput, outputPCMPath string) (string, int, error) {
@@ -292,6 +379,9 @@ func ensureXunfeiOfflinePrerequisites() error {
 	}
 	if _, err := exec.LookPath("ffmpeg"); err != nil {
 		return errors.New("ffmpeg is required for Xunfei offline video generation")
+	}
+	if _, err := exec.LookPath("ffprobe"); err != nil {
+		return errors.New("ffprobe is required for Xunfei offline video generation")
 	}
 	return nil
 }
@@ -440,7 +530,15 @@ func xunfeiOfflineAudioDuration(pcm []byte) time.Duration {
 	return time.Duration(len(pcm)) * time.Second / time.Duration(bytesPerSecond)
 }
 
-func recordXunfeiOfflineStream(ctx context.Context, streamURL, capturePath, outputPath string, crf int) error {
+func xunfeiOfflineOutputTargetDuration(pcm []byte) time.Duration {
+	audioDuration := xunfeiOfflineAudioDuration(pcm)
+	if audioDuration <= 0 {
+		return 0
+	}
+	return audioDuration + xunfeiOfflineOutputTailDuration()
+}
+
+func recordXunfeiOfflineStream(ctx context.Context, streamURL, capturePath, outputPath string, crf int, minOutputDuration time.Duration) error {
 	if strings.TrimSpace(streamURL) == "" {
 		return errors.New("Xunfei stream URL is required")
 	}
@@ -469,7 +567,7 @@ func recordXunfeiOfflineStream(ctx context.Context, streamURL, capturePath, outp
 	if err := requireNonEmptyFile(capturePath, "Xunfei stream recording produced no data"); err != nil {
 		return err
 	}
-	return remuxXunfeiCapture(capturePath, outputPath, crf)
+	return remuxXunfeiCapture(capturePath, outputPath, crf, minOutputDuration)
 }
 
 func waitForXunfeiOfflineCapture(ctx context.Context, capturePath string, recordDone <-chan error) error {
@@ -506,6 +604,29 @@ func waitForXunfeiOfflineCapture(ctx context.Context, capturePath string, record
 	}
 }
 
+func waitForXunfeiOfflineCaptureDuration(ctx context.Context, capturePath string, target time.Duration) error {
+	if target <= 0 {
+		return nil
+	}
+	deadline := time.NewTimer(xunfeiOfflineDurationWait)
+	defer deadline.Stop()
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-deadline.C:
+			return nil
+		case <-ticker.C:
+			duration, err := probeMediaDurationWithTimeout(ctx, capturePath)
+			if err == nil && duration+xunfeiOfflineDurationSlack >= target {
+				return nil
+			}
+		}
+	}
+}
+
 func xunfeiOfflineCaptureWaitDuration() time.Duration {
 	value := strings.TrimSpace(os.Getenv("XUNFEI_AVATAR_OFFLINE_CAPTURE_WAIT_MS"))
 	if value == "" {
@@ -530,7 +651,7 @@ func xunfeiOfflinePrerollDuration() time.Duration {
 	return time.Duration(ms) * time.Millisecond
 }
 
-func remuxXunfeiCapture(capturePath, outputPath string, crf int) error {
+func remuxXunfeiCapture(capturePath, outputPath string, crf int, minOutputDuration time.Duration) error {
 	remuxCtx, cancel := context.WithTimeout(context.Background(), xunfeiOfflineRemuxTimeout)
 	defer cancel()
 	copyArgs := []string{
@@ -543,7 +664,10 @@ func remuxXunfeiCapture(capturePath, outputPath string, crf int) error {
 		outputPath,
 	}
 	if err := runFFmpeg(remuxCtx, copyArgs); err == nil {
-		return requireNonEmptyFile(outputPath, "Xunfei MP4 output is empty")
+		if err := requireNonEmptyFile(outputPath, "Xunfei MP4 output is empty"); err != nil {
+			return err
+		}
+		return finalizeXunfeiOfflineOutput(outputPath, minOutputDuration, crf)
 	}
 	if crf <= 0 {
 		crf = 23
@@ -565,7 +689,192 @@ func remuxXunfeiCapture(capturePath, outputPath string, crf int) error {
 	if err := runFFmpeg(remuxCtx, reencodeArgs); err != nil {
 		return err
 	}
-	return requireNonEmptyFile(outputPath, "Xunfei MP4 output is empty")
+	if err := requireNonEmptyFile(outputPath, "Xunfei MP4 output is empty"); err != nil {
+		return err
+	}
+	return finalizeXunfeiOfflineOutput(outputPath, minOutputDuration, crf)
+}
+
+func finalizeXunfeiOfflineOutput(outputPath string, minDuration time.Duration, crf int) error {
+	if err := ensureXunfeiOfflineOutputDuration(outputPath, minDuration, crf); err != nil {
+		return err
+	}
+	return trimXunfeiOfflineOutputTailSilence(outputPath, xunfeiOfflineOutputTailDuration(), crf)
+}
+
+func ensureXunfeiOfflineOutputDuration(outputPath string, minDuration time.Duration, crf int) error {
+	if minDuration <= 0 {
+		return nil
+	}
+	duration, err := probeMediaDurationWithTimeout(context.Background(), outputPath)
+	if err != nil {
+		return err
+	}
+	if duration+xunfeiOfflineDurationSlack >= minDuration {
+		return nil
+	}
+	pad := minDuration - duration
+	if crf <= 0 {
+		crf = 23
+	}
+	tmpPath := outputPath + ".pad.mp4"
+	_ = os.Remove(tmpPath)
+	args := []string{
+		"-hide_banner",
+		"-loglevel", "error",
+		"-y",
+		"-i", outputPath,
+		"-vf", fmt.Sprintf("tpad=stop_mode=clone:stop_duration=%.3f", pad.Seconds()),
+		"-af", fmt.Sprintf("apad=pad_dur=%.3f", pad.Seconds()),
+		"-t", fmt.Sprintf("%.3f", minDuration.Seconds()),
+		"-c:v", "libx264",
+		"-preset", "fast",
+		"-crf", strconv.Itoa(crf),
+		"-pix_fmt", "yuv420p",
+		"-c:a", "aac",
+		"-b:a", "96k",
+		"-movflags", "+faststart",
+		tmpPath,
+	}
+	padCtx, cancel := context.WithTimeout(context.Background(), xunfeiOfflineRemuxTimeout)
+	defer cancel()
+	if err := runFFmpeg(padCtx, args); err != nil {
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	if err := requireNonEmptyFile(tmpPath, "Xunfei MP4 output is empty"); err != nil {
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	return os.Rename(tmpPath, outputPath)
+}
+
+func trimXunfeiOfflineOutputTailSilence(outputPath string, keepSilence time.Duration, crf int) error {
+	if keepSilence < 0 {
+		return nil
+	}
+	duration, err := probeMediaDurationWithTimeout(context.Background(), outputPath)
+	if err != nil {
+		return err
+	}
+	silenceStart, ok, err := detectXunfeiOfflineTrailingSilence(outputPath, duration)
+	if err != nil || !ok {
+		return err
+	}
+	trimDuration := silenceStart + keepSilence
+	if trimDuration <= xunfeiOfflineDurationSlack {
+		return nil
+	}
+	if trimDuration+xunfeiOfflineDurationSlack >= duration {
+		return nil
+	}
+	if crf <= 0 {
+		crf = 23
+	}
+	tmpPath := outputPath + ".trim.mp4"
+	_ = os.Remove(tmpPath)
+	args := []string{
+		"-hide_banner",
+		"-loglevel", "error",
+		"-y",
+		"-i", outputPath,
+		"-t", fmt.Sprintf("%.3f", trimDuration.Seconds()),
+		"-c:v", "libx264",
+		"-preset", "fast",
+		"-crf", strconv.Itoa(crf),
+		"-pix_fmt", "yuv420p",
+		"-c:a", "aac",
+		"-b:a", "96k",
+		"-movflags", "+faststart",
+		tmpPath,
+	}
+	trimCtx, cancel := context.WithTimeout(context.Background(), xunfeiOfflineRemuxTimeout)
+	defer cancel()
+	if err := runFFmpeg(trimCtx, args); err != nil {
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	if err := requireNonEmptyFile(tmpPath, "Xunfei MP4 output is empty"); err != nil {
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	return os.Rename(tmpPath, outputPath)
+}
+
+func detectXunfeiOfflineTrailingSilence(path string, duration time.Duration) (time.Duration, bool, error) {
+	ffmpegPath, err := exec.LookPath("ffmpeg")
+	if err != nil {
+		return 0, false, errors.New("ffmpeg is required for Xunfei offline video generation")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), xunfeiOfflineRemuxTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, ffmpegPath,
+		"-hide_banner",
+		"-nostats",
+		"-i", path,
+		"-af", "silencedetect=noise=-35dB:d=0.5",
+		"-f", "null",
+		"-",
+	)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return 0, false, fmt.Errorf("ffmpeg silencedetect failed: %w: %s", err, strings.TrimSpace(stderr.String()))
+	}
+	return parseXunfeiOfflineTrailingSilence(stderr.String(), duration)
+}
+
+func parseXunfeiOfflineTrailingSilence(output string, duration time.Duration) (time.Duration, bool, error) {
+	var currentStart time.Duration
+	haveCurrentStart := false
+	var lastStart time.Duration
+	var lastEnd time.Duration
+	haveLast := false
+	for _, line := range strings.Split(output, "\n") {
+		if _, rest, ok := strings.Cut(line, "silence_start:"); ok {
+			start, ok := parseXunfeiOfflineSilenceSeconds(rest)
+			if !ok {
+				return 0, false, fmt.Errorf("parse silence_start from %q", line)
+			}
+			currentStart = start
+			haveCurrentStart = true
+			continue
+		}
+		if _, rest, ok := strings.Cut(line, "silence_end:"); ok {
+			end, ok := parseXunfeiOfflineSilenceSeconds(rest)
+			if !ok {
+				return 0, false, fmt.Errorf("parse silence_end from %q", line)
+			}
+			if haveCurrentStart {
+				lastStart = currentStart
+				lastEnd = end
+				haveLast = true
+				haveCurrentStart = false
+			}
+		}
+	}
+	if haveCurrentStart {
+		return currentStart, true, nil
+	}
+	if !haveLast {
+		return 0, false, nil
+	}
+	if lastEnd+xunfeiOfflineDurationSlack < duration {
+		return 0, false, nil
+	}
+	return lastStart, true, nil
+}
+
+func parseXunfeiOfflineSilenceSeconds(value string) (time.Duration, bool) {
+	fields := strings.Fields(strings.TrimSpace(value))
+	if len(fields) == 0 {
+		return 0, false
+	}
+	seconds, err := strconv.ParseFloat(fields[0], 64)
+	if err != nil || seconds < 0 {
+		return 0, false
+	}
+	return time.Duration(seconds * float64(time.Second)), true
 }
 
 func runFFmpeg(ctx context.Context, args []string) error {
@@ -591,6 +900,39 @@ func startFFmpeg(args []string) (*exec.Cmd, *bytes.Buffer, error) {
 		return nil, nil, fmt.Errorf("start ffmpeg: %w", err)
 	}
 	return cmd, &stderr, nil
+}
+
+func probeMediaDurationWithTimeout(ctx context.Context, path string) (time.Duration, error) {
+	probeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	return probeMediaDuration(probeCtx, path)
+}
+
+func probeMediaDuration(ctx context.Context, path string) (time.Duration, error) {
+	ffprobePath, err := exec.LookPath("ffprobe")
+	if err != nil {
+		return 0, errors.New("ffprobe is required for Xunfei offline video generation")
+	}
+	cmd := exec.CommandContext(ctx, ffprobePath,
+		"-v", "error",
+		"-show_entries", "format=duration",
+		"-of", "default=noprint_wrappers=1:nokey=1",
+		path,
+	)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		return 0, fmt.Errorf("ffprobe duration failed: %w: %s", err, strings.TrimSpace(stderr.String()))
+	}
+	seconds, err := strconv.ParseFloat(strings.TrimSpace(string(out)), 64)
+	if err != nil {
+		return 0, fmt.Errorf("parse media duration: %w", err)
+	}
+	if seconds <= 0 {
+		return 0, nil
+	}
+	return time.Duration(seconds * float64(time.Second)), nil
 }
 
 func waitForCommandStop(ctx context.Context, cmd *exec.Cmd) error {
@@ -640,6 +982,18 @@ func xunfeiOfflineTailDuration() time.Duration {
 	ms, err := strconv.Atoi(value)
 	if err != nil || ms < 0 {
 		return xunfeiOfflineTailWait
+	}
+	return time.Duration(ms) * time.Millisecond
+}
+
+func xunfeiOfflineOutputTailDuration() time.Duration {
+	value := strings.TrimSpace(os.Getenv("XUNFEI_AVATAR_OFFLINE_OUTPUT_TAIL_MS"))
+	if value == "" {
+		return xunfeiOfflineOutputTailWait
+	}
+	ms, err := strconv.Atoi(value)
+	if err != nil || ms < 0 {
+		return xunfeiOfflineOutputTailWait
 	}
 	return time.Duration(ms) * time.Millisecond
 }
