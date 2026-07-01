@@ -2,6 +2,9 @@ package api
 
 import (
 	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -151,6 +154,171 @@ func TestBaiduXilingOfflineVideoOptionsUseBaiduTTSParams(t *testing.T) {
 	}
 }
 
+func TestXunfeiOfflineVideoQueuesWithoutLocalAvatarImage(t *testing.T) {
+	t.Setenv("XUNFEI_AVATAR_APP_ID", "")
+	t.Setenv("XUNFEI_AVATAR_API_KEY", "")
+	t.Setenv("XUNFEI_AVATAR_API_SECRET", "")
+
+	r := newTestRouter()
+	char, err := r.charStore.Create(&character.Character{
+		Name:          "Xunfei Offline",
+		AvatarBackend: character.AvatarBackendXunfei,
+		Xunfei: &character.XunfeiAvatar{
+			AvatarID: "avatar-1",
+			SceneID:  "scene-1",
+			VCN:      "vcn-1",
+			Protocol: "xrtc",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := newOfflineVideoMultipartRequestWithAudio(t, char.ID, map[string]string{
+		"input_type":        "audio",
+		"audio_sample_rate": "16000",
+	}, "input.pcm", []byte{0, 0, 1, 0})
+	w := httptest.NewRecorder()
+	r.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp offlineVideoJobResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Provider != character.AvatarBackendXunfei {
+		t.Fatalf("expected Xunfei provider, got %#v", resp)
+	}
+	if resp.Width != 720 || resp.Height != 1280 || resp.FPS != 25 {
+		t.Fatalf("expected normalized Xunfei output metadata, got %#v", resp)
+	}
+	deadline := time.After(2 * time.Second)
+	for {
+		job, _, err := r.readOfflineVideoJob(char.ID, resp.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if job.Status == "failed" {
+			if job.Stage != "start" {
+				t.Fatalf("expected missing credentials to fail in start stage, got %#v", job)
+			}
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("timed out waiting for Xunfei offline job to fail, latest job=%#v", job)
+		default:
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+}
+
+func TestXunfeiOfflineCharacterUsesRecordableProtocol(t *testing.T) {
+	ch := &character.Character{
+		AvatarBackend: character.AvatarBackendXunfei,
+		Xunfei: &character.XunfeiAvatar{
+			AvatarID: "avatar-1",
+			SceneID:  "scene-1",
+			Protocol: "webrtc",
+			Width:    721,
+			Height:   1281,
+		},
+	}
+	got := xunfeiOfflineCharacter(ch)
+	if got.Xunfei.Protocol != "flv" {
+		t.Fatalf("expected web recording protocol to fall back to flv, got %+v", got.Xunfei)
+	}
+	if got.Xunfei.Width != 720 || got.Xunfei.Height != 1280 || got.Xunfei.FPS != 25 {
+		t.Fatalf("expected normalized Xunfei dimensions, got %+v", got.Xunfei)
+	}
+	if ch.Xunfei.Protocol != "webrtc" {
+		t.Fatalf("expected original character to remain unchanged, got %+v", ch.Xunfei)
+	}
+
+	t.Setenv("XUNFEI_AVATAR_OFFLINE_PROTOCOL", "rtmp")
+	got = xunfeiOfflineCharacter(ch)
+	if got.Xunfei.Protocol != "rtmp" {
+		t.Fatalf("expected env override to use rtmp, got %+v", got.Xunfei)
+	}
+}
+
+func TestWaitForXunfeiOfflineCaptureAllowsNoDataWhileRecorderRuns(t *testing.T) {
+	t.Setenv("XUNFEI_AVATAR_OFFLINE_CAPTURE_WAIT_MS", "1")
+
+	err := waitForXunfeiOfflineCapture(context.Background(), filepath.Join(t.TempDir(), "capture.flv"), make(chan error, 1))
+	if err != nil {
+		t.Fatalf("expected capture wait to allow recorder preroll, got %v", err)
+	}
+}
+
+func TestWaitForXunfeiOfflineCaptureReturnsRecorderError(t *testing.T) {
+	recordDone := make(chan error, 1)
+	recordDone <- errors.New("record failed")
+
+	err := waitForXunfeiOfflineCapture(context.Background(), filepath.Join(t.TempDir(), "capture.flv"), recordDone)
+	if err == nil || err.Error() != "record failed" {
+		t.Fatalf("expected recorder error, got %v", err)
+	}
+}
+
+func TestXunfeiOfflineRemainingRenderDurationUsesPCMDurationAndDrainWait(t *testing.T) {
+	pcm := make([]byte, xunfeiOfflineAudioSampleRate*2)
+	got := xunfeiOfflineRemainingRenderDuration(pcm, time.Now())
+	if got < 1900*time.Millisecond || got > 2100*time.Millisecond {
+		t.Fatalf("expected about 2s render wait, got %s", got)
+	}
+}
+
+func TestPrependXunfeiOfflinePrerollAddsSilenceBeforeAudio(t *testing.T) {
+	t.Setenv("XUNFEI_AVATAR_OFFLINE_PREROLL_MS", "1000")
+
+	pcm := []byte{1, 2, 3, 4}
+	got := prependXunfeiOfflinePreroll(pcm)
+	prerollBytes := xunfeiOfflineAudioSampleRate * 2
+	if len(got) != prerollBytes+len(pcm) {
+		t.Fatalf("expected %d bytes, got %d", prerollBytes+len(pcm), len(got))
+	}
+	for i, b := range got[:prerollBytes] {
+		if b != 0 {
+			t.Fatalf("expected preroll byte %d to be silent, got %d", i, b)
+		}
+	}
+	if !bytes.Equal(got[prerollBytes:], pcm) {
+		t.Fatalf("expected original pcm after preroll, got %v", got[prerollBytes:])
+	}
+}
+
+func TestPrependXunfeiOfflinePrerollCanBeDisabled(t *testing.T) {
+	t.Setenv("XUNFEI_AVATAR_OFFLINE_PREROLL_MS", "0")
+
+	pcm := []byte{1, 2, 3, 4}
+	got := prependXunfeiOfflinePreroll(pcm)
+	if !bytes.Equal(got, pcm) {
+		t.Fatalf("expected preroll to be disabled, got %v", got)
+	}
+}
+
+func TestBuildXunfeiOfflineDrivingPCMAddsTailSilenceAfterAudio(t *testing.T) {
+	t.Setenv("XUNFEI_AVATAR_OFFLINE_PREROLL_MS", "0")
+	t.Setenv("XUNFEI_AVATAR_OFFLINE_TAIL_MS", "1000")
+
+	pcm := []byte{1, 2, 3, 4}
+	got := buildXunfeiOfflineDrivingPCM(pcm)
+	tailBytes := xunfeiOfflineAudioSampleRate * 2
+	if len(got) != len(pcm)+tailBytes {
+		t.Fatalf("expected %d bytes, got %d", len(pcm)+tailBytes, len(got))
+	}
+	if !bytes.Equal(got[:len(pcm)], pcm) {
+		t.Fatalf("expected original pcm before tail, got %v", got[:len(pcm)])
+	}
+	for i, b := range got[len(pcm):] {
+		if b != 0 {
+			t.Fatalf("expected tail byte %d to be silent, got %d", i, b)
+		}
+	}
+}
+
 func addOfflineVideoAvatarImage(t *testing.T, store *character.Store, characterID string) {
 	t.Helper()
 	image := character.ImageInfo{
@@ -174,6 +342,30 @@ func newOfflineVideoMultipartRequest(t *testing.T, characterID string, fields ma
 		if err := writer.WriteField(key, value); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/characters/"+characterID+"/offline-videos", &body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	return req
+}
+
+func newOfflineVideoMultipartRequestWithAudio(t *testing.T, characterID string, fields map[string]string, filename string, audio []byte) *http.Request {
+	t.Helper()
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	for key, value := range fields {
+		if err := writer.WriteField(key, value); err != nil {
+			t.Fatal(err)
+		}
+	}
+	file, err := writer.CreateFormFile("audio", filename)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := file.Write(audio); err != nil {
+		t.Fatal(err)
 	}
 	if err := writer.Close(); err != nil {
 		t.Fatal(err)

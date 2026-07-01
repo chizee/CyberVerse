@@ -190,6 +190,15 @@ func TestInteractStartAndAudioDriverUseSignedWebSocket(t *testing.T) {
 	}
 }
 
+func TestAudioDriverPacketDelayUsesPCMDuration(t *testing.T) {
+	if got := audioDriverPacketDelay(make([]byte, defaultAudioMaxBytes)); got != 320*time.Millisecond {
+		t.Fatalf("expected 10KiB PCM packet delay to be 320ms, got %s", got)
+	}
+	if got := audioDriverPacketDelay(make([]byte, 640)); got != defaultAudioFrameDelay {
+		t.Fatalf("expected small PCM packet delay to keep frame minimum, got %s", got)
+	}
+}
+
 type audioDriverTestResult struct {
 	statuses     []int
 	audioLengths []int

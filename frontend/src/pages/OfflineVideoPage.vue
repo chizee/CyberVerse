@@ -655,9 +655,6 @@ async function submitJob() {
       backgroundImageUrl: backgroundImageUrl.value.trim(),
       autoAnimoji: autoAnimoji.value,
     })
-    if (inputType.value === 'text') {
-      scriptText.value = t('offlineVideo.defaultScript')
-    }
     await refreshJobs()
     markJobHighlighted(createdJob.id)
   } catch (err) {

@@ -379,7 +379,7 @@ func (s *Session) SendPCMStream(ctx context.Context, chunks <-chan []byte) (err 
 			return err
 		}
 		if status != 2 {
-			timer := time.NewTimer(defaultAudioFrameDelay)
+			timer := time.NewTimer(audioDriverPacketDelay(pcm))
 			select {
 			case <-ctx.Done():
 				timer.Stop()
@@ -449,6 +449,18 @@ func (s *Session) SendPCMStream(ctx context.Context, chunks <-chan []byte) (err 
 			}
 		}
 	}
+}
+
+func audioDriverPacketDelay(pcm []byte) time.Duration {
+	if len(pcm) <= 0 {
+		return defaultAudioFrameDelay
+	}
+	bytesPerSecond := defaultAudioSampleRate * 2
+	delay := time.Duration(len(pcm)) * time.Second / time.Duration(bytesPerSecond)
+	if delay < defaultAudioFrameDelay {
+		return defaultAudioFrameDelay
+	}
+	return delay
 }
 
 func (s *Session) Stop(ctx context.Context) error {

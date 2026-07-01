@@ -104,6 +104,16 @@ type baiduXilingOfflineVideoOptions struct {
 	AutoAnimoji        bool
 }
 
+type xunfeiOfflineVideoRunInput struct {
+	JobID       string
+	CharacterID string
+	Text        string
+	Audio       *orchestrator.OfflineAudioInput
+	TTSConfig   inference.TTSConfig
+	OutputPath  string
+	CRF         int
+}
+
 func (r *Router) handleListOfflineVideos(w http.ResponseWriter, req *http.Request) {
 	jobs, err := r.listOfflineVideoJobs(req.PathValue("id"))
 	if err != nil {
@@ -150,6 +160,10 @@ func (r *Router) handleCreateOfflineVideo(w http.ResponseWriter, req *http.Reque
 	}
 	if ch.AvatarBackend == character.AvatarBackendBaiduXiling {
 		r.handleCreateBaiduXilingOfflineVideo(w, req, ch, inputType, text)
+		return
+	}
+	if ch.AvatarBackend == character.AvatarBackendXunfei {
+		r.handleCreateXunfeiOfflineVideo(w, req, ch, inputType, text)
 		return
 	}
 
