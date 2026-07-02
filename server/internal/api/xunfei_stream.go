@@ -22,6 +22,9 @@ const (
 	xunfeiStreamTransportUnknown xunfeiStreamTransport = ""
 	xunfeiStreamTransportHTTPFLV xunfeiStreamTransport = "http_flv"
 	xunfeiStreamTransportRTMP    xunfeiStreamTransport = "rtmp"
+
+	xunfeiStreamStatsInterval = 5 * time.Second
+	xunfeiStreamSlowReadGap   = 500 * time.Millisecond
 )
 
 type xunfeiDNSCacheEntry struct {
@@ -111,7 +114,7 @@ func (r *Router) proxyXunfeiRTMPStream(w http.ResponseWriter, req *http.Request,
 	w.Header().Set("Content-Type", "video/x-flv")
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Accel-Buffering", "no")
-	copyXunfeiStream(w, req, id, stdout)
+	copyXunfeiStream(w, req, id, xunfeiStreamTransportRTMP, stdout)
 	waitErr := cmd.Wait()
 	if req.Context().Err() != nil {
 		return
@@ -152,20 +155,42 @@ func (r *Router) proxyXunfeiHTTPStream(w http.ResponseWriter, req *http.Request,
 	w.Header().Set("Content-Type", "video/x-flv")
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Accel-Buffering", "no")
-	copyXunfeiStream(w, req, id, resp.Body)
+	copyXunfeiStream(w, req, id, xunfeiStreamTransportHTTPFLV, resp.Body)
 }
 
-func copyXunfeiStream(w http.ResponseWriter, req *http.Request, id string, reader io.Reader) {
+func copyXunfeiStream(w http.ResponseWriter, req *http.Request, id string, transport xunfeiStreamTransport, reader io.Reader) {
 	flusher, canFlush := w.(http.Flusher)
 	if canFlush {
 		flusher.Flush()
 	}
 
 	var copyErr error
-	buf := make([]byte, 32*1024)
+	buf := make([]byte, 16*1024)
+	startedAt := time.Now()
+	lastReadAt := startedAt
+	lastStatsAt := startedAt
+	var totalBytes int64
+	var totalChunks int64
+	var windowBytes int64
+	var windowChunks int64
+	var windowSlowReads int
+	var windowMaxReadGap time.Duration
 	for {
 		n, readErr := reader.Read(buf)
+		now := time.Now()
 		if n > 0 {
+			readGap := now.Sub(lastReadAt)
+			lastReadAt = now
+			if readGap > windowMaxReadGap {
+				windowMaxReadGap = readGap
+			}
+			if readGap >= xunfeiStreamSlowReadGap {
+				windowSlowReads++
+			}
+			totalBytes += int64(n)
+			totalChunks++
+			windowBytes += int64(n)
+			windowChunks++
 			written, writeErr := w.Write(buf[:n])
 			if canFlush {
 				flusher.Flush()
@@ -179,6 +204,14 @@ func copyXunfeiStream(w http.ResponseWriter, req *http.Request, id string, reade
 				break
 			}
 		}
+		if now.Sub(lastStatsAt) >= xunfeiStreamStatsInterval {
+			logXunfeiStreamStats(id, transport, false, totalBytes, totalChunks, windowBytes, windowChunks, startedAt, lastStatsAt, now, windowMaxReadGap, windowSlowReads)
+			lastStatsAt = now
+			windowBytes = 0
+			windowChunks = 0
+			windowSlowReads = 0
+			windowMaxReadGap = 0
+		}
 		if readErr != nil {
 			if readErr != io.EOF {
 				copyErr = readErr
@@ -186,11 +219,12 @@ func copyXunfeiStream(w http.ResponseWriter, req *http.Request, id string, reade
 			break
 		}
 	}
+	logXunfeiStreamStats(id, transport, true, totalBytes, totalChunks, windowBytes, windowChunks, startedAt, lastStatsAt, time.Now(), windowMaxReadGap, windowSlowReads)
 	if req.Context().Err() != nil {
 		return
 	}
 	if copyErr != nil {
-		logXunfeiStreamError(id, xunfeiStreamTransportUnknown, copyErr)
+		logXunfeiStreamError(id, transport, copyErr)
 	}
 }
 
@@ -203,6 +237,36 @@ func logXunfeiStreamError(sessionID string, transport xunfeiStreamTransport, err
 		return
 	}
 	log.Printf("Xunfei stream proxy error session=%s transport=%s err=%v", sessionID, transport, err)
+}
+
+func logXunfeiStreamStats(sessionID string, transport xunfeiStreamTransport, final bool, totalBytes, totalChunks, windowBytes, windowChunks int64, startedAt, windowStartedAt, now time.Time, windowMaxReadGap time.Duration, windowSlowReads int) {
+	elapsed := now.Sub(startedAt)
+	windowElapsed := now.Sub(windowStartedAt)
+	if elapsed <= 0 || (windowBytes == 0 && !final) {
+		return
+	}
+	log.Printf(
+		"Xunfei stream proxy stats session=%s transport=%s final=%t total_bytes=%d total_chunks=%d total_kbps=%d window_bytes=%d window_chunks=%d window_kbps=%d window_max_read_gap_ms=%d window_slow_reads=%d elapsed_ms=%d",
+		sessionID,
+		transport,
+		final,
+		totalBytes,
+		totalChunks,
+		xunfeiStreamKbps(totalBytes, elapsed),
+		windowBytes,
+		windowChunks,
+		xunfeiStreamKbps(windowBytes, windowElapsed),
+		windowMaxReadGap.Milliseconds(),
+		windowSlowReads,
+		elapsed.Milliseconds(),
+	)
+}
+
+func xunfeiStreamKbps(bytes int64, elapsed time.Duration) int64 {
+	if bytes <= 0 || elapsed <= 0 {
+		return 0
+	}
+	return int64((float64(bytes) * 8 / elapsed.Seconds()) / 1000)
 }
 
 func detectXunfeiStreamTransport(streamURL string) xunfeiStreamTransport {
