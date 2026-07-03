@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Restart the local CyberVerse development services.
-# Usage: scripts/start_services.sh [inference|server|frontend ...]
+# Restart or stop the local CyberVerse development services.
+# Usage: scripts/start_services.sh [--stop] [inference|server|frontend ...]
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -8,15 +8,18 @@ RUN_DIR="${ROOT_DIR}/.run"
 LOG_DIR="${RUN_DIR}/logs"
 STOP_TIMEOUT="${STOP_TIMEOUT:-10}"
 SERVICES=(inference server frontend)
+MODE="restart"
 
 cd "${ROOT_DIR}"
 
-if [[ ! -f ".venv/bin/activate" ]]; then
-  echo "Virtual environment not found: ${ROOT_DIR}/.venv/bin/activate" >&2
-  exit 1
-fi
-
 mkdir -p "${LOG_DIR}"
+
+ensure_virtualenv() {
+  if [[ ! -f ".venv/bin/activate" ]]; then
+    echo "Virtual environment not found: ${ROOT_DIR}/.venv/bin/activate" >&2
+    exit 1
+  fi
+}
 
 is_known_service() {
   local service="$1"
@@ -196,6 +199,11 @@ start_service() {
 main() {
   local service
 
+  if (($# > 0)) && [[ "$1" == "--stop" || "$1" == "stop" ]]; then
+    MODE="stop"
+    shift
+  fi
+
   if (($# > 0)); then
     SERVICES=("$@")
   fi
@@ -210,6 +218,12 @@ main() {
   for service in "${SERVICES[@]}"; do
     stop_service "${service}"
   done
+
+  if [[ "${MODE}" == "stop" ]]; then
+    return 0
+  fi
+
+  ensure_virtualenv
 
   for service in "${SERVICES[@]}"; do
     start_service "${service}"

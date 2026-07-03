@@ -295,6 +295,30 @@ async def test_send_inputs_sends_text_message_and_response_create():
 
 
 @pytest.mark.asyncio
+async def test_send_inputs_combines_text_with_response_instructions():
+    plugin = QwenOmniRealtimePlugin()
+    ws = FakeQwenWS([])
+
+    async def inputs():
+        yield VoiceLLMInputEvent(
+            text="请后台执行复杂任务：整理方案。",
+            response_instructions="CyberVerse 已经创建后台任务。请只确认任务已开始。",
+        )
+
+    await plugin._send_inputs(ws, inputs(), "session-1", asyncio.Queue())
+
+    sent_types = [event["type"] for event in ws.sent]
+    assert sent_types == ["conversation.item.create", "response.create"]
+    assert ws.sent[0]["item"]["content"] == [
+        {"type": "input_text", "text": "请后台执行复杂任务：整理方案。"}
+    ]
+    assert ws.sent[1]["response"] == {
+        "modalities": ["text", "audio"],
+        "instructions": "CyberVerse 已经创建后台任务。请只确认任务已开始。",
+    }
+
+
+@pytest.mark.asyncio
 async def test_send_inputs_sends_response_instructions_create():
     plugin = QwenOmniRealtimePlugin()
     ws = FakeQwenWS([])

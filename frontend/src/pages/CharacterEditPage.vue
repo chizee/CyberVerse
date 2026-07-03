@@ -7,7 +7,7 @@ import AvatarUpload from '../components/AvatarUpload.vue'
 import CvSelect from '../components/CvSelect.vue'
 import KnowledgeSourceManager from '../components/KnowledgeSourceManager.vue'
 import { useCharacterStore } from '../stores/characters'
-import type { AvatarBackend, BaiduXilingCharacterConfig, CharacterComponents, CharacterForm, ComponentOption, ComponentsResponse, ImageInfo, XunfeiAvatarConfig } from '../types'
+import type { AgentExtensionConfig, AvatarBackend, BaiduXilingCharacterConfig, CharacterComponents, CharacterForm, ComponentOption, ComponentsResponse, ImageInfo, XunfeiAvatarConfig } from '../types'
 import { DOUBAO_TTS_VOICE_OPTIONS, OPENAI_VOICE_OPTIONS, QWEN_OMNI_VOICE_OPTIONS, QWEN_TTS_MODEL_OPTIONS, QWEN_TTS_VOICE_OPTIONS, VOICE_OPTIONS } from '../types'
 import { uploadAvatar, getCharacterImages, deleteCharacterImage, activateCharacterImage, testCharacterVoice, getComponents, getBaiduXilingFigure, getXunfeiAvatar } from '../services/api'
 import {
@@ -59,6 +59,7 @@ const form = ref<CharacterForm>({
   welcome_message: '',
   system_prompt: '',
   tags: [],
+  agent_extensions: [],
 })
 
 const saving = ref(false)
@@ -85,6 +86,7 @@ const QWEN_TTS_VOICE_PREVIEW_URL = 'https://help.aliyun.com/zh/model-studio/qwen
 const COSYVOICE_VOICE_LIST_URL = 'https://help.aliyun.com/zh/model-studio/cosyvoice-voice-list'
 const QWEN_OMNI_VOICE_LIST_URL = 'https://help.aliyun.com/zh/model-studio/omni-voice-list'
 const BAIDU_XILING_OVERVIEW_URL = 'https://xiling.cloud.baidu.com/open/overview'
+const PI_PACKAGES_URL = 'https://pi.dev/packages'
 const componentCatalog = ref<ComponentsResponse>({
   llm: [{ id: 'qwen', name: 'Qwen', model: 'qwen3.6-plus', default: true, available: true }],
   asr: [{ id: 'qwen', name: 'Qwen', model: 'qwen3-asr-flash-realtime', default: true, available: true }],
@@ -272,6 +274,32 @@ function normalizeComponents(components?: Partial<CharacterComponents>): Charact
     tts: components?.tts || DEFAULT_COMPONENTS.tts,
     tts_model: components?.tts_model || '',
   }
+}
+
+function normalizeAgentExtensionSource(value?: string): string {
+  return (value || '').trim()
+}
+
+function normalizeAgentExtensions(extensions?: AgentExtensionConfig[]): AgentExtensionConfig[] {
+  if (!Array.isArray(extensions)) return []
+  return extensions
+    .map(extension => ({
+      name: (extension.name || '').trim(),
+      url: normalizeAgentExtensionSource(extension.url),
+      enabled: extension.enabled !== false,
+    }))
+    .filter(extension => extension.url)
+}
+
+function addAgentExtension() {
+  form.value.agent_extensions = [
+    ...(form.value.agent_extensions || []),
+    { name: '', url: '', enabled: true },
+  ]
+}
+
+function removeAgentExtension(index: number) {
+  form.value.agent_extensions = (form.value.agent_extensions || []).filter((_, i) => i !== index)
 }
 
 function defaultModelForTTS(tts: string): string {
@@ -713,6 +741,7 @@ onMounted(async () => {
           welcome_message: c.welcome_message,
           system_prompt: c.system_prompt,
           tags: [...c.tags],
+          agent_extensions: normalizeAgentExtensions(c.agent_extensions),
         }
         applyModeVoiceDefault(!form.value.voice_type)
         await nextTick()
@@ -829,6 +858,7 @@ async function save() {
     }
     payload.voice_type = voiceType
     payload.components = normalizeComponents(payload.components)
+    payload.agent_extensions = normalizeAgentExtensions(payload.agent_extensions)
     payload.voice_provider = payload.mode === 'omni'
       ? normalizeOmniProvider(payload.voice_provider)
       : payload.components.tts
@@ -1638,7 +1668,75 @@ const pageTitle = computed(() =>
           </label>
         </section>
 
-        <!-- Section 4: Role prompt -->
+        <!-- Section 4: Agent extensions -->
+        <section class="bg-cv-surface border border-cv-border rounded-cv-lg p-6">
+          <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 class="text-base font-semibold text-cv-text">{{ t('characterEdit.agentExtensions') }}</h2>
+              <p class="mt-1 text-[11px] leading-5 text-cv-text-muted">{{ t('characterEdit.agentExtensionsHint') }}</p>
+            </div>
+            <a
+              :href="PI_PACKAGES_URL"
+              target="_blank"
+              rel="noopener noreferrer"
+              class="text-[12px] font-medium text-cv-accent hover:underline"
+            >
+              {{ t('characterEdit.piPackageGallery') }}
+            </a>
+          </div>
+
+          <div v-if="form.agent_extensions?.length" class="divide-y divide-cv-border-subtle border-y border-cv-border-subtle">
+            <div
+              v-for="(extension, index) in form.agent_extensions"
+              :key="`${extension.url}-${index}`"
+              class="py-4"
+            >
+              <div class="grid gap-3 md:grid-cols-[minmax(120px,180px)_1fr_auto] md:items-end">
+                <label class="block">
+                  <span class="text-[12px] font-medium text-cv-text-muted">{{ t('characterEdit.agentExtensionName') }}</span>
+                  <input
+                    v-model="extension.name"
+                    type="text"
+                    :placeholder="t('characterEdit.agentExtensionNamePlaceholder')"
+                    class="mt-1.5 h-[38px] w-full rounded-cv-md border border-cv-border bg-cv-elevated px-3 text-[13px] text-cv-text placeholder:text-cv-text-muted focus:border-cv-accent focus:outline-none focus:shadow-[0_0_0_2px_rgba(59,130,246,0.15)]"
+                  />
+                </label>
+                <label class="block">
+                  <span class="text-[12px] font-medium text-cv-text-muted">{{ t('characterEdit.agentExtensionUrl') }}</span>
+                  <input
+                    v-model="extension.url"
+                    type="text"
+                    :placeholder="t('characterEdit.agentExtensionUrlPlaceholder')"
+                    class="mt-1.5 h-[38px] w-full rounded-cv-md border border-cv-border bg-cv-elevated px-3 text-[13px] text-cv-text placeholder:text-cv-text-muted focus:border-cv-accent focus:outline-none focus:shadow-[0_0_0_2px_rgba(59,130,246,0.15)]"
+                  />
+                </label>
+                <div class="flex h-[38px] items-center gap-3 md:mb-0.5">
+                  <label class="inline-flex items-center gap-2 text-[13px] font-medium text-cv-text-secondary">
+                    <input v-model="extension.enabled" type="checkbox" class="h-4 w-4 rounded border-cv-border text-cv-accent focus:ring-cv-accent/30" />
+                    {{ t('characterEdit.agentExtensionEnabled') }}
+                  </label>
+                  <button
+                    type="button"
+                    class="cv-pi-button cv-pi-button--compact h-[38px]"
+                    @click="removeAgentExtension(index)"
+                  >
+                    {{ t('characterEdit.removeAgentExtension') }}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            class="cv-pi-button cv-pi-button--compact mt-4"
+            @click="addAgentExtension"
+          >
+            {{ t('characterEdit.addAgentExtension') }}
+          </button>
+        </section>
+
+        <!-- Section 5: Role prompt -->
         <section class="bg-cv-surface border border-cv-border rounded-cv-lg p-6">
           <h2 class="text-base font-semibold text-cv-text mb-5">{{ t('characterEdit.systemPrompt') }}</h2>
 

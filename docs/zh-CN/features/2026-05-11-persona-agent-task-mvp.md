@@ -5,10 +5,14 @@
 ## 基本信息
 
 - 日期：`2026-05-11`
-- 状态：`已被 2026-05-12 PersonaAgent 本地 Supervisor/SubAgent Runtime 重构取代`
+- 状态：`已被 2026-07-01 Pi SDK Bridge 重构取代`
 - 主题：`Omni-only PersonaAgent + Go TaskService + LangGraph Agent Worker`
 
 > 2026-05-12 更新：后台任务执行已迁入 PersonaAgent 进程内的本地 Supervisor LangGraph 和 SubAgent Runtime。旧的 Agent Worker HTTP endpoint 不再由 inference 默认启动，本文后续关于 `agent_worker`、`AGENT_WORKER_URL`、Go 侧 HTTP dispatch 的内容仅作为 MVP 历史记录。
+
+> 2026-06-16 更新：当前实现已删除 LangGraph subAgent 链路，后台任务改由 `SubAgentRunner` 调用 Pi 角色级 workspace 执行。本文后续 LangGraph、SearchTool、Agent Worker 内容仅保留为历史设计记录。
+
+> 2026-07-01 更新：`SubAgentRunner` 已改为通过 CyberVerse 内置 Node bridge 调用 `@earendil-works/pi-coding-agent` SDK，不再要求用户本地提前安装 `pi` CLI。每个角色可以在 `character.json` 中配置 `agent_extensions`，编辑页保留用户填写的 Pi 官方 package URL；运行时会将启用的角色扩展归一化为 Pi package source 注入该角色专属 resource loader，并默认使用 `agent_dir/<角色ID>` 隔离临时包安装缓存。
 
 ## 背景与问题
 
@@ -420,6 +424,8 @@ classify_task -> plan_task -> run_research -> draft_artifact -> finalize
 
 ### 5. 前端任务展示
 
+> 2026-07-01 当前实现：聊天流中使用 `TaskProgressCard` 呈现 SubAgent 子任务。过程呈现为 `task.queued`、`task.started`、`subagent.progress`、`artifact.created`、`task.completed` 等事件组成的可展开时间线；结果呈现为 artifact 卡片，支持 HTML/Markdown 等产物的预览与打开。
+
 前端扩展了聊天状态：
 
 - WS 处理 `task_event`
@@ -427,6 +433,11 @@ classify_task -> plan_task -> run_research -> draft_artifact -> finalize
 - ChatPanel 展示任务进度气泡、完成状态、artifact 链接
 - API client 增加 task list、events、artifact 相关方法
 - 重连后用 task list + events API 补齐断线进度
+
+### 6. 验证入口
+
+- Persona/SubAgent 本地 verifier：执行 `scripts/persona_subagent_e2e_verify.sh`。它会串联 PersonaAgent/SubAgent 单测、Pi bridge build/test、Go 侧讯飞与角色相关测试、前端构建，以及昭昭讯飞 start/stop smoke。验证结束时会调用 `scripts/start_services.sh --stop inference server frontend` 清理本仓库本地服务；若需要保留服务用于手工复核，可设置 `PERSONA_E2E_KEEP_SERVICES=1`。若只想跳过真实讯飞外部服务，可设置 `CYBERVERSE_SKIP_XUNFEI_SMOKE=1`。
+- 讯飞昭昭数字人 start/stop smoke：在 `server/` 下执行 `go run ./cmd/xunfei-avatar-smoke -config ../cyberverse_config.yaml -avatar-id 201165002 -avatar-name '昭昭-4.0'`。该命令会读取 `.env`，启动并立即停止讯飞数字人会话，只输出脱敏状态，不打印凭证或 stream URL。
 
 ## 协议 / 数据结构 / 配置变更
 

@@ -225,6 +225,16 @@ class QwenOmniRealtimePlugin(VoiceLLMPlugin):
                     if not event.tool_result.suppress_response:
                         expects_deferred_response = True
                     continue
+                if event.text:
+                    expects_deferred_response = True
+                    await self._send_text(
+                        ws,
+                        session_id,
+                        event.text,
+                        response_coordinator,
+                        event.response_instructions,
+                    )
+                    continue
                 if event.response_instructions is not None:
                     expects_deferred_response = True
                     await self._send_response_instructions(
@@ -233,10 +243,6 @@ class QwenOmniRealtimePlugin(VoiceLLMPlugin):
                         event.response_instructions,
                         response_coordinator,
                     )
-                    continue
-                if event.text:
-                    expects_deferred_response = True
-                    await self._send_text(ws, session_id, event.text, response_coordinator)
                     continue
                 if event.audio:
                     has_sent_audio = True
@@ -295,7 +301,12 @@ class QwenOmniRealtimePlugin(VoiceLLMPlugin):
         session_id: str,
         text: str,
         response_coordinator: "_QwenResponseCoordinator",
+        instructions: str | None = None,
     ) -> None:
+        response: dict[str, Any] = {"modalities": ["text", "audio"]}
+        instructions = str(instructions or "").strip()
+        if instructions:
+            response["instructions"] = instructions
         await response_coordinator.enqueue(
             _QwenDeferredResponse(
                 item_payload={
@@ -315,7 +326,7 @@ class QwenOmniRealtimePlugin(VoiceLLMPlugin):
                 response_payload={
                     "type": "response.create",
                     "event_id": self._event_id(session_id, "text_response"),
-                    "response": {"modalities": ["text", "audio"]},
+                    "response": response,
                 },
             )
         )

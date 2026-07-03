@@ -21,8 +21,17 @@ RUN mkdir -p inference/generated && \
 
 FROM nvidia/cuda:12.8.0-runtime-ubuntu22.04
 
+ARG NODE_VERSION=22.19.0
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3.10 python3-pip ffmpeg \
+    python3.10 python3-pip ffmpeg ca-certificates curl xz-utils \
+    && curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz" -o /tmp/node.tar.xz \
+    && mkdir -p /usr/local/lib/nodejs \
+    && tar -xJf /tmp/node.tar.xz -C /usr/local/lib/nodejs --strip-components=1 \
+    && ln -sf /usr/local/lib/nodejs/bin/node /usr/local/bin/node \
+    && ln -sf /usr/local/lib/nodejs/bin/npm /usr/local/bin/npm \
+    && ln -sf /usr/local/lib/nodejs/bin/npx /usr/local/bin/npx \
+    && rm -f /tmp/node.tar.xz \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -33,6 +42,7 @@ COPY --from=builder /app/inference/generated ./inference/generated/
 
 COPY pyproject.toml .
 COPY inference/ ./inference/
+RUN npm ci --omit=dev --prefix inference/pi_bridge
 COPY models/flash_head/ ./models/flash_head/
 COPY cyberverse_config.yaml .
 COPY avatar_models/ ./avatar_models/

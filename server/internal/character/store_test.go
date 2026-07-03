@@ -252,6 +252,75 @@ func TestOfflineVideoTTSPersistAcrossStoreReload(t *testing.T) {
 	}
 }
 
+func TestAgentExtensionsPersistAcrossStoreReload(t *testing.T) {
+	baseDir := t.TempDir()
+	store, err := NewStore(baseDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	char, err := store.Create(&Character{
+		Name: "Pi Role",
+		AgentExtensions: []AgentExtension{
+			{Name: " Research ", URL: " https://pi.dev/packages/%40pi/research ", Enabled: true},
+			{Name: "Blank", URL: " ", Enabled: true},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	reloaded, err := NewStore(baseDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := reloaded.Get(char.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.AgentExtensions) != 1 {
+		t.Fatalf("expected one agent extension, got %#v", got.AgentExtensions)
+	}
+	if got.AgentExtensions[0].Name != "Research" ||
+		got.AgentExtensions[0].URL != "https://pi.dev/packages/%40pi/research" ||
+		!got.AgentExtensions[0].Enabled {
+		t.Fatalf("expected trimmed enabled extension, got %#v", got.AgentExtensions[0])
+	}
+}
+
+func TestUpdatePreservesAgentExtensionsWhenPayloadOmitsField(t *testing.T) {
+	store, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	char, err := store.Create(&Character{
+		Name: "Pi Role",
+		AgentExtensions: []AgentExtension{
+			{Name: "Research", URL: "npm:@pi/research", Enabled: true},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	updated, err := store.Update(char.ID, &Character{Name: "Pi Role Updated"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(updated.AgentExtensions) != 1 || updated.AgentExtensions[0].URL != "npm:@pi/research" {
+		t.Fatalf("expected update to preserve agent extensions, got %#v", updated.AgentExtensions)
+	}
+
+	cleared, err := store.Update(char.ID, &Character{Name: "Pi Role Updated", AgentExtensions: []AgentExtension{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cleared.AgentExtensions) != 0 {
+		t.Fatalf("expected explicit empty extensions to clear config, got %#v", cleared.AgentExtensions)
+	}
+}
+
 func TestActivateImageMovesImageFirstAndUpdatesAvatarCover(t *testing.T) {
 	store, err := NewStore(t.TempDir())
 	if err != nil {

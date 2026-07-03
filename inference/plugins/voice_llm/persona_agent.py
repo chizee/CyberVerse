@@ -3,9 +3,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
+import re
 from dataclasses import replace
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, Callable
 
 from inference.core.registry import import_plugin_class
 from inference.core.types import (
@@ -81,9 +81,42 @@ PERSONA_AGENT_INSTRUCTIONS = """你是 CyberVerse 数字人 PersonaAgent，直�
 
 """
 
+_AUTO_TASK_MARKERS = (
+    "后台",
+    "复杂任务",
+    "长任务",
+    "subagent",
+    "子任务",
+    "异步",
+)
+_AUTO_TASK_VERBS = (
+    "执行",
+    "处理",
+    "整理",
+    "调研",
+    "研究",
+    "生成",
+    "搜索",
+    "查询",
+    "查找",
+    "报告",
+    "方案",
+    "分析",
+)
+_TASK_STATUS_RE = re.compile(r"(进度|到哪一步|执行到哪|处理到哪|查得怎么样|任务状态|后台状态|完成了吗|做完了吗)")
+_AUTO_TASK_EXPLICIT_REQUESTS = (
+    "请后台执行",
+    "后台执行复杂任务",
+    "执行复杂任务",
+    "帮我后台",
+    "创建后台",
+    "新建后台",
+    "任务开始后",
+)
+
 
 class PersonaAgentPlugin(VoiceLLMPlugin):
-    """LangGraph-backed persona wrapper for an underlying realtime omni provider.
+    """Persona wrapper for an underlying realtime omni provider.
 
     The public gRPC wire shape remains the existing VoiceLLM stream. Native tool
     calls are consumed inside this wrapper and are never forwarded to Go or the UI.
@@ -101,7 +134,6 @@ class PersonaAgentPlugin(VoiceLLMPlugin):
         self.task_runtime: LocalTaskRuntime | None = None
         self.supervisor: PersonaSupervisor | None = None
         self.rag_engine: RAGEngine | None = None
-        self.checkpoint_db_path = ""
         self.task_poll_interval_seconds = 1.0
         self.task_monitor_timeout_seconds = 1800.0
 
@@ -110,16 +142,6 @@ class PersonaAgentPlugin(VoiceLLMPlugin):
         if not self.model_provider or self.model_provider == "persona":
             raise ValueError("persona model_provider must reference a concrete omni provider")
 
-        self.checkpoint_db_path = str(
-            config.params.get("checkpoint_db_path")
-            or os.getenv("LANGGRAPH_CHECKPOINT_DB")
-            or os.path.join(
-                os.getenv("CYBERVERSE_CONFIG_DIR", "."),
-                "data",
-                "tasks",
-                "langgraph_checkpoints.db",
-            )
-        )
         self.task_poll_interval_seconds = max(
             0.1,
             float(config.params.get("task_poll_interval_seconds") or self.task_poll_interval_seconds),
@@ -151,7 +173,6 @@ class PersonaAgentPlugin(VoiceLLMPlugin):
         )
         self.supervisor = PersonaSupervisor(
             runtime=self.task_runtime,
-            checkpoint_db_path=self.checkpoint_db_path,
             task_poll_interval_seconds=self.task_poll_interval_seconds,
             task_monitor_timeout_seconds=self.task_monitor_timeout_seconds,
         )
@@ -310,11 +331,23 @@ class PersonaAgentPlugin(VoiceLLMPlugin):
             return await self._retrieve_character_knowledge(call, session_config)
         if self.supervisor is None:
             raise RuntimeError("persona supervisor is not initialized")
-        return await self.supervisor.handle_tool_call(call, session_config.session_id)
+        return await self.supervisor.handle_tool_call(
+            call,
+            session_config.session_id,
+            self._session_context(session_config),
+        )
 
     @staticmethod
     def _clean_text(text: Any) -> str:
         return str(text or "").strip()
+
+    @staticmethod
+    def _session_context(session_config: VoiceLLMSessionConfig) -> dict[str, Any]:
+        return {
+            "session_id": session_config.session_id,
+            "character_id": session_config.character_id,
+            "character_dir": session_config.character_dir,
+        }
 
     @staticmethod
     def _needs_space(left: str, right: str) -> bool:
@@ -380,6 +413,67 @@ class PersonaAgentPlugin(VoiceLLMPlugin):
                 }
             )
         return logged
+
+    @classmethod
+    def _should_auto_create_task(cls, text: str) -> bool:
+        normalized = cls._clean_text(text).lower()
+        if not normalized:
+            return False
+        if _TASK_STATUS_RE.search(normalized):
+            has_explicit_create = any(phrase.lower() in normalized for phrase in _AUTO_TASK_EXPLICIT_REQUESTS)
+            if not has_explicit_create:
+                return False
+        has_marker = any(marker.lower() in normalized for marker in _AUTO_TASK_MARKERS)
+        has_verb = any(verb.lower() in normalized for verb in _AUTO_TASK_VERBS)
+        if has_marker and has_verb:
+            return True
+        return False
+
+    @classmethod
+    def _should_auto_get_task_status(cls, text: str) -> bool:
+        normalized = cls._clean_text(text).lower()
+        if not normalized:
+            return False
+        return bool(_TASK_STATUS_RE.search(normalized))
+
+    @staticmethod
+    def _auto_create_task_instructions(result: dict[str, Any]) -> str:
+        if not result.get("accepted"):
+            return "后台任务没有成功创建。请用一句自然口语告诉用户稍后再试。不要编造任务状态。"
+        return "\n".join(
+            [
+                "CyberVerse 已经创建后台任务，任务进度会通过聊天侧任务卡片展示。",
+                "请用一句自然口语确认任务已经开始，告诉用户可以继续聊天。",
+                "不要再次调用 create_task。不要朗读任务 ID、JSON 或内部字段。",
+            ]
+        )
+
+    @staticmethod
+    def _auto_task_status_instructions(result: dict[str, Any]) -> str:
+        task = result.get("task")
+        events = result.get("events")
+        if not isinstance(task, dict):
+            return "当前会话没有活跃后台任务。请用一句自然口语告诉用户现在没有正在执行的后台任务。不要编造进度。"
+        event_lines: list[str] = []
+        if isinstance(events, list):
+            for event in events[-3:]:
+                if not isinstance(event, dict):
+                    continue
+                message = str(event.get("message") or "").strip()
+                event_type = str(event.get("event_type") or "").strip()
+                progress = event.get("progress", task.get("progress", 0))
+                event_lines.append(f"- {event_type}: {message} ({progress}%)")
+        return "\n".join(
+            [
+                "请基于下面的真实后台任务状态回答用户的进度问题。",
+                f"状态：{task.get('status')}",
+                f"进度：{task.get('progress', 0)}%",
+                f"当前说明：{task.get('result_summary') or ''}",
+                "最近事件：",
+                *(event_lines or ["- 暂无事件"]),
+                "不要再次调用 get_task_status。不要编造不存在的进度。",
+            ]
+        )
 
     @classmethod
     def _model_event_kind(cls, event: VoiceLLMOutputEvent) -> str:
@@ -482,6 +576,7 @@ class PersonaAgentPlugin(VoiceLLMPlugin):
         self,
         input_stream: AsyncIterator[VoiceLLMInputEvent],
         injected: asyncio.Queue[VoiceLLMInputEvent],
+        should_wait_for_injected: Callable[[], bool] | None = None,
     ) -> AsyncIterator[VoiceLLMInputEvent]:
         source = input_stream.__aiter__()
         source_done = False
@@ -494,7 +589,10 @@ class PersonaAgentPlugin(VoiceLLMPlugin):
 
             if source_done:
                 try:
-                    yield await asyncio.wait_for(injected.get(), timeout=0.2)
+                    if should_wait_for_injected is not None and should_wait_for_injected():
+                        yield await injected.get()
+                    else:
+                        yield await asyncio.wait_for(injected.get(), timeout=0.2)
                     continue
                 except asyncio.TimeoutError:
                     return
@@ -520,6 +618,7 @@ class PersonaAgentPlugin(VoiceLLMPlugin):
         injected: asyncio.Queue[VoiceLLMInputEvent] = asyncio.Queue()
         turn_transcripts: list[str] = []
         pending_task_starts: list[PendingSubAgentTask] = []
+        auto_tool_results: dict[str, dict[str, Any]] = {}
         background_tasks: set[asyncio.Task[None]] = set()
         task_events: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         remove_task_event_listener = None
@@ -537,11 +636,65 @@ class PersonaAgentPlugin(VoiceLLMPlugin):
             background_tasks.add(task)
             task.add_done_callback(background_tasks.discard)
 
+        async def auto_route_user_text(user_text: str) -> tuple[str | None, bool]:
+            if self._should_auto_create_task(user_text):
+                tool_result = await self._execute_tool(
+                    ToolCall(
+                        id="persona_auto_create_task",
+                        name="create_task",
+                        arguments={"description": user_text},
+                    ),
+                    session_config,
+                )
+                auto_tool_results["create_task"] = tool_result.result
+                if tool_result.pending_task is not None:
+                    pending_task_starts.append(tool_result.pending_task)
+                return self._auto_create_task_instructions(tool_result.result), True
+            if self._should_auto_get_task_status(user_text):
+                tool_result = await self._execute_tool(
+                    ToolCall(
+                        id="persona_auto_get_task_status",
+                        name="get_task_status",
+                        arguments={},
+                    ),
+                    session_config,
+                )
+                auto_tool_results["get_task_status"] = tool_result.result
+                return self._auto_task_status_instructions(tool_result.result), False
+            return None, False
+
+        async def routed_input_stream() -> AsyncIterator[VoiceLLMInputEvent]:
+            async for input_event in input_stream:
+                if input_event.tool_result or input_event.response_instructions is not None:
+                    yield input_event
+                    continue
+                user_text = self._clean_text(input_event.text)
+                if not user_text:
+                    yield input_event
+                    continue
+                try:
+                    response_instructions, _clear_turn = await auto_route_user_text(user_text)
+                except Exception:
+                    logger.exception("persona typed-input pre-response routing failed")
+                    response_instructions = None
+                if response_instructions is None:
+                    yield input_event
+                    continue
+                if input_event.audio or input_event.image is not None:
+                    yield replace(input_event, text="")
+                    yield VoiceLLMInputEvent(text=user_text, response_instructions=response_instructions)
+                    continue
+                yield replace(input_event, response_instructions=response_instructions)
+
         model_event_task: asyncio.Task[VoiceLLMOutputEvent] | None = None
         task_event_task: asyncio.Task[dict[str, Any]] | None = None
         try:
             model_events = model_plugin.converse_stream(
-                self._merged_input_stream(input_stream, injected),
+                self._merged_input_stream(
+                    routed_input_stream(),
+                    injected,
+                    lambda: bool(pending_task_starts or background_tasks),
+                ),
                 session_config=model_session_config,
             ).__aiter__()
             model_event_task = asyncio.create_task(model_events.__anext__())
@@ -580,9 +733,16 @@ class PersonaAgentPlugin(VoiceLLMPlugin):
                         reply_id=event.reply_id,
                     )
                     try:
-                        response_instructions = await self._rag_response_instructions(user_text, session_config)
+                        response_instructions, clear_turn = await auto_route_user_text(user_text)
+                        if response_instructions is not None:
+                            for payload in self._drain_task_events(task_events):
+                                yield VoiceLLMOutputEvent(task_event=payload)
+                            if clear_turn:
+                                turn_transcripts.clear()
+                        else:
+                            response_instructions = await self._rag_response_instructions(user_text, session_config)
                     except Exception:
-                        logger.exception("persona RAG pre-response failed")
+                        logger.exception("persona pre-response routing failed")
                         response_instructions = ""
                     await injected.put(VoiceLLMInputEvent(response_instructions=response_instructions))
                     event = replace(event, user_transcript="")
@@ -602,10 +762,13 @@ class PersonaAgentPlugin(VoiceLLMPlugin):
                         turn_transcripts.clear()
 
                         try:
-                            tool_result = await self._execute_tool(effective_call, session_config)
-                            if tool_result.pending_task is not None:
-                                pending_task_starts.append(tool_result.pending_task)
-                            result = tool_result.result
+                            if name in auto_tool_results:
+                                result = auto_tool_results[name]
+                            else:
+                                tool_result = await self._execute_tool(effective_call, session_config)
+                                if tool_result.pending_task is not None:
+                                    pending_task_starts.append(tool_result.pending_task)
+                                result = tool_result.result
                         except Exception as exc:
                             logger.exception("persona tool call failed: %s", call.name)
                             result = {"ok": False, "error": str(exc)}
@@ -632,6 +795,8 @@ class PersonaAgentPlugin(VoiceLLMPlugin):
                     pending_task_starts.clear()
                     for pending in starts:
                         schedule_task_start(pending)
+                if event.is_final:
+                    auto_tool_results.clear()
                 model_event_task = asyncio.create_task(model_events.__anext__())
             for payload in self._drain_task_events(task_events):
                 yield VoiceLLMOutputEvent(task_event=payload)

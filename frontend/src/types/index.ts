@@ -73,6 +73,12 @@ export interface OfflineVideoTTSConfig {
   voice: string
 }
 
+export interface AgentExtensionConfig {
+  name?: string
+  url: string
+  enabled: boolean
+}
+
 export interface Character {
   id: string
   name: string
@@ -95,6 +101,7 @@ export interface Character {
   system_prompt: string
   tags: string[]
   images: ImageInfo[]
+  agent_extensions?: AgentExtensionConfig[]
   active_image: string
   image_mode: string
   created_at: string

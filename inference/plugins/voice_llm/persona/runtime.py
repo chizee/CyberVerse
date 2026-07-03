@@ -9,15 +9,11 @@ from collections.abc import Callable
 from typing import Any
 
 from inference.plugins.voice_llm.persona.i18n import Localizer
-from inference.plugins.voice_llm.persona.llm import AgentLLM, build_agent_llm_from_runtime_config
 from inference.plugins.voice_llm.persona.schemas import Artifact, ArtifactRequest, Task, TaskEvent
-from inference.plugins.voice_llm.persona.subagents.default_tools import run_task_with_langgraph
-from inference.plugins.voice_llm.persona.tools import (
-    NullSearchTool,
-    SearchTool,
-    ZhihuClient,
-    ZhihuToolExecutor,
-    zhihu_config_from_runtime_config,
+from inference.plugins.voice_llm.persona.subagents.runner import (
+    PiSdkSubAgentRunner,
+    RoleSubAgentContextResolver,
+    SubAgentRunner,
 )
 
 logger = logging.getLogger(__name__)
@@ -44,26 +40,6 @@ def _default_title(user_request: str) -> str:
     return title
 
 
-def _persona_runtime_params(runtime_config: dict[str, Any] | None) -> dict[str, Any]:
-    inference = runtime_config.get("inference", {}) if isinstance(runtime_config, dict) else {}
-    inference = inference if isinstance(inference, dict) else {}
-    persona_agent = inference.get("persona_agent", {})
-    if isinstance(persona_agent, dict) and persona_agent:
-        return persona_agent
-    persona_section = inference.get("persona", {})
-    persona_section = persona_section if isinstance(persona_section, dict) else {}
-    persona_plugin = persona_section.get("persona", {})
-    return persona_plugin if isinstance(persona_plugin, dict) else {}
-
-
-def _positive_int(value: Any, default: int) -> int:
-    try:
-        parsed = int(value)
-    except (TypeError, ValueError):
-        parsed = default
-    return max(1, parsed)
-
-
 class RuntimeCallbacks:
     def __init__(self, runtime: LocalTaskRuntime) -> None:
         self.runtime = runtime
@@ -78,27 +54,21 @@ class RuntimeCallbacks:
 class LocalTaskRuntime:
     """PersonaAgent-owned task runtime.
 
-    This replaces the previous HTTP Agent Worker boundary. PersonaAgent creates
-    task records in memory, runs the matching sub-agent graph in this process,
-    and keeps the event/artifact context available to the supervisor graph.
+    PersonaAgent creates task records in memory, delegates execution to the
+    configured SubAgent runner, and keeps the event/artifact context available
+    to the supervisor.
     """
 
     def __init__(
         self,
         *,
         runtime_config: dict[str, Any] | None = None,
-        llm: AgentLLM | None = None,
-        search_tool: SearchTool | None = None,
-        tool_executor: ZhihuToolExecutor | None = None,
+        runner: SubAgentRunner | None = None,
+        context_resolver: RoleSubAgentContextResolver | None = None,
         max_active_tasks_per_session: int = 3,
     ) -> None:
-        persona_params = _persona_runtime_params(runtime_config)
-        self.llm = llm or build_agent_llm_from_runtime_config(runtime_config)
-        self.search_tool = search_tool or NullSearchTool()
-        self.tool_executor = tool_executor or ZhihuToolExecutor(
-            ZhihuClient(zhihu_config_from_runtime_config(runtime_config))
-        )
-        self.max_agent_iterations = _positive_int(persona_params.get("max_agent_iterations"), 8)
+        self.runner = runner or PiSdkSubAgentRunner()
+        self.context_resolver = context_resolver or RoleSubAgentContextResolver(runtime_config)
         self.max_active_tasks_per_session = max(1, max_active_tasks_per_session)
         self._tasks: dict[str, Task] = {}
         self._events: dict[str, list[TaskEvent]] = {}
@@ -337,14 +307,8 @@ class LocalTaskRuntime:
                 ),
             )
             task = self._tasks[task_id]
-            await run_task_with_langgraph(
-                task,
-                self.search_tool,
-                RuntimeCallbacks(self),
-                llm=self.llm,
-                tool_executor=self.tool_executor,
-                max_agent_iterations=self.max_agent_iterations,
-            )
+            context = self.context_resolver.resolve(task)
+            await self.runner.run(task, context, RuntimeCallbacks(self))
         except asyncio.CancelledError:
             raise
         except Exception as exc:

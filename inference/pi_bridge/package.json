@@ -1,0 +1,19 @@
+{
+  "name": "@cyberverse/pi-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "check": "node --check src/bridge.mjs",
+    "build": "npm run check",
+    "test": "node --test test/bridge.test.mjs"
+  },
+  "dependencies": {
+    "@earendil-works/pi-ai": "0.80.3",
+    "@earendil-works/pi-coding-agent": "0.80.3",
+    "typebox": "1.1.38"
+  }
+}

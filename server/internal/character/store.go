@@ -44,10 +44,17 @@ type Character struct {
 	SystemPrompt    string           `json:"system_prompt"`
 	Tags            []string         `json:"tags"`
 	Images          []ImageInfo      `json:"images"`
+	AgentExtensions []AgentExtension `json:"agent_extensions,omitempty"`
 	ActiveImage     string           `json:"active_image"`
 	ImageMode       string           `json:"image_mode"`
 	CreatedAt       string           `json:"created_at"`
 	UpdatedAt       string           `json:"updated_at"`
+}
+
+type AgentExtension struct {
+	Name    string `json:"name,omitempty"`
+	URL     string `json:"url"`
+	Enabled bool   `json:"enabled"`
 }
 
 type Components struct {
@@ -261,6 +268,28 @@ func NormalizeOfflineVideoTTS(cfg *OfflineVideoTTS) *OfflineVideoTTS {
 	return &out
 }
 
+func NormalizeAgentExtensions(extensions []AgentExtension) []AgentExtension {
+	if extensions == nil {
+		return nil
+	}
+	out := make([]AgentExtension, 0, len(extensions))
+	for _, ext := range extensions {
+		normalized := AgentExtension{
+			Name:    strings.TrimSpace(ext.Name),
+			URL:     strings.TrimSpace(ext.URL),
+			Enabled: ext.Enabled,
+		}
+		if normalized.URL == "" {
+			continue
+		}
+		out = append(out, normalized)
+	}
+	if out == nil {
+		return []AgentExtension{}
+	}
+	return out
+}
+
 func defaultVoiceTypeForComponents(components Components) string {
 	if components.TTS == "doubao" {
 		return "zh_female_xiaohe_uranus_bigtts"
@@ -366,6 +395,7 @@ func (s *Store) Create(c *Character) (*Character, error) {
 	if c.Images == nil {
 		c.Images = []ImageInfo{}
 	}
+	c.AgentExtensions = NormalizeAgentExtensions(c.AgentExtensions)
 	c.Mode = normalizeMode(c.Mode, "standard")
 	c.Components = NormalizeComponents(c.Components, DefaultComponents())
 	c.OfflineVideoTTS = NormalizeOfflineVideoTTS(c.OfflineVideoTTS)
@@ -426,6 +456,11 @@ func (s *Store) Update(id string, c *Character) (*Character, error) {
 	}
 	if c.ImageMode == "" {
 		c.ImageMode = existing.ImageMode
+	}
+	if c.AgentExtensions == nil {
+		c.AgentExtensions = NormalizeAgentExtensions(existing.AgentExtensions)
+	} else {
+		c.AgentExtensions = NormalizeAgentExtensions(c.AgentExtensions)
 	}
 	normalizeAvatarFields(c, existing)
 	if c.OfflineVideoTTS == nil {
@@ -860,6 +895,7 @@ func (s *Store) load() error {
 		if c.Images == nil {
 			c.Images = []ImageInfo{}
 		}
+		c.AgentExtensions = NormalizeAgentExtensions(c.AgentExtensions)
 		if c.ImageMode == "" {
 			c.ImageMode = "fixed"
 		}
