@@ -121,7 +121,7 @@ func (r *Router) handleGetTaskArtifact(w http.ResponseWriter, req *http.Request)
 		writeTaskError(w, err)
 		return
 	}
-	w.Header().Set("Content-Type", artifact.MimeType)
+	w.Header().Set("Content-Type", agenttask.NormalizeArtifactMimeType(artifact.MimeType, artifact.Type))
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(content)
 }

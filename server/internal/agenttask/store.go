@@ -495,10 +495,7 @@ func (s *Store) CreateArtifact(ctx context.Context, taskID string, in CreateArti
 	if typ == "" {
 		typ = "markdown"
 	}
-	mimeType := strings.TrimSpace(in.MimeType)
-	if mimeType == "" {
-		mimeType = "text/markdown; charset=utf-8"
-	}
+	mimeType := NormalizeArtifactMimeType(in.MimeType, typ)
 	title := strings.TrimSpace(in.Title)
 	if title == "" {
 		title = "任务资料"

@@ -49,6 +49,9 @@ func TestStoreTaskEventAndArtifactLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateArtifact: %v", err)
 	}
+	if artifact.MimeType != "text/markdown; charset=utf-8" {
+		t.Fatalf("expected markdown artifact to include utf-8 charset, got %q", artifact.MimeType)
+	}
 	htmlArtifact, err := store.CreateArtifact(ctx, task.ID, CreateArtifactInput{
 		Type:     "html",
 		Title:    "知乎热点页面",

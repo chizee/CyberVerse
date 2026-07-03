@@ -238,6 +238,31 @@ export function useChat(sessionId: () => string) {
     return (type || 'HTML').toUpperCase()
   }
 
+  function normalizeArtifactMimeType(mimeType: string, type: string): string {
+    const normalizedType = type.toLowerCase().trim()
+    const fallback = normalizedType.includes('html')
+      ? 'text/html'
+      : normalizedType === 'text' || normalizedType === 'txt' || normalizedType.includes('plain')
+        ? 'text/plain'
+        : 'text/markdown'
+    const trimmed = (mimeType || fallback).trim()
+    const lower = trimmed.toLowerCase()
+    if (lower.includes('charset=')) return trimmed
+    const mediaType = lower.split(';', 1)[0].trim()
+    const textLike = mediaType.startsWith('text/')
+      || mediaType === 'application/json'
+      || mediaType.endsWith('+json')
+      || mediaType === 'application/xml'
+      || mediaType.endsWith('+xml')
+      || mediaType === 'application/javascript'
+      || mediaType === 'application/x-javascript'
+      || normalizedType === 'markdown'
+      || normalizedType === 'md'
+      || normalizedType.includes('text')
+      || normalizedType.includes('html')
+    return textLike ? `${trimmed}; charset=utf-8` : trimmed
+  }
+
   function eventDescription(eventType: string, message: string, payload: Record<string, unknown>): string {
     if (eventType === 'plan.created') {
       const steps = Array.isArray(payload.steps) ? payload.steps.map(readString).filter(Boolean) : []
@@ -267,9 +292,7 @@ export function useChat(sessionId: () => string) {
 
     const existing = artifacts.find((artifact) => artifact.id === artifactId)
     const type = readString(payload.type) || existing?.type || 'html'
-    const mimeType = readString(payload.mime_type)
-      || existing?.mimeType
-      || (type.includes('html') ? 'text/html; charset=utf-8' : 'text/plain; charset=utf-8')
+    const mimeType = normalizeArtifactMimeType(readString(payload.mime_type) || existing?.mimeType || '', type)
     const title = readString(payload.title) || existing?.title || fallbackTitle || translate('chat.task.artifactLabel')
     const content = readString(payload.content)
     const projectedUrl = readString(payload.url)
