@@ -50,6 +50,7 @@ class RoleSubAgentContext:
     provider_base_url: str = ""
     provider_api_key_env: str = ""
     no_builtin_tools: bool = True
+    settings: dict[str, Any] = field(default_factory=dict)
 
 
 _SAFE_ID_RE = re.compile(r"[^A-Za-z0-9_.-]+")
@@ -65,6 +66,8 @@ def _persona_runtime_params(runtime_config: dict[str, Any] | None) -> dict[str, 
         return persona_agent
     persona_section = inference.get("persona", {})
     persona_section = persona_section if isinstance(persona_section, dict) else {}
+    if persona_section.get("plugin_class"):
+        return persona_section
     persona_plugin = persona_section.get("persona", {})
     return persona_plugin if isinstance(persona_plugin, dict) else {}
 
@@ -147,6 +150,45 @@ def _path_value(value: Any) -> Path:
     return Path(str(value)).expanduser().resolve()
 
 
+def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(base)
+    for key, value in override.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _deep_merge(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
+def _load_json_mapping(path: Path) -> dict[str, Any]:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"invalid Pi subagent settings JSON: {path}") from exc
+    if not isinstance(data, dict):
+        raise ValueError(f"Pi subagent settings must be a JSON object: {path}")
+    return data
+
+
+def _load_pi_settings(config_dir: Path) -> dict[str, Any]:
+    path = (config_dir / "subagents" / "pi.json").resolve()
+    if path.exists():
+        return _load_json_mapping(path)
+    return {}
+
+
+def _provider_defaults(provider: str) -> dict[str, str]:
+    if provider == "qwen":
+        return {
+            "provider_api": "openai-completions",
+            "provider_base_url": "${DASHSCOPE_BASE_URL}",
+            "provider_api_key_env": "DASHSCOPE_API_KEY",
+        }
+    return {}
+
+
 def _character_extensions(character_dir: str) -> tuple[str, ...]:
     if not character_dir:
         return ()
@@ -174,20 +216,50 @@ class RoleSubAgentContextResolver:
     def __init__(self, runtime_config: dict[str, Any] | None = None) -> None:
         persona_params = _persona_runtime_params(runtime_config)
         subagent_config = _dict_value(persona_params.get("subagent") or persona_params.get("sub_agent"))
+        agent_runtime = str(subagent_config.get("agent_runtime") or subagent_config.get("runtime") or "pi").strip()
+        if agent_runtime != "pi":
+            raise ValueError(f"unsupported subagent agent_runtime: {agent_runtime}")
         pi_root_config = _dict_value(subagent_config.get("pi"))
         pi_config = _dict_value(pi_root_config.get("sdk"))
         if not pi_config:
             pi_config = pi_root_config
         if not pi_config:
             pi_config = _dict_value(persona_params.get("pi"))
+        legacy_pi_layout = bool(pi_config)
+        if not pi_config:
+            pi_config = {
+                key: value
+                for key, value in subagent_config.items()
+                if key not in {"agent_runtime", "runtime", "pi"}
+            }
 
         config_dir = _path_value(os.getenv("CYBERVERSE_CONFIG_DIR", "."))
         workspace_root = pi_config.get("workspace_root") or subagent_config.get("workspace_root")
-        self.workspace_root = _path_value(workspace_root) if workspace_root else config_dir / "data" / "subagents" / "pi"
+        if legacy_pi_layout:
+            self.workspace_root = _path_value(workspace_root) if workspace_root else config_dir / "data" / "subagents" / "pi"
+        else:
+            base_root = _path_value(workspace_root) if workspace_root else Path("data/subagents").resolve()
+            runtime_root = base_root / agent_runtime
+            self.workspace_root = runtime_root / "workspaces"
         session_root = pi_config.get("session_root") or subagent_config.get("session_root")
-        self.session_root = _path_value(session_root) if session_root else None
+        if session_root:
+            self.session_root = _path_value(session_root)
+        elif legacy_pi_layout:
+            self.session_root = None
+        else:
+            self.session_root = runtime_root / "sessions"
         agent_dir = pi_config.get("agent_dir") or subagent_config.get("agent_dir")
-        self.agent_dir = _path_value(agent_dir) if agent_dir else config_dir / "data" / "subagents" / "pi_agent"
+        if agent_dir:
+            self.agent_dir = _path_value(agent_dir)
+        elif legacy_pi_layout:
+            self.agent_dir = config_dir / "data" / "subagents" / "pi_agent"
+        else:
+            self.agent_dir = runtime_root / "agents"
+        inline_settings = _dict_value(pi_config.get("settings"))
+        self.default_settings = _deep_merge(
+            _load_pi_settings(config_dir),
+            inline_settings,
+        )
 
         self.default_timeout_seconds = _positive_float(pi_config.get("timeout_seconds"), 1800.0)
         self.default_artifact_max_bytes = _positive_int(pi_config.get("artifact_max_bytes"), 1_000_000)
@@ -198,7 +270,6 @@ class RoleSubAgentContextResolver:
         self.default_extension_package_urls = _extension_source_list(
             pi_config.get("extension_package_urls") or pi_config.get("extension_urls") or pi_config.get("package_urls")
         )
-        self.default_env_allowlist = _string_list(pi_config.get("env") or pi_config.get("env_allowlist"))
         default_bridge = ("node", str(_DEFAULT_BRIDGE_ENTRY))
         self.default_command = _command_tuple(pi_config.get("bridge_command"), default_bridge)
         self.default_args = _string_list(pi_config.get("args"))
@@ -259,6 +330,27 @@ class RoleSubAgentContextResolver:
             or self.default_extension_package_urls
         )
         character_urls = _character_extensions(character_dir)
+        provider = str(role_config.get("provider") or self.default_provider).strip()
+        provider_defaults = _provider_defaults(provider)
+        provider_api = str(
+            role_config.get("provider_api")
+            or role_config.get("api")
+            or self.default_provider_api
+            or provider_defaults.get("provider_api", "")
+        ).strip()
+        provider_base_url = str(
+            role_config.get("provider_base_url")
+            or role_config.get("base_url")
+            or self.default_provider_base_url
+            or provider_defaults.get("provider_base_url", "")
+        ).strip()
+        provider_api_key_env = str(
+            role_config.get("provider_api_key_env")
+            or role_config.get("api_key_env")
+            or self.default_provider_api_key_env
+            or provider_defaults.get("provider_api_key_env", "")
+        ).strip()
+        settings = _deep_merge(self.default_settings, _dict_value(role_config.get("settings")))
 
         return RoleSubAgentContext(
             character_id=character_id,
@@ -277,23 +369,17 @@ class RoleSubAgentContextResolver:
             bridge_command=_command_tuple(role_config.get("bridge_command"), self.default_command),
             bridge_args=_string_list(role_config.get("args")) or self.default_args,
             agent_dir=str(agent_dir),
-            provider=str(role_config.get("provider") or self.default_provider).strip(),
+            provider=provider,
             model=str(role_config.get("model") or self.default_model).strip(),
-            provider_api=str(role_config.get("provider_api") or role_config.get("api") or self.default_provider_api).strip(),
-            provider_base_url=str(
-                role_config.get("provider_base_url") or role_config.get("base_url") or self.default_provider_base_url
-            ).strip(),
-            provider_api_key_env=str(
-                role_config.get("provider_api_key_env")
-                or role_config.get("api_key_env")
-                or self.default_provider_api_key_env
-            ).strip(),
+            provider_api=provider_api,
+            provider_base_url=provider_base_url,
+            provider_api_key_env=provider_api_key_env,
             no_builtin_tools=_bool_value(role_config.get("no_builtin_tools"), self.default_no_builtin_tools),
+            settings=settings,
         )
 
     def _resolve_env(self, role_config: dict[str, Any]) -> dict[str, str]:
-        env_names = _string_list(role_config.get("env") or role_config.get("env_allowlist")) or self.default_env_allowlist
-        env = {name: os.environ[name] for name in env_names if name in os.environ}
+        env = dict(os.environ)
         inline_env = role_config.get("env_values")
         if isinstance(inline_env, dict):
             for key, value in inline_env.items():
@@ -502,6 +588,7 @@ class PiSdkSubAgentRunner:
                 "provider_api_key_env": context.provider_api_key_env,
                 "no_builtin_tools": context.no_builtin_tools,
                 "artifact_max_bytes": context.artifact_max_bytes,
+                "settings": context.settings,
             },
             "prompt": self._build_prompt(task, context),
         }

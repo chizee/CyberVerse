@@ -60,11 +60,15 @@ inference:
       model: "qwen3.5-omni-flash-realtime"
 
   persona:
-    persona:
-      model_provider: "qwen_omni"
+    plugin_class: "inference.plugins.voice_llm.persona_agent.PersonaAgentPlugin"
+    subagent:
+      agent_runtime: "pi"
+      workspace_root: "./data/subagents"
+      provider: "qwen"
+      model: "qwen3.6-plus"
 ```
 
-Go Orchestrator 对 Omni session 仍调用现有 `VoiceLLMService.Converse`，provider 为 `persona`。Python inference service 解析到 `persona.persona` 后，由 PersonaAgent 再调用真实 `omni.qwen_omni`。
+Go Orchestrator 对 Omni session 仍调用现有 `VoiceLLMService.Converse`。Python inference service 解析到 `persona.persona` 后，由 PersonaAgent 根据 session/角色的 provider 调用真实 `omni.qwen_omni` 或其他已配置的 Omni provider。
 
 ### 2. 任务工具通过 Qwen native function calling
 
@@ -357,9 +361,9 @@ sequenceDiagram
 
 ### 配置与测试
 
-- `cyberverse_config.yaml`
-- `infra/cyberverse_config.example.yaml`
-- `infra/.env.example`
+- `config/cyberverse.yaml`
+- `infra/config/cyberverse.yaml`
+- `infra/config/env`
 - `pyproject.toml`
 - `tests/unit/test_persona_agent_plugin.py`
 - `tests/unit/test_qwen_omni_plugin.py`
@@ -437,7 +441,7 @@ classify_task -> plan_task -> run_research -> draft_artifact -> finalize
 ### 6. 验证入口
 
 - Persona/SubAgent 本地 verifier：执行 `scripts/persona_subagent_e2e_verify.sh`。它会串联 PersonaAgent/SubAgent 单测、Pi bridge build/test、Go 侧讯飞与角色相关测试、前端构建，以及昭昭讯飞 start/stop smoke。验证结束时会调用 `scripts/start_services.sh --stop inference server frontend` 清理本仓库本地服务；若需要保留服务用于手工复核，可设置 `PERSONA_E2E_KEEP_SERVICES=1`。若只想跳过真实讯飞外部服务，可设置 `CYBERVERSE_SKIP_XUNFEI_SMOKE=1`。
-- 讯飞昭昭数字人 start/stop smoke：在 `server/` 下执行 `go run ./cmd/xunfei-avatar-smoke -config ../cyberverse_config.yaml -avatar-id 201165002 -avatar-name '昭昭-4.0'`。该命令会读取 `.env`，启动并立即停止讯飞数字人会话，只输出脱敏状态，不打印凭证或 stream URL。
+- 讯飞昭昭数字人 start/stop smoke：在 `server/` 下执行 `go run ./cmd/xunfei-avatar-smoke -config ../config/cyberverse.yaml -avatar-id 201165002 -avatar-name '昭昭-4.0'`。该命令会读取 `config/env`，启动并立即停止讯飞数字人会话，只输出脱敏状态，不打印凭证或 stream URL。
 
 ## 协议 / 数据结构 / 配置变更
 
@@ -482,9 +486,12 @@ inference:
       model: "qwen3.5-omni-flash-realtime"
 
   persona:
-    persona:
-      plugin_class: "inference.plugins.voice_llm.persona_agent.PersonaAgentPlugin"
-      model_provider: "qwen_omni"
+    plugin_class: "inference.plugins.voice_llm.persona_agent.PersonaAgentPlugin"
+    subagent:
+      agent_runtime: "pi"
+      workspace_root: "./data/subagents"
+      provider: "qwen"
+      model: "qwen3.6-plus"
 
   agent_worker:
     enabled: true

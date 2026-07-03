@@ -125,7 +125,7 @@ class PersonaAgentPlugin(VoiceLLMPlugin):
     name = "persona.persona"
 
     def __init__(self) -> None:
-        self.model_provider = "doubao"
+        self.model_provider = ""
         self.model_plugin: VoiceLLMPlugin | None = None
         self.model_plugins: dict[str, VoiceLLMPlugin] = {}
         self.omni_config: dict[str, Any] = {}
@@ -138,10 +138,6 @@ class PersonaAgentPlugin(VoiceLLMPlugin):
         self.task_monitor_timeout_seconds = 1800.0
 
     async def initialize(self, config: PluginConfig) -> None:
-        self.model_provider = str(config.params.get("model_provider") or "doubao").strip()
-        if not self.model_provider or self.model_provider == "persona":
-            raise ValueError("persona model_provider must reference a concrete omni provider")
-
         self.task_poll_interval_seconds = max(
             0.1,
             float(config.params.get("task_poll_interval_seconds") or self.task_poll_interval_seconds),
@@ -156,7 +152,16 @@ class PersonaAgentPlugin(VoiceLLMPlugin):
             raise ValueError("persona provider requires shared omni config")
         self.shared_config = config.shared
         self.omni_config = omni_config
-        self.model_plugin = await self._model_plugin_for_provider(self.model_provider)
+        self.model_provider = str(
+            config.params.get("model_provider")
+            or config.params.get("default_omni_provider")
+            or omni_config.get("default")
+            or ""
+        ).strip()
+        if self.model_provider == "persona":
+            raise ValueError("persona default omni provider must reference a concrete omni provider")
+        if self.model_provider:
+            self.model_plugin = await self._model_plugin_for_provider(self.model_provider)
 
         runtime_config = config.shared.get("runtime_config")
         if not isinstance(runtime_config, dict):
@@ -181,22 +186,26 @@ class PersonaAgentPlugin(VoiceLLMPlugin):
     def _provider_from_session(self, session_config: VoiceLLMSessionConfig | None) -> str:
         provider = str(getattr(session_config, "provider", "") or "").strip()
         if not provider or provider == "persona":
+            if not self.model_provider:
+                raise ValueError("persona session provider is required when inference.omni.default is not configured")
             return self.model_provider
         return provider
 
     async def _model_plugin_for_provider(self, provider: str) -> VoiceLLMPlugin:
         provider = provider.strip()
         if not provider or provider == "persona":
+            if not self.model_provider:
+                raise ValueError("persona session provider is required when inference.omni.default is not configured")
             provider = self.model_provider
         async with self._model_plugin_lock:
             if provider in self.model_plugins:
                 return self.model_plugins[provider]
             provider_conf = self.omni_config.get(provider)
             if not isinstance(provider_conf, dict):
-                raise ValueError(f"persona model_provider {provider!r} is not configured")
+                raise ValueError(f"persona omni provider {provider!r} is not configured")
             class_path = provider_conf.get("plugin_class")
             if not class_path:
-                raise ValueError(f"persona model_provider {provider!r} has no plugin_class")
+                raise ValueError(f"persona omni provider {provider!r} has no plugin_class")
 
             plugin_cls = import_plugin_class(str(class_path))
             model_plugin = plugin_cls()

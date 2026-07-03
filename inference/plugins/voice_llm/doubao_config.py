@@ -239,7 +239,13 @@ class DoubaoSessionConfig:
     def _config_string(*values: object) -> str:
         for value in values:
             text = str(value or "").strip()
-            if text and not (text.startswith("${") and text.endswith("}")):
+            lowered = text.lower()
+            if (
+                text
+                and not (text.startswith("${") and text.endswith("}"))
+                and not lowered.startswith("your_")
+                and "placeholder" not in lowered
+            ):
                 return text
         return ""
 

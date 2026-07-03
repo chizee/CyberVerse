@@ -156,9 +156,9 @@ run_xunfei_smoke() {
   local timeout="${XUNFEI_SMOKE_TIMEOUT:-30s}"
 
   if (( HAS_RTK )); then
-    (cd "${ROOT_DIR}/server" && run rtk go run ./cmd/xunfei-avatar-smoke -config ../cyberverse_config.yaml -avatar-id "${avatar_id}" -avatar-name "${avatar_name}" -timeout "${timeout}")
+    (cd "${ROOT_DIR}/server" && run rtk go run ./cmd/xunfei-avatar-smoke -config ../config/cyberverse.yaml -avatar-id "${avatar_id}" -avatar-name "${avatar_name}" -timeout "${timeout}")
   else
-    (cd "${ROOT_DIR}/server" && run go run ./cmd/xunfei-avatar-smoke -config ../cyberverse_config.yaml -avatar-id "${avatar_id}" -avatar-name "${avatar_name}" -timeout "${timeout}")
+    (cd "${ROOT_DIR}/server" && run go run ./cmd/xunfei-avatar-smoke -config ../config/cyberverse.yaml -avatar-id "${avatar_id}" -avatar-name "${avatar_name}" -timeout "${timeout}")
   fi
   XUNFEI_SMOKE_STATUS="passed"
 }

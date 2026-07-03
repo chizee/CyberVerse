@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Unified inference launcher.
-# Reads shared avatar runtime GPU settings from cyberverse_config.yaml,
+# Reads shared avatar runtime GPU settings from config/cyberverse.yaml,
 # then auto-selects plain python (single GPU) or torchrun (multi GPU).
 # Environment variables still override config values for ad-hoc debugging.
 set -euo pipefail
@@ -19,21 +19,27 @@ else
   exit 1
 fi
 
-CONFIG="${1:-cyberverse_config.yaml}"
+CONFIG="${1:-${CYBERVERSE_CONFIG:-config/cyberverse.yaml}}"
+if [[ ! -f "${CONFIG}" && "${CONFIG}" == "config/cyberverse.yaml" && -f "cyberverse_config.yaml" ]]; then
+  CONFIG="cyberverse_config.yaml"
+fi
 
 if [[ ! -f "${CONFIG}" ]]; then
   echo "Config file not found: ${CONFIG}" >&2
-  echo "Copy infra/cyberverse_config.example.yaml to cyberverse_config.yaml and infra/avatar_models to avatar_models first." >&2
+  echo "Copy infra/config to config first, or keep using legacy cyberverse_config.yaml." >&2
   exit 1
 fi
 
-# ── Source .env ──────────────────────────────────────────────────────────────
-if [[ -f ./.env ]]; then
-  set -a
-  # shellcheck disable=SC1091
-  . ./.env
-  set +a
-fi
+# ── Source env files ─────────────────────────────────────────────────────────
+CONFIG_DIR="$(dirname "${CONFIG}")"
+for env_file in ./.env "${CONFIG_DIR}/.env" "${CONFIG_DIR}/env"; do
+  if [[ -f "${env_file}" ]]; then
+    set -a
+    # shellcheck disable=SC1090
+    . "${env_file}"
+    set +a
+  fi
+done
 
 # ── Read YAML values (env still wins when set) ──────────────────────────────
 _yaml_first_val() {

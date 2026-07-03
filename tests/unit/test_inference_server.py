@@ -161,10 +161,12 @@ def test_build_plugin_config_passes_omni_models_to_persona_plugins():
                 }
             },
             "persona": {
-                "persona": {
-                    "plugin_class": "pkg.Persona",
-                    "model_provider": "qwen_omni",
-                }
+                "plugin_class": "pkg.Persona",
+                "subagent": {
+                    "agent_runtime": "pi",
+                    "provider": "qwen",
+                    "model": "qwen3.6-plus",
+                },
             },
         }
     }
@@ -173,13 +175,54 @@ def test_build_plugin_config_passes_omni_models_to_persona_plugins():
     plugin_config = server._build_plugin_config(
         "persona",
         "persona.persona",
-        config["inference"]["persona"]["persona"],
+        config["inference"]["persona"],
     )
 
     assert plugin_config.plugin_name == "persona.persona"
-    assert plugin_config.params == {"model_provider": "qwen_omni"}
+    assert plugin_config.params == {
+        "subagent": {
+            "agent_runtime": "pi",
+            "provider": "qwen",
+            "model": "qwen3.6-plus",
+        }
+    }
     assert plugin_config.shared["omni"] == config["inference"]["omni"]
     assert plugin_config.shared["runtime_config"] == config
+
+
+def test_register_plugins_supports_single_layer_persona_config():
+    config = {
+        "inference": {
+            "persona": {
+                "plugin_class": "pkg.Persona",
+            }
+        }
+    }
+    server = _make_server(config)
+
+    with patch("inference.server.import_plugin_class", return_value=object):
+        server._register_plugins()
+
+    assert "persona.persona" in server.registry.registered_names
+
+
+def test_register_plugins_keeps_legacy_nested_persona_config():
+    config = {
+        "inference": {
+            "persona": {
+                "persona": {
+                    "plugin_class": "pkg.Persona",
+                    "model_provider": "qwen_omni",
+                }
+            }
+        }
+    }
+    server = _make_server(config)
+
+    with patch("inference.server.import_plugin_class", return_value=object):
+        server._register_plugins()
+
+    assert "persona.persona" in server.registry.registered_names
 
 
 def test_register_plugins_skips_avatar_when_disabled_but_keeps_voice_plugins():

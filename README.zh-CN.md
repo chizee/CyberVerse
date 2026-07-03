@@ -86,7 +86,7 @@ CyberVerse 采用multi-agent架构：PersonaAgent 始终驻守前台，负责与
 
 ### 插件化技术栈
 
-大脑、声音、听觉、工具、记忆和面孔均为可替换模块。你可以通过 `cyberverse_config.yaml` 组合 omni 模型、LLM、TTS、ASR、Embedding、RAG、工具调用与 Avatar 后端，并在 Web UI 的 **`/settings`** 中配置不同厂商的 API Key 与服务端点，按场景自由切换供应商与模型组合。
+大脑、声音、听觉、工具、记忆和面孔均为可替换模块。你可以通过 `config/cyberverse.yaml` 组合 omni 模型、LLM、TTS、ASR、Embedding、RAG、工具调用与 Avatar 后端，并在 Web UI 的 **`/settings`** 中配置不同厂商的 API Key 与服务端点，按场景自由切换供应商与模型组合。
 
 ## 快速开始
 
@@ -128,10 +128,10 @@ conda activate cyberverse
 ### 第 3 步：配置环境变量
 
 ```bash
-cp infra/.env.example .env
+cp -r infra/config config
 ```
 
-编辑 `.env`，填入支持的API key：
+编辑 `config/env`，填入支持的API key：
 aliyun Qwen系列模型
 
 ```env
@@ -147,16 +147,11 @@ DOUBAO_APP_ID=your_doubao_app_id
 
 豆包语音：按照 [火山引擎快速入门](https://www.volcengine.com/docs/6561/2119699?lang=zh) 获取 **App ID** / **API Key**，并填入 `DOUBAO_APP_ID` / `DOUBAO_ACCESS_TOKEN`。
 
-服务启动后，你也可以在 Web UI 的 **`/settings`** 页面修改 API Key 和服务端点，而不必只依赖编辑 `.env`。
+服务启动后，你也可以在 Web UI 的 **`/settings`** 页面修改 API Key 和服务端点，而不必只依赖编辑 `config/env`。
 
 ### 第 4 步：创建本地配置并启用 voice-only 模式
 
-```bash
-cp infra/cyberverse_config.example.yaml cyberverse_config.yaml
-cp -r infra/avatar_models avatar_models
-```
-
-编辑 `cyberverse_config.yaml`：
+编辑 `config/cyberverse.yaml`：
 
 ```yaml
 inference:
@@ -277,8 +272,8 @@ hf download TencentGameMate/chinese-wav2vec2-base \
 
 ### 配置 Avatar Inference
 
-在 `cyberverse_config.yaml` 中将 `enabled` 设为 `true`。具体模型参数放在
-`avatar_models/` 下，每个模型一个 YAML 文件；把对应文件里的路径改成你的本地
+在 `config/cyberverse.yaml` 中将 `enabled` 设为 `true`。具体模型参数放在
+`config/avatar_models/` 下，每个模型一个 YAML 文件；把对应文件里的路径改成你的本地
 checkpoint 路径。
 
 ```yaml
@@ -293,13 +288,13 @@ inference:
     model_config_dir: "avatar_models"
 ```
 
-然后编辑当前模型文件，例如 `avatar_models/flash_head.yaml` 或
-`avatar_models/live_act.yaml`。这些模型参数之后也可以在 Web UI 中调整，并会写回
+然后编辑当前模型文件，例如 `config/avatar_models/flash_head.yaml` 或
+`config/avatar_models/live_act.yaml`。这些模型参数之后也可以在 Web UI 中调整，并会写回
 对应的模型配置文件。
 
 ### 百度曦灵 H5 数字人
 
-使用百度曦灵时，把密钥放在 `.env`：
+使用百度曦灵时，把密钥放在 `config/env`：
 
 ```env
 BAIDU_XILING_APP_ID="your-app-id"
@@ -348,7 +343,7 @@ pip install dist/*.whl --force-reinstall --no-deps
 
 #### 在 CyberVerse 中开启
 
-在 `avatar_models/live_act.yaml`（或 Web UI）的 `live_act` 下设置：
+在 `config/avatar_models/live_act.yaml`（或 Web UI）的 `live_act` 下设置：
 
 ```yaml
 fp8_gemm: false
@@ -391,7 +386,7 @@ pip install flash_attn-2.8.1+cu12torch2.8cxx11abiTRUE-cp312-cp312-linux_x86_64.w
 
 > **Pro** 偏重画质；**Lite** 偏重速度。表中配置体现画质与算力的大致平衡：算力更充裕时可进一步提高画质；算力不足时请降低画质相关选项（分辨率、Pro / Lite 档位等）以保持实时流畅。
 
-Avatar inference 启用后，`make inference` 会读取 `cyberverse_config.yaml` 中的 `inference.avatar.default`，并且只在当前推理进程中初始化该一个 Avatar 模型。等待日志中出现：
+Avatar inference 启用后，`make inference` 会读取 `config/cyberverse.yaml` 中的 `inference.avatar.default`，并且只在当前推理进程中初始化该一个 Avatar 模型。等待日志中出现：
 
 - `Active avatar model initialized: <model_name>`
 - `CyberVerse Inference Server started on port 50051`
@@ -457,7 +452,7 @@ ssh -L 8443:127.0.0.1:8443 user@host -p port
 
 建立隧道后，浏览器会通过本机 `127.0.0.1:8443` 转发访问远端 TURN 服务。
 
-如果你不是通过 SSH 隧道访问，而是希望浏览器直接连接远端服务器，请将 `cyberverse_config.yaml` 中的 `pipeline.ice_public_ip` 设置为服务器的公网 IP 或域名；如果使用 SSH 隧道，可以保持默认值（`127.0.0.1`）。
+如果你不是通过 SSH 隧道访问，而是希望浏览器直接连接远端服务器，请将 `config/cyberverse.yaml` 中的 `pipeline.ice_public_ip` 设置为服务器的公网 IP 或域名；如果使用 SSH 隧道，可以保持默认值（`127.0.0.1`）。
 
 ## 路线图
 

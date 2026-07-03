@@ -4,20 +4,26 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${ROOT_DIR}"
 
-CONFIG="${1:-cyberverse_config.yaml}"
+CONFIG="${1:-${CYBERVERSE_CONFIG:-config/cyberverse.yaml}}"
+if [[ ! -f "${CONFIG}" && "${CONFIG}" == "config/cyberverse.yaml" && -f "cyberverse_config.yaml" ]]; then
+  CONFIG="cyberverse_config.yaml"
+fi
 
 if [[ ! -f "${CONFIG}" ]]; then
   echo "Config file not found: ${CONFIG}" >&2
-  echo "Copy infra/cyberverse_config.example.yaml to cyberverse_config.yaml and infra/avatar_models to avatar_models first." >&2
+  echo "Copy infra/config to config first, or keep using legacy cyberverse_config.yaml." >&2
   exit 1
 fi
 
-if [[ -f ./.env ]]; then
-  set -a
-  # shellcheck disable=SC1091
-  . ./.env
-  set +a
-fi
+CONFIG_DIR="$(dirname "${CONFIG}")"
+for env_file in ./.env "${CONFIG_DIR}/.env" "${CONFIG_DIR}/env"; do
+  if [[ -f "${env_file}" ]]; then
+    set -a
+    # shellcheck disable=SC1090
+    . "${env_file}"
+    set +a
+  fi
+done
 
 _yaml_first_val() {
   python3 - "$CONFIG" "$@" <<'PY'
@@ -70,7 +76,7 @@ if [[ -z "${FLASHHEAD_MIN_NEW_AUDIO_RATIO:-}" ]]; then
 fi
 
 echo "[inference-multi-gpu] FLASHHEAD_MIN_NEW_AUDIO_RATIO=${FLASHHEAD_MIN_NEW_AUDIO_RATIO}"
-echo "[inference-multi-gpu] Warmup control: cyberverse_config.yaml -> warmup.*"
+echo "[inference-multi-gpu] Warmup control: ${CONFIG} -> warmup.*"
 
 # torch.compile can make the first inference too slow for real-time streaming.
 # Default to off for better "first video appears" reliability; enable for tuning.

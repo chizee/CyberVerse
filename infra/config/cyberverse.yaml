@@ -1,10 +1,9 @@
 # CyberVerse example configuration.
-# Copy this file and the avatar model configs to local editable copies:
-#   cp infra/cyberverse_config.example.yaml cyberverse_config.yaml
-#   cp -r infra/avatar_models avatar_models
+# Copy the full template directory to a local editable config:
+#   cp -r infra/config config
 #
-# Keep secrets in .env. Values such as ${DASHSCOPE_API_KEY} are expanded from
-# environment variables after .env is loaded.
+# Keep secrets in config/env. Values such as ${DASHSCOPE_API_KEY} are expanded
+# from environment variables after config/env is loaded.
 
 server:
     host: "0.0.0.0"
@@ -68,51 +67,20 @@ inference:
 
     persona:
         # PersonaAgent is the orchestration layer. It wraps a concrete omni
-        # model provider and coordinates background tasks.
-        persona:
-            plugin_class: "inference.plugins.voice_llm.persona_agent.PersonaAgentPlugin"
-            # Use a provider whose adapter exposes native hidden tool calls.
-            # The qwen_omni adapter supports PersonaAgent task tools in this MVP.
-            model_provider: "qwen_omni"
-            subagent:
-                pi:
-                    sdk:
-                        # bridge_command is optional. By default CyberVerse uses its
-                        # bundled Pi SDK bridge instead of requiring a user-installed pi CLI.
-                        # Override with an absolute path only when packaging a custom runtime.
-                        # bridge_command:
-                        #     - "node"
-                        #     - "/opt/cyberverse/inference/pi_bridge/src/bridge.mjs"
-                        workspace_root: "./data/subagents/pi"
-                        session_root: "./data/subagents/pi_sessions"
-                        # Base directory for Pi SDK auth/models and temporary package installs.
-                        # By default each character gets an isolated child directory here.
-                        agent_dir: "./data/subagents/pi_agent"
-                        # Pi SDK provider/model. Use a built-in Pi provider, or provide
-                        # provider_api/provider_base_url/provider_api_key_env for an
-                        # OpenAI-compatible provider such as DashScope.
-                        provider: "qwen"
-                        model: "qwen3.6-plus"
-                        provider_api: "openai-completions"
-                        provider_base_url: "${DASHSCOPE_BASE_URL}"
-                        provider_api_key_env: "DASHSCOPE_API_KEY"
-                        timeout_seconds: 1800
-                        artifact_max_bytes: 1000000
-                        # Disable Pi built-in code-editing tools by default. Role skills/packages
-                        # should provide the business capabilities used by background tasks.
-                        no_builtin_tools: true
-                        # Optional role-wide Pi package sources, for example npm:my-pi-package.
-                        # Character-specific extension package URLs are stored in character.json.
-                        extension_package_urls: []
-                        # Only these environment variables are passed to Pi SDK role workspaces.
-                        env_allowlist:
-                            - DASHSCOPE_API_KEY
-                            - DASHSCOPE_BASE_URL
-                            - OPENAI_API_KEY
-                            - ANTHROPIC_API_KEY
-                            - GEMINI_API_KEY
-                        # Optional explicit role map. When set, roles outside the map are rejected.
-                        roles: {}
+        # provider selected by the character/session and coordinates background tasks.
+        plugin_class: "inference.plugins.voice_llm.persona_agent.PersonaAgentPlugin"
+        subagent:
+            agent_runtime: "pi"
+            workspace_root: "./data/subagents"
+            provider: "qwen"
+            model: "qwen3.6-plus"
+            timeout_seconds: 1800
+            artifact_max_bytes: 1000000
+            # Optional role-wide Pi package sources, for example npm:my-pi-package.
+            # Character-specific extension package URLs are stored in character.json.
+            extension_package_urls: []
+            # Optional explicit role map. When set, roles outside the map are rejected.
+            roles: {}
 
     llm:
         # Used by standard mode and by PersonaAgent's local sub-agent runtime.

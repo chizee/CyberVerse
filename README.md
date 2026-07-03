@@ -87,7 +87,7 @@ When you have GPU resources and want the Agent to be visible, enable avatar infe
 
 ### Plugin-Based Stack
 
-Brain, voice, hearing, tools, memory, and face are all replaceable modules. You can combine omni models, LLMs, TTS, ASR, embeddings, RAG, tool calls, and Avatar backends in `cyberverse_config.yaml`, then configure different vendors' API keys and service endpoints in the web UI at **`/settings`** to switch providers and model combinations by scenario. The [LiteLLM](https://github.com/BerriAI/litellm) plugin adds access to 100+ LLM providers (AWS Bedrock, Azure, Vertex AI, Mistral, Cohere, etc.) through a single unified interface.
+Brain, voice, hearing, tools, memory, and face are all replaceable modules. You can combine omni models, LLMs, TTS, ASR, embeddings, RAG, tool calls, and Avatar backends in `config/cyberverse.yaml`, then configure different vendors' API keys and service endpoints in the web UI at **`/settings`** to switch providers and model combinations by scenario. The [LiteLLM](https://github.com/BerriAI/litellm) plugin adds access to 100+ LLM providers (AWS Bedrock, Azure, Vertex AI, Mistral, Cohere, etc.) through a single unified interface.
 
 ## Quick Start
 
@@ -129,10 +129,10 @@ conda activate cyberverse
 ### Step 3: Configure environment variables
 
 ```bash
-cp infra/.env.example .env
+cp -r infra/config config
 ```
 
-Edit `.env` and fill in the supported API keys:
+Edit `config/env` and fill in the supported API keys:
 
 Alibaba Cloud Qwen-series models:
 
@@ -149,16 +149,11 @@ DOUBAO_APP_ID=your_doubao_app_id
 
 Doubao Voice: follow the [Volcengine quick start](https://www.volcengine.com/docs/6561/2119699?lang=zh) to get **App ID** / **API Key**, then fill in `DOUBAO_APP_ID` / `DOUBAO_ACCESS_TOKEN`.
 
-After the stack is running, you can change API keys and service endpoints from the web UI at **`/settings`** instead of editing `.env` only.
+After the stack is running, you can change API keys and service endpoints from the web UI at **`/settings`** instead of editing `config/env` only.
 
 ### Step 4: Create local config and enable voice-only mode
 
-```bash
-cp infra/cyberverse_config.example.yaml cyberverse_config.yaml
-cp -r infra/avatar_models avatar_models
-```
-
-Edit `cyberverse_config.yaml`:
+Edit `config/cyberverse.yaml`:
 
 ```yaml
 inference:
@@ -280,8 +275,8 @@ hf download TencentGameMate/chinese-wav2vec2-base \
 
 ### Configure Avatar Inference
 
-Set `enabled: true` in `cyberverse_config.yaml`. Model-specific settings live in
-one file per model under `avatar_models/`; update those paths to match your
+Set `enabled: true` in `config/cyberverse.yaml`. Model-specific settings live in
+one file per model under `config/avatar_models/`; update those paths to match your
 local checkpoints.
 
 ```yaml
@@ -296,13 +291,13 @@ inference:
     model_config_dir: "avatar_models"
 ```
 
-Then edit the active model file, for example `avatar_models/flash_head.yaml` or
-`avatar_models/live_act.yaml`. The Web UI also edits model parameters in those
+Then edit the active model file, for example `config/avatar_models/flash_head.yaml` or
+`config/avatar_models/live_act.yaml`. The Web UI also edits model parameters in those
 per-model files.
 
 ### Baidu Xiling H5 Digital Human
 
-For Baidu Xiling, keep credentials in `.env`:
+For Baidu Xiling, keep credentials in `config/env`:
 
 ```env
 BAIDU_XILING_APP_ID="your-app-id"
@@ -352,7 +347,7 @@ pip install dist/*.whl --force-reinstall --no-deps
 
 #### Enable in CyberVerse
 
-In `avatar_models/live_act.yaml` (or the web UI), under `live_act`:
+In `config/avatar_models/live_act.yaml` (or the web UI), under `live_act`:
 
 ```yaml
 fp8_gemm: false
@@ -395,7 +390,7 @@ Realtime digital-human video requires GPU acceleration. Below are benchmarks for
 
 > **Pro** favors visual quality; **Lite** favors speed. The table reflects typical **quality–compute** balances — more GPU headroom lets you push higher quality; tighter hardware calls for lower settings (resolution, **Pro** vs **Lite**, etc.) to stay realtime.
 
-When avatar inference is enabled, `make inference` reads `inference.avatar.default` from `cyberverse_config.yaml` and initializes exactly that one avatar model in the current inference process. Wait until you see:
+When avatar inference is enabled, `make inference` reads `inference.avatar.default` from `config/cyberverse.yaml` and initializes exactly that one avatar model in the current inference process. Wait until you see:
 
 - `Active avatar model initialized: <model_name>`
 - `CyberVerse Inference Server started on port 50051`
@@ -461,7 +456,7 @@ ssh -L 8443:127.0.0.1:8443 user@host -p port
 
 After the tunnel is established, the browser will access the remote TURN service through local `127.0.0.1:8443`.
 
-If you want the browser to connect to the remote server directly instead of through an SSH tunnel, set `pipeline.ice_public_ip` in `cyberverse_config.yaml` to the server's public IP or domain. If you are using an SSH tunnel, you can keep the default value (`127.0.0.1`).
+If you want the browser to connect to the remote server directly instead of through an SSH tunnel, set `pipeline.ice_public_ip` in `config/cyberverse.yaml` to the server's public IP or domain. If you are using an SSH tunnel, you can keep the default value (`127.0.0.1`).
 
 ## Roadmap
 

@@ -44,11 +44,10 @@ COPY pyproject.toml .
 COPY inference/ ./inference/
 RUN npm ci --omit=dev --prefix inference/pi_bridge
 COPY models/flash_head/ ./models/flash_head/
-COPY cyberverse_config.yaml .
-COPY avatar_models/ ./avatar_models/
+COPY config/ ./config/
 
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
     CMD python3 -c "import grpc; ch = grpc.insecure_channel('localhost:50051'); grpc.channel_ready_future(ch).result(timeout=3)" || exit 1
 
 EXPOSE 50051
-CMD ["python3", "-m", "inference.server", "--config", "cyberverse_config.yaml"]
+CMD ["python3", "-m", "inference.server", "--config", "config/cyberverse.yaml"]

@@ -24,8 +24,26 @@ type smokeResult struct {
 	Error            string `json:"error,omitempty"`
 }
 
+func configRoot(configPath string) string {
+	dir := filepath.Dir(configPath)
+	if filepath.Base(dir) == "config" {
+		return filepath.Dir(dir)
+	}
+	return dir
+}
+
+func envPaths(configPath string) []string {
+	dir := filepath.Dir(configPath)
+	root := configRoot(configPath)
+	return []string{
+		filepath.Join(root, ".env"),
+		filepath.Join(dir, ".env"),
+		filepath.Join(dir, "env"),
+	}
+}
+
 func main() {
-	configPath := flag.String("config", "../../cyberverse_config.yaml", "CyberVerse config path used to locate .env")
+	configPath := flag.String("config", "../config/cyberverse.yaml", "CyberVerse config path used to locate env files")
 	avatarID := flag.String("avatar-id", "201165002", "Xunfei avatar_id to smoke test")
 	avatarName := flag.String("avatar-name", "昭昭-4.0", "Xunfei avatar display name for reporting")
 	sceneID := flag.String("scene-id", "", "Optional scene_id override; defaults to XUNFEI_AVATAR_SCENE_ID")
@@ -34,10 +52,11 @@ func main() {
 	timeout := flag.Duration("timeout", 30*time.Second, "Start timeout")
 	flag.Parse()
 
-	envPath := filepath.Join(filepath.Dir(*configPath), ".env")
-	if err := config.LoadDotenv(envPath); err != nil {
-		writeResult(smokeResult{OK: false, AvatarID: *avatarID, AvatarName: *avatarName, Error: err.Error()})
-		os.Exit(1)
+	for _, envPath := range envPaths(*configPath) {
+		if err := config.LoadDotenv(envPath); err != nil {
+			writeResult(smokeResult{OK: false, AvatarID: *avatarID, AvatarName: *avatarName, Error: err.Error()})
+			os.Exit(1)
+		}
 	}
 
 	client, err := xunfeiavatar.NewClientFromEnv()

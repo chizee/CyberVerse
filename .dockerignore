@@ -1,0 +1,5 @@
+# Local secret files should never be sent to Docker build context.
+.env
+**/.env
+/config/env
+/config/env.*

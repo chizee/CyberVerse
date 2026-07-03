@@ -23,21 +23,95 @@ import (
 	"github.com/cyberverse/server/internal/ws"
 )
 
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+func isDefaultStartupConfigPath(path string) bool {
+	switch filepath.ToSlash(filepath.Clean(path)) {
+	case "config/cyberverse.yaml", "../config/cyberverse.yaml", "../../config/cyberverse.yaml":
+		return true
+	default:
+		return false
+	}
+}
+
+func resolveStartupConfigPath(path string, allowFallback bool) string {
+	if fileExists(path) {
+		return path
+	}
+	if !allowFallback && !isDefaultStartupConfigPath(path) {
+		return path
+	}
+	candidates := []string{
+		"config/cyberverse.yaml",
+		"../config/cyberverse.yaml",
+		"../../config/cyberverse.yaml",
+		"cyberverse_config.yaml",
+		"../cyberverse_config.yaml",
+		"../../cyberverse_config.yaml",
+	}
+	for _, candidate := range candidates {
+		if fileExists(candidate) {
+			return candidate
+		}
+	}
+	return path
+}
+
+func configRoot(configPath string) string {
+	dir := filepath.Dir(configPath)
+	if filepath.Base(dir) == "config" {
+		return filepath.Dir(dir)
+	}
+	return dir
+}
+
+func envPaths(configPath string) []string {
+	dir := filepath.Dir(configPath)
+	root := configRoot(configPath)
+	return []string{
+		filepath.Join(root, ".env"),
+		filepath.Join(dir, ".env"),
+		filepath.Join(dir, "env"),
+	}
+}
+
+func writableEnvPath(configPath string) string {
+	dir := filepath.Dir(configPath)
+	if filepath.Base(dir) == "config" {
+		return filepath.Join(dir, "env")
+	}
+	return filepath.Join(dir, ".env")
+}
+
 func main() {
-	configPath := flag.String("config", "../../cyberverse_config.yaml", "path to config file")
+	configPathFlag := flag.String("config", "config/cyberverse.yaml", "path to config file")
 	flag.Parse()
+	explicitConfig := false
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "config" {
+			explicitConfig = true
+		}
+	})
+	configPath := resolveStartupConfigPath(*configPathFlag, !explicitConfig)
 
 	// Load .env before config so ${VAR} placeholders in YAML expand correctly.
-	envPath := filepath.Join(filepath.Dir(*configPath), ".env")
-	if err := config.LoadDotenv(envPath); err != nil {
-		log.Printf("Warning: failed to load .env: %v", err)
+	for _, candidate := range envPaths(configPath) {
+		if _, err := os.Stat(candidate); err == nil {
+			if err := config.LoadDotenv(candidate); err != nil {
+				log.Printf("Warning: failed to load env file %s: %v", candidate, err)
+			}
+		}
+	}
+	envPath := writableEnvPath(configPath)
+
+	if _, err := os.Stat(configPath); os.IsNotExist(err) {
+		log.Fatalf("Config file %s not found. Copy infra/config to config, or keep using legacy cyberverse_config.yaml.", configPath)
 	}
 
-	if _, err := os.Stat(*configPath); os.IsNotExist(err) {
-		log.Fatalf("Config file %s not found. Copy infra/cyberverse_config.example.yaml to cyberverse_config.yaml and infra/avatar_models to avatar_models first.", *configPath)
-	}
-
-	cfg, err := config.Load(*configPath)
+	cfg, err := config.Load(configPath)
 	if err != nil {
 		log.Fatalf("Failed to load config: %v", err)
 	}
@@ -59,7 +133,7 @@ func main() {
 	roomMgr := livekit.NewRoomManager(cfg.LiveKit.URL, cfg.LiveKit.APIKey, cfg.LiveKit.APISecret)
 
 	// Create character store (directory-based, one dir per character)
-	dataDir := filepath.Join(filepath.Dir(*configPath), "data")
+	dataDir := filepath.Join(configRoot(configPath), "data")
 	os.MkdirAll(dataDir, 0755)
 	charStore, err := character.NewStore(filepath.Join(dataDir, "characters"))
 	if err != nil {
@@ -147,7 +221,7 @@ func main() {
 	}
 
 	// Create router with all dependencies
-	router := api.NewRouter(sessionMgr, orch, wsHub, roomMgr, cfg, charStore, envPath, *configPath, taskSvc)
+	router := api.NewRouter(sessionMgr, orch, wsHub, roomMgr, cfg, charStore, envPath, configPath, taskSvc)
 
 	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.HTTPPort)
 	srv := &http.Server{

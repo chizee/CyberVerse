@@ -86,7 +86,7 @@ GPU リソースがあり Agent を「見える」存在にしたい場合は、
 
 ### プラグインベースのスタック
 
-頭脳、声、聴覚、ツール、記憶、顔はすべて差し替え可能なモジュールです。`cyberverse_config.yaml` で omni model、LLM、TTS、ASR、Embedding、RAG、ツール呼び出し、Avatar バックエンドを組み合わせ、Web UI の **`/settings`** で各ベンダーの API Key とサービスエンドポイントを設定できます。用途に応じてプロバイダーやモデル構成を自由に切り替えられます。
+頭脳、声、聴覚、ツール、記憶、顔はすべて差し替え可能なモジュールです。`config/cyberverse.yaml` で omni model、LLM、TTS、ASR、Embedding、RAG、ツール呼び出し、Avatar バックエンドを組み合わせ、Web UI の **`/settings`** で各ベンダーの API Key とサービスエンドポイントを設定できます。用途に応じてプロバイダーやモデル構成を自由に切り替えられます。
 
 ## クイックスタート
 
@@ -128,10 +128,10 @@ conda activate cyberverse
 ### ステップ 3: 環境変数を設定する
 
 ```bash
-cp infra/.env.example .env
+cp -r infra/config config
 ```
 
-`.env` を編集し、対応する API Key を入力します。
+`config/env` を編集し、対応する API Key を入力します。
 
 Alibaba Cloud Qwen シリーズモデル:
 
@@ -148,16 +148,11 @@ DOUBAO_APP_ID=your_doubao_app_id
 
 Doubao Voice: [Volcengine クイックスタート](https://www.volcengine.com/docs/6561/2119699?lang=zh)に従って **App ID** / **API Key** を取得し、`DOUBAO_APP_ID` / `DOUBAO_ACCESS_TOKEN` に設定します。
 
-スタック起動後は、API キーやサービスエンドポイントを `.env` だけでなく Web UI の **`/settings`** から変更できます。
+スタック起動後は、API キーやサービスエンドポイントを `config/env` だけでなく Web UI の **`/settings`** から変更できます。
 
 ### ステップ 4: ローカル設定を作成して voice-only モードを有効にする
 
-```bash
-cp infra/cyberverse_config.example.yaml cyberverse_config.yaml
-cp -r infra/avatar_models avatar_models
-```
-
-`cyberverse_config.yaml` を編集します。
+`config/cyberverse.yaml` を編集します。
 
 ```yaml
 inference:
@@ -278,8 +273,8 @@ hf download TencentGameMate/chinese-wav2vec2-base \
 
 ### Avatar Inference を設定する
 
-`cyberverse_config.yaml` で `enabled` を `true` にします。モデル固有の設定は
-`avatar_models/` 配下にモデルごとの YAML として置き、そこにローカル checkpoint
+`config/cyberverse.yaml` で `enabled` を `true` にします。モデル固有の設定は
+`config/avatar_models/` 配下にモデルごとの YAML として置き、そこにローカル checkpoint
 のパスを書きます。
 
 ```yaml
@@ -294,7 +289,7 @@ inference:
     model_config_dir: "avatar_models"
 ```
 
-次に `avatar_models/flash_head.yaml` や `avatar_models/live_act.yaml` を編集します。
+次に `config/avatar_models/flash_head.yaml` や `config/avatar_models/live_act.yaml` を編集します。
 これらのモデルパラメータは Web UI からも調整でき、対応するモデル設定ファイルへ書き戻されます。
 
 ### LiveAct FP4 GEMM（任意）
@@ -331,7 +326,7 @@ pip install dist/*.whl --force-reinstall --no-deps
 
 #### CyberVerse で有効化
 
-`avatar_models/live_act.yaml`（または Web UI）の `live_act` で次を設定します：
+`config/avatar_models/live_act.yaml`（または Web UI）の `live_act` で次を設定します：
 
 ```yaml
 fp8_gemm: false
@@ -374,7 +369,7 @@ pip install flash_attn-2.8.1+cu12torch2.8cxx11abiTRUE-cp312-cp312-linux_x86_64.w
 
 > **Pro** は画質優先、**Lite** は速度優先です。表は代表的な **画質と計算資源のバランス** の例です。余裕があれば画質を上げられ、不足なら解像度や **Pro** / **Lite** など画質側の設定を下げてリアルタイム性を確保してください。
 
-avatar inference が有効な場合、`make inference` は `cyberverse_config.yaml` の `inference.avatar.default` を読み取り、現在の推論プロセスではその 1 つのアバターモデルだけを初期化します。次のログが出るまで待ちます。
+avatar inference が有効な場合、`make inference` は `config/cyberverse.yaml` の `inference.avatar.default` を読み取り、現在の推論プロセスではその 1 つのアバターモデルだけを初期化します。次のログが出るまで待ちます。
 
 - `Active avatar model initialized: <model_name>`
 - `CyberVerse Inference Server started on port 50051`
@@ -440,7 +435,7 @@ ssh -L 8443:127.0.0.1:8443 user@host -p port
 
 トンネル確立後、ブラウザはローカルの `127.0.0.1:8443` 経由でリモート TURN サービスへ接続します。
 
-SSH トンネルではなくブラウザからリモートサーバーへ直接接続したい場合は、`cyberverse_config.yaml` の `pipeline.ice_public_ip` にサーバーのグローバル IP またはドメインを設定してください。SSH トンネルを使う場合は、デフォルト値（`127.0.0.1`）のままで構いません。
+SSH トンネルではなくブラウザからリモートサーバーへ直接接続したい場合は、`config/cyberverse.yaml` の `pipeline.ice_public_ip` にサーバーのグローバル IP またはドメインを設定してください。SSH トンネルを使う場合は、デフォルト値（`127.0.0.1`）のままで構いません。
 
 ## ロードマップ
 

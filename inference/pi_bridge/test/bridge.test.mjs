@@ -162,6 +162,10 @@ function baseRequest(paths) {
       provider: "openai",
       model: "gpt-test",
       no_builtin_tools: true,
+      settings: {
+        compaction: { enabled: false, reserveTokens: 4096 },
+        terminal: { showImages: false },
+      },
     },
     prompt: "Do the task",
   };
@@ -191,6 +195,11 @@ test("runTask passes role-scoped SDK options and only explicit resources", async
     provider: "openai",
     id: "gpt-test",
     source: "registry",
+  });
+  assert.deepEqual(calls.createAgentSession.settingsManager.settings, {
+    defaultProjectTrust: "never",
+    compaction: { enabled: false, reserveTokens: 4096 },
+    terminal: { showImages: false },
   });
   assert.deepEqual(calls.createAgentSession.tools, [
     "custom_tool",

@@ -48,20 +48,20 @@ test-integration:
 	python -m pytest tests/integration/ -m integration -v -s
 
 # Development servers
-#   Reads avatar runtime GPU settings from cyberverse_config.yaml; auto-selects python vs torchrun.
+#   Reads avatar runtime GPU settings from config/cyberverse.yaml; auto-selects python vs torchrun.
 #   Override with env vars for ad-hoc testing:
 #     WORLD_SIZE=2 CUDA_VISIBLE_DEVICES=0,1 make inference
 inference:
 	@bash ./scripts/inference.sh
 
 server:
-	# Load .env and start livekit-enabled server.
+	# Load env files and start livekit-enabled server.
 	@PKG_CONFIG_PATH=$(CONDA_PKG_CFG):$$PKG_CONFIG_PATH \
 	  LD_LIBRARY_PATH=$(CONDA_LIB):$$LD_LIBRARY_PATH \
-	  set -a; [ -f ./.env ] && . ./.env; set +a; \
+	  set -a; [ -f ./.env ] && . ./.env; [ -f ./config/env ] && . ./config/env; set +a; \
 	  cd server && PKG_CONFIG_PATH=$(CONDA_PKG_CFG):$$PKG_CONFIG_PATH \
 	    LD_LIBRARY_PATH=$(CONDA_LIB):$$LD_LIBRARY_PATH \
-	    $(GO) run -tags livekit ./cmd/cyberverse-server/ --config ../cyberverse_config.yaml
+	    $(GO) run -tags livekit ./cmd/cyberverse-server/ --config ../config/cyberverse.yaml
 
 frontend:
 	@if [ -n "$(NODE_BIN)" ]; then export PATH=$(NODE_BIN):$$PATH; fi; cd frontend && CHOKIDAR_USEPOLLING=true npm run dev

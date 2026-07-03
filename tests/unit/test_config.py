@@ -9,7 +9,7 @@ from inference.core.config import load_config
 
 
 def test_load_config_basic():
-    config = load_config("infra/cyberverse_config.example.yaml")
+    config = load_config("infra/config/cyberverse.yaml")
     assert config["server"]["http_port"] == 8080
     assert config["inference"]["avatar"]["enabled"] is True
     assert config["inference"]["avatar"]["default"] in {"flash_head", "live_act", "baidu_xiling"}

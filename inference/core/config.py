@@ -6,6 +6,8 @@ import yaml
 
 _ENV_VAR_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 _AVATAR_MODEL_CONFIG_GLOBS = ("*.yaml", "*.yml")
+_DEFAULT_CONFIG_PATH = Path("config/cyberverse.yaml")
+_LEGACY_CONFIG_PATH = Path("cyberverse_config.yaml")
 
 
 def _load_yaml_file(config_path: Path) -> dict:
@@ -56,6 +58,25 @@ def load_dotenv(path: str | Path) -> None:
             os.environ[key] = value
 
 
+def resolve_config_path(config_path: str | Path) -> Path:
+    """Resolve the config path, falling back from the new default to the legacy file."""
+    path = Path(config_path)
+    if path.exists():
+        return path
+    if path == _DEFAULT_CONFIG_PATH and _LEGACY_CONFIG_PATH.exists():
+        return _LEGACY_CONFIG_PATH
+    return path
+
+
+def _dotenv_paths(config_path: Path) -> list[Path]:
+    config_dir = config_path.parent
+    paths: list[Path] = []
+    if config_dir.name == "config":
+        paths.append(config_dir.parent / ".env")
+    paths.extend([config_dir / ".env", config_dir / "env"])
+    return paths
+
+
 def _avatar_model_config_files(model_config_dir: Path) -> list[Path]:
     files: list[Path] = []
     for pattern in _AVATAR_MODEL_CONFIG_GLOBS:
@@ -102,7 +123,7 @@ def _merge_avatar_model_configs(config: dict, config_path: Path) -> dict:
         if model_name in external_models:
             raise ValueError(f"Duplicate avatar model config for {model_name!r}")
         external_models.add(model_name)
-        # Inline model configs in cyberverse_config.yaml are treated as local
+        # Inline model configs in the main CyberVerse config are treated as local
         # overrides and remain the write target for that model.
         if model_name not in avatar:
             avatar[model_name] = model_config
@@ -116,8 +137,10 @@ def load_config(config_path: str | Path) -> dict:
     Only substitutes explicit ${VAR_NAME} patterns, not arbitrary env vars.
     Unmatched patterns are left as-is.
     """
-    config_path = Path(config_path)
-    load_dotenv(config_path.parent / ".env")
+    config_path = resolve_config_path(config_path)
+    for dotenv_path in _dotenv_paths(config_path):
+        load_dotenv(dotenv_path)
+    os.environ["CYBERVERSE_CONFIG_DIR"] = str(config_path.parent.resolve())
     config = _load_yaml_file(config_path)
 
     return _merge_avatar_model_configs(config, config_path)

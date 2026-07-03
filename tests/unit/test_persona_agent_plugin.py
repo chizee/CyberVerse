@@ -426,12 +426,12 @@ async def make_persona(scenario):
         PluginConfig(
             plugin_name="persona.persona",
             params={
-                "model_provider": "fake",
                 "task_poll_interval_seconds": 0.1,
                 "task_monitor_timeout_seconds": 2,
             },
             shared={
                 "omni": {
+                    "default": "fake",
                     "fake": {
                         "plugin_class": "tests.unit.test_persona_agent_plugin.FakeOmniPlugin",
                         "scenario": scenario,
@@ -455,12 +455,12 @@ async def make_persona_with_local_runtime(scenario, tmp_path, monkeypatch, fake_
         PluginConfig(
             plugin_name="persona.persona",
             params={
-                "model_provider": "fake",
                 "task_poll_interval_seconds": 0.01,
                 "task_monitor_timeout_seconds": 2,
             },
             shared={
                 "omni": {
+                    "default": "fake",
                     "fake": {
                         "plugin_class": "tests.unit.test_persona_agent_plugin.FakeOmniPlugin",
                         "scenario": scenario,
@@ -468,11 +468,13 @@ async def make_persona_with_local_runtime(scenario, tmp_path, monkeypatch, fake_
                 },
                 "runtime_config": {
                     "inference": {
-                        "persona_agent": {
+                        "persona": {
+                            "plugin_class": "inference.plugins.voice_llm.persona_agent.PersonaAgentPlugin",
                             "subagent": {
-                                "pi": {
-                                    "workspace_root": str(tmp_path / "pi"),
-                                }
+                                "agent_runtime": "pi",
+                                "workspace_root": str(tmp_path / "subagents"),
+                                "provider": "qwen",
+                                "model": "qwen3.6-plus",
                             }
                         }
                     }
@@ -550,11 +552,10 @@ async def test_persona_agent_uses_session_voice_provider(tmp_path):
     await plugin.initialize(
         PluginConfig(
             plugin_name="persona.persona",
-            params={
-                "model_provider": "fake",
-            },
+            params={},
             shared={
                 "omni": {
+                    "default": "fake",
                     "fake": {
                         "plugin_class": "tests.unit.test_persona_agent_plugin.FakeOmniPlugin",
                         "scenario": "chat",
@@ -972,6 +973,51 @@ def test_role_context_resolver_loads_sdk_provider_config(tmp_path):
     assert context.provider_api == "openai-completions"
     assert context.provider_base_url == "${DASHSCOPE_BASE_URL}"
     assert context.provider_api_key_env == "DASHSCOPE_API_KEY"
+
+
+def test_role_context_resolver_loads_single_layer_subagent_config(tmp_path, monkeypatch):
+    config_dir = tmp_path / "config"
+    settings_dir = config_dir / "subagents"
+    settings_dir.mkdir(parents=True)
+    (settings_dir / "pi.json").write_text(
+        json.dumps(
+            {
+                "defaultProjectTrust": "never",
+                "compaction": {"enabled": False},
+                "terminal": {"showImages": False},
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CYBERVERSE_CONFIG_DIR", str(config_dir))
+    resolver = RoleSubAgentContextResolver(
+        {
+            "inference": {
+                "persona": {
+                    "plugin_class": "inference.plugins.voice_llm.persona_agent.PersonaAgentPlugin",
+                    "subagent": {
+                        "agent_runtime": "pi",
+                        "workspace_root": str(tmp_path / "data" / "subagents"),
+                        "provider": "qwen",
+                        "model": "qwen3.6-plus",
+                    },
+                }
+            }
+        }
+    )
+    task = Task(id="task-a", session_id="session-a", title="A", user_request="整理 A", character_id="char-a")
+
+    context = resolver.resolve(task)
+
+    assert context.workspace == tmp_path / "data" / "subagents" / "pi" / "workspaces" / "char-a"
+    assert context.session_dir == tmp_path / "data" / "subagents" / "pi" / "sessions" / "char-a"
+    assert context.agent_dir == str(tmp_path / "data" / "subagents" / "pi" / "agents" / "char-a")
+    assert context.provider == "qwen"
+    assert context.model == "qwen3.6-plus"
+    assert context.provider_api == "openai-completions"
+    assert context.provider_base_url == "${DASHSCOPE_BASE_URL}"
+    assert context.provider_api_key_env == "DASHSCOPE_API_KEY"
+    assert context.settings["compaction"]["enabled"] is False
 
 
 def test_role_context_resolver_resolves_relative_paths(tmp_path, monkeypatch):

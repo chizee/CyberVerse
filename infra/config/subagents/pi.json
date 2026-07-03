@@ -1,0 +1,21 @@
+{
+  "defaultProjectTrust": "never",
+  "compaction": {
+    "enabled": true
+  },
+  "retry": {
+    "enabled": true,
+    "maxRetries": 3
+  },
+  "terminal": {
+    "showImages": false
+  },
+  "images": {
+    "autoResize": true,
+    "blockImages": false
+  },
+  "enableSkillCommands": false,
+  "packages": [],
+  "extensions": [],
+  "skills": []
+}

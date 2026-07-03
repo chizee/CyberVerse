@@ -78,6 +78,18 @@ function isPlaceholderCredential(value) {
   );
 }
 
+function mergeSettings(base, override) {
+  const merged = { ...asObject(base) };
+  for (const [key, value] of Object.entries(asObject(override))) {
+    if (value && typeof value === "object" && !Array.isArray(value) && merged[key] && typeof merged[key] === "object" && !Array.isArray(merged[key])) {
+      merged[key] = mergeSettings(merged[key], value);
+    } else {
+      merged[key] = value;
+    }
+  }
+  return merged;
+}
+
 function resolveSimpleEnvValue(value) {
   const text = asString(value);
   const match = text.match(/^\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?$/);
@@ -295,10 +307,10 @@ export function buildSessionOptions(request, state, deps = defaultDeps, emitEven
     ...asArray(context.extension_package_urls),
     ...asArray(context.allowed_packages),
   ];
-  const settingsManager = deps.SettingsManager.inMemory({
+  const settingsManager = deps.SettingsManager.inMemory(mergeSettings({
     defaultProjectTrust: "never",
     compaction: { enabled: true },
-  });
+  }, context.settings));
   const authStorage = deps.AuthStorage.create(path.join(agentDir, "auth.json"));
   const modelRegistry = deps.ModelRegistry.create(authStorage, path.join(agentDir, "models.json"));
   registerConfiguredProvider(context, authStorage, modelRegistry);

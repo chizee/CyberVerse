@@ -9,7 +9,7 @@ import warnings
 import grpc
 from grpc_health.v1 import health, health_pb2, health_pb2_grpc
 
-from inference.core.config import load_config
+from inference.core.config import load_config, resolve_config_path
 from inference.core.registry import PluginRegistry, import_plugin_class
 from inference.core.types import PluginConfig
 from inference.generated import (
@@ -40,6 +40,7 @@ warnings.filterwarnings(
 _PLUGIN_CATEGORIES = ("avatar", "llm", "tts", "asr", "omni", "persona", "voice_llm")
 _INITIALIZE_ALL_CATEGORIES = {"llm", "tts", "asr", "omni", "persona", "voice_llm"}
 _GRPC_MAX_MESSAGE_BYTES = 256 * 1024 * 1024
+_DEFAULT_CONFIG_PATH = "config/cyberverse.yaml"
 
 
 def _config_bool(value: object, default: bool = True) -> bool:
@@ -113,6 +114,19 @@ class InferenceServer:
             shared=shared,
         )
 
+    def _configured_plugin_entries(self, category: str) -> list[tuple[str, dict]]:
+        section = self.config.get("inference", {}).get(category, {})
+        if not isinstance(section, dict):
+            return []
+        if category == "persona" and section.get("plugin_class"):
+            return [("persona", section)]
+        entries: list[tuple[str, dict]] = []
+        for name, conf in section.items():
+            if name == "default" or not isinstance(conf, dict):
+                continue
+            entries.append((name, conf))
+        return entries
+
     def _register_plugins(self) -> None:
         """Discover and register plugin classes from config (no hardcoded imports)."""
         for category in _PLUGIN_CATEGORIES:
@@ -120,10 +134,7 @@ class InferenceServer:
                 if self.is_primary:
                     logger.info("Avatar inference disabled by config; skipping avatar plugins")
                 continue
-            section = self.config.get("inference", {}).get(category, {})
-            for name, conf in section.items():
-                if name == "default" or not isinstance(conf, dict):
-                    continue
+            for name, conf in self._configured_plugin_entries(category):
                 class_path = conf.get("plugin_class")
                 if not class_path:
                     if self.is_primary:
@@ -151,11 +162,7 @@ class InferenceServer:
                 continue
             section = self.config.get("inference", {}).get(category, {})
             if category in _INITIALIZE_ALL_CATEGORIES:
-                names = [
-                    name
-                    for name, conf in section.items()
-                    if name != "default" and isinstance(conf, dict)
-                ]
+                names = [name for name, _ in self._configured_plugin_entries(category)]
             else:
                 default_name = section.get("default")
                 names = [default_name] if default_name else []
@@ -164,7 +171,7 @@ class InferenceServer:
                 full_name = f"{category}.{name}"
                 if full_name not in self.registry.registered_names:
                     continue
-                conf = section.get(name, {})
+                conf = section if category == "persona" and section.get("plugin_class") else section.get(name, {})
                 plugin_config = self._build_plugin_config(category, full_name, conf)
                 try:
                     await self.registry.initialize(full_name, plugin_config)
@@ -239,7 +246,7 @@ class InferenceServer:
 
 async def main(config_path: str) -> None:
     _configure_process_logging()
-    server = InferenceServer(config_path)
+    server = InferenceServer(str(resolve_config_path(config_path)))
 
     loop = asyncio.get_running_loop()
 
@@ -260,6 +267,6 @@ async def main(config_path: str) -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="CyberVerse Inference Server")
-    parser.add_argument("--config", default="cyberverse_config.yaml")
+    parser.add_argument("--config", default=_DEFAULT_CONFIG_PATH)
     args = parser.parse_args()
     asyncio.run(main(args.config))
