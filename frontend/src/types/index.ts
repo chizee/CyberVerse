@@ -570,6 +570,40 @@ export const GROK_VOICE_OPTIONS: VoiceOption[] = [
   { label: 'Leo', value: 'leo' },
 ]
 
+// Google Gemini Live/TTS voices — values match the voice_name request parameter.
+export const GEMINI_LIVE_VOICE_OPTIONS: VoiceOption[] = [
+  { label: 'Kore / 坚定', value: 'Kore', labelEn: 'Kore · Firm' },
+  { label: 'Puck / 活泼', value: 'Puck', labelEn: 'Puck · Upbeat' },
+  { label: 'Zephyr / 明亮', value: 'Zephyr', labelEn: 'Zephyr · Bright' },
+  { label: 'Charon / 信息感', value: 'Charon', labelEn: 'Charon · Informative' },
+  { label: 'Fenrir / 兴奋', value: 'Fenrir', labelEn: 'Fenrir · Excitable' },
+  { label: 'Leda / 年轻', value: 'Leda', labelEn: 'Leda · Youthful' },
+  { label: 'Orus / 坚定', value: 'Orus', labelEn: 'Orus · Firm' },
+  { label: 'Aoede / 轻快', value: 'Aoede', labelEn: 'Aoede · Breezy' },
+  { label: 'Callirrhoe / 随和', value: 'Callirrhoe', labelEn: 'Callirrhoe · Easy-going' },
+  { label: 'Autonoe / 明亮', value: 'Autonoe', labelEn: 'Autonoe · Bright' },
+  { label: 'Enceladus / 气声', value: 'Enceladus', labelEn: 'Enceladus · Breathy' },
+  { label: 'Iapetus / 清晰', value: 'Iapetus', labelEn: 'Iapetus · Clear' },
+  { label: 'Umbriel / 随和', value: 'Umbriel', labelEn: 'Umbriel · Easy-going' },
+  { label: 'Algieba / 顺滑', value: 'Algieba', labelEn: 'Algieba · Smooth' },
+  { label: 'Despina / 顺滑', value: 'Despina', labelEn: 'Despina · Smooth' },
+  { label: 'Erinome / 清晰', value: 'Erinome', labelEn: 'Erinome · Clear' },
+  { label: 'Algenib / 沙哑', value: 'Algenib', labelEn: 'Algenib · Gravelly' },
+  { label: 'Rasalgethi / 信息感', value: 'Rasalgethi', labelEn: 'Rasalgethi · Informative' },
+  { label: 'Laomedeia / 活泼', value: 'Laomedeia', labelEn: 'Laomedeia · Upbeat' },
+  { label: 'Achernar / 柔和', value: 'Achernar', labelEn: 'Achernar · Soft' },
+  { label: 'Alnilam / 坚定', value: 'Alnilam', labelEn: 'Alnilam · Firm' },
+  { label: 'Schedar / 平稳', value: 'Schedar', labelEn: 'Schedar · Even' },
+  { label: 'Gacrux / 成熟', value: 'Gacrux', labelEn: 'Gacrux · Mature' },
+  { label: 'Pulcherrima / 前倾', value: 'Pulcherrima', labelEn: 'Pulcherrima · Forward' },
+  { label: 'Achird / 友好', value: 'Achird', labelEn: 'Achird · Friendly' },
+  { label: 'Zubenelgenubi / 休闲', value: 'Zubenelgenubi', labelEn: 'Zubenelgenubi · Casual' },
+  { label: 'Vindemiatrix / 温柔', value: 'Vindemiatrix', labelEn: 'Vindemiatrix · Gentle' },
+  { label: 'Sadachbia / 生动', value: 'Sadachbia', labelEn: 'Sadachbia · Lively' },
+  { label: 'Sadaltager / 知识感', value: 'Sadaltager', labelEn: 'Sadaltager · Knowledgeable' },
+  { label: 'Sulafat / 温暖', value: 'Sulafat', labelEn: 'Sulafat · Warm' },
+]
+
 // SC2.0 official voices — values match SC20_VOICES keys in doubao_config.py
 export const VOICE_OPTIONS: VoiceOption[] = [
   // Female

@@ -337,7 +337,7 @@ func (r *Router) handleTestCharacterVoice(w http.ResponseWriter, req *http.Reque
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 		return
 	}
-	if provider != "doubao" && provider != "qwen_omni" && provider != "grok" {
+	if provider != "doubao" && provider != "qwen_omni" && provider != "grok" && provider != "gemini" {
 		writeJSON(w, http.StatusBadRequest, ErrorResponse{Error: "unsupported voice_provider: " + provider})
 		return
 	}

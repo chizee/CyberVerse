@@ -317,6 +317,36 @@ func TestBuildVoiceLLMSessionConfigPreservesGrokProvider(t *testing.T) {
 	}
 }
 
+func TestBuildVoiceLLMSessionConfigPreservesGeminiProvider(t *testing.T) {
+	store, err := character.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	char, err := store.Create(&character.Character{
+		Name:          "小熙",
+		VoiceProvider: "gemini",
+		VoiceType:     "Kore",
+		SystemPrompt:  "你和用户自然聊天。",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	orch := New(nil, nil, nil, nil, store)
+	session := NewSession("s1", ModeOmni, char.ID)
+
+	got := orch.buildVoiceLLMSessionConfig(session, "s1")
+	if got.Provider != "gemini" {
+		t.Fatalf("expected gemini provider from character config, got %q", got.Provider)
+	}
+	if got.Voice != "Kore" {
+		t.Fatalf("expected gemini voice from character config, got %q", got.Voice)
+	}
+	if orch.sessionSupportsVisualInput(session) {
+		t.Fatal("did not expect gemini omni sessions to expose qwen_omni visual input")
+	}
+}
+
 func TestStandardSystemPromptWithRAGAppendsMaterialContext(t *testing.T) {
 	store, err := character.NewStore(t.TempDir())
 	if err != nil {

@@ -2,6 +2,7 @@ import {
   COSYVOICE_V3_FLASH_VOICE_OPTIONS,
   COSYVOICE_V3_PLUS_VOICE_OPTIONS,
   DOUBAO_TTS_VOICE_OPTIONS,
+  GEMINI_LIVE_VOICE_OPTIONS,
   GROK_VOICE_OPTIONS,
   OPENAI_VOICE_OPTIONS,
   QWEN_OMNI_VOICE_OPTIONS,
@@ -15,6 +16,7 @@ export const DEFAULT_DOUBAO_TTS_VOICE = 'zh_female_xiaohe_uranus_bigtts'
 export const DEFAULT_QWEN_TTS_VOICE = 'Momo'
 export const DEFAULT_QWEN_OMNI_VOICE = 'Tina'
 export const DEFAULT_GROK_VOICE = 'eve'
+export const DEFAULT_GEMINI_LIVE_VOICE = 'Kore'
 export const DEFAULT_COSYVOICE_V3_VOICE = 'longanyang'
 
 type VoiceDisplayOption = {
@@ -37,6 +39,9 @@ const qwenOmniVoiceLabelMap = new Map(
 )
 const grokVoiceLabelMap = new Map(
   GROK_VOICE_OPTIONS.map(option => [option.value, option.label]),
+)
+const geminiLiveVoiceLabelMap = new Map(
+  GEMINI_LIVE_VOICE_OPTIONS.map(option => [option.value, option.label]),
 )
 const openAIVoiceLabelMap = new Map(
   OPENAI_VOICE_OPTIONS.map(option => [option.value, option.label]),
@@ -90,6 +95,10 @@ export function isQwenOmniVoiceType(value: string): boolean {
 
 export function isGrokVoiceType(value: string): boolean {
   return grokVoiceLabelMap.has(value.trim())
+}
+
+export function isGeminiLiveVoiceType(value: string): boolean {
+  return geminiLiveVoiceLabelMap.has(value.trim())
 }
 
 export function isOpenAIVoiceType(value: string): boolean {
@@ -192,6 +201,7 @@ export function formatVoiceTypeDisplay(
   const label = qwenTTSVoiceLabelMap.get(trimmed)
     ?? qwenOmniVoiceLabelMap.get(trimmed)
     ?? grokVoiceLabelMap.get(trimmed)
+    ?? geminiLiveVoiceLabelMap.get(trimmed)
     ?? openAIVoiceLabelMap.get(trimmed)
     ?? cosyVoiceLabelMap.get(trimmed)
     ?? officialVoiceLabelMap.get(trimmed)
