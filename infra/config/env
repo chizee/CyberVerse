@@ -11,6 +11,8 @@ DASHSCOPE_BASE_URL=https://dashscope-intl.aliyuncs.com/compatible-mode/v1
 # Optional override for CosyVoice TTS inference WebSocket endpoint.
 # DASHSCOPE_COSYVOICE_WS_URL=wss://your-workspace-id.cn-beijing.maas.aliyuncs.com/api-ws/v1/inference
 
+XAI_API_KEY=your_xai_api_key
+
 OPENAI_API_KEY=your_openai_api_key
 OPENAI_BASE_URL=https://api.openai.com/v1
 

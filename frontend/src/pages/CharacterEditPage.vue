@@ -8,11 +8,12 @@ import CvSelect from '../components/CvSelect.vue'
 import KnowledgeSourceManager from '../components/KnowledgeSourceManager.vue'
 import { useCharacterStore } from '../stores/characters'
 import type { AgentExtensionConfig, AvatarBackend, BaiduXilingCharacterConfig, CharacterComponents, CharacterForm, ComponentOption, ComponentsResponse, ImageInfo, XunfeiAvatarConfig } from '../types'
-import { DOUBAO_TTS_VOICE_OPTIONS, OPENAI_VOICE_OPTIONS, QWEN_OMNI_VOICE_OPTIONS, QWEN_TTS_MODEL_OPTIONS, QWEN_TTS_VOICE_OPTIONS, VOICE_OPTIONS } from '../types'
+import { DOUBAO_TTS_VOICE_OPTIONS, GROK_VOICE_OPTIONS, OPENAI_VOICE_OPTIONS, QWEN_OMNI_VOICE_OPTIONS, QWEN_TTS_MODEL_OPTIONS, QWEN_TTS_VOICE_OPTIONS, VOICE_OPTIONS } from '../types'
 import { uploadAvatar, getCharacterImages, deleteCharacterImage, activateCharacterImage, testCharacterVoice, getComponents, getBaiduXilingFigure, getXunfeiAvatar } from '../services/api'
 import {
   DEFAULT_COSYVOICE_V3_VOICE,
   DEFAULT_DOUBAO_TTS_VOICE,
+  DEFAULT_GROK_VOICE,
   DEFAULT_OFFICIAL_VOICE,
   DEFAULT_QWEN_OMNI_VOICE,
   DEFAULT_QWEN_TTS_VOICE,
@@ -23,6 +24,7 @@ import {
   isCosyVoiceKnownBuiltinVoice,
   isCosyVoiceTTSModel,
   isDoubaoTTSVoiceType,
+  isGrokVoiceType,
   isOfficialVoiceType,
   isOpenAIVoiceType,
   isQwenOmniVoiceType,
@@ -196,11 +198,20 @@ const usesCosyVoiceBuiltinTTS = computed(() =>
 const usesQwenOmniVoice = computed(() =>
   form.value.mode === 'omni' && selectedOmniProvider.value === 'qwen_omni'
 )
+const usesGrokVoice = computed(() =>
+  form.value.mode === 'omni' && selectedOmniProvider.value === 'grok'
+)
 const isOpenAIVoice = computed(() => !usesDoubaoVoice.value && selectedTTS.value === 'openai')
 const omniProviderOptions = computed(() => [
   { label: t('settings.doubaoVoice'), value: 'doubao' },
   { label: 'Qwen Omni', value: 'qwen_omni' },
+  { label: 'Grok Voice Think Fast 1.0', value: 'grok' },
 ])
+const omniModelLabel = computed(() => {
+  if (selectedOmniProvider.value === 'grok') return 'grok-voice-think-fast-1.0'
+  if (selectedOmniProvider.value === 'qwen_omni') return 'qwen3.5-omni-flash-realtime'
+  return 'Doubao Realtime'
+})
 const providerSelectOptions = (items: ComponentOption[]) =>
   items.map(item => ({
     label: item.name,
@@ -247,6 +258,7 @@ const cosyVoiceOfficialOptions = computed(() => localizedVoiceOptions(
   locale.value,
 ))
 const qwenOmniVoiceOptions = computed(() => localizedVoiceOptions(QWEN_OMNI_VOICE_OPTIONS, locale.value))
+const grokVoiceOptions = computed(() => localizedVoiceOptions(GROK_VOICE_OPTIONS, locale.value))
 const officialVoiceOptions = computed(() => localizedVoiceOptions(
   usesDoubaoTTS.value ? DOUBAO_TTS_VOICE_OPTIONS : VOICE_OPTIONS,
   locale.value,
@@ -335,11 +347,13 @@ function defaultVoiceForTTS(tts: string) {
 }
 
 function defaultVoiceForOmni(provider: string) {
+  if (provider === 'grok') return DEFAULT_GROK_VOICE
   return provider === 'qwen_omni' ? DEFAULT_QWEN_OMNI_VOICE : DEFAULT_OFFICIAL_VOICE
 }
 
 function normalizeOmniProvider(provider: string) {
-  return provider === 'qwen_omni' ? 'qwen_omni' : 'doubao'
+  if (provider === 'qwen_omni' || provider === 'grok') return provider
+  return 'doubao'
 }
 
 function normalizeMode(mode?: string): CharacterForm['mode'] {
@@ -525,6 +539,7 @@ function applyTTSVoiceDefault(tts: string, force = false) {
     const looksLikeNonDoubaoVoice = isQwenTTSVoiceType(current)
       || isOpenAIVoiceType(current)
       || isQwenOmniVoiceType(current)
+      || isGrokVoiceType(current)
       || looksLikeOtherDoubaoModeVoice
     syncVoiceInputs(looksLikeNonDoubaoVoice ? defaultVoiceForTTS(tts) : current)
   }
@@ -549,9 +564,19 @@ function applyModeVoiceDefault(force = false) {
     return
   }
 
+  if (provider === 'grok') {
+    if (force || !current || !isGrokVoiceType(current)) {
+      form.value.voice_type = DEFAULT_GROK_VOICE
+    }
+    voiceMode.value = 'official'
+    customVoiceType.value = ''
+    return
+  }
+
   const looksLikeNonDoubaoVoice = isQwenTTSVoiceType(current)
     || isOpenAIVoiceType(current)
     || isQwenOmniVoiceType(current)
+    || isGrokVoiceType(current)
     || isDoubaoTTSVoiceType(current)
   if (force || !current || looksLikeNonDoubaoVoice) {
     form.value.voice_type = defaultVoiceForOmni(provider)
@@ -616,6 +641,12 @@ function resolveVoiceType() {
     const voice = form.value.voice_type.trim() || DEFAULT_QWEN_OMNI_VOICE
     form.value.voice_type = voice
     return voice
+  }
+
+  if (usesGrokVoice.value) {
+    const voice = form.value.voice_type.trim() || DEFAULT_GROK_VOICE
+    form.value.voice_type = isGrokVoiceType(voice) ? voice : DEFAULT_GROK_VOICE
+    return form.value.voice_type
   }
 
   if (!usesDoubaoVoice.value) {
@@ -1537,7 +1568,7 @@ const pageTitle = computed(() =>
                 <span class="text-[12px] font-medium text-cv-text-muted">{{ t('common.model') }}</span>
                 <input
                   type="text"
-                  value="qwen3.5-omni-flash-realtime"
+                  :value="omniModelLabel"
                   readonly
                   class="mt-1.5 h-[42px] w-full bg-cv-elevated border border-cv-border rounded-cv-md px-4 text-sm text-cv-text-secondary focus:outline-none"
                 />
@@ -1552,6 +1583,13 @@ const pageTitle = computed(() =>
                     v-if="usesQwenOmniVoice"
                     v-model="form.voice_type"
                     :options="qwenOmniVoiceOptions"
+                    :success="voiceCheckSucceeded"
+                    class="min-w-0 flex-1"
+                  />
+                  <CvSelect
+                    v-else-if="usesGrokVoice"
+                    v-model="form.voice_type"
+                    :options="grokVoiceOptions"
                     :success="voiceCheckSucceeded"
                     class="min-w-0 flex-1"
                   />

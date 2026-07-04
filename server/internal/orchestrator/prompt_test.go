@@ -287,6 +287,36 @@ func TestBuildVoiceLLMSessionConfigPreservesDoubaoProvider(t *testing.T) {
 	}
 }
 
+func TestBuildVoiceLLMSessionConfigPreservesGrokProvider(t *testing.T) {
+	store, err := character.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	char, err := store.Create(&character.Character{
+		Name:          "小熙",
+		VoiceProvider: "grok",
+		VoiceType:     "eve",
+		SystemPrompt:  "你和用户自然聊天。",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	orch := New(nil, nil, nil, nil, store)
+	session := NewSession("s1", ModeOmni, char.ID)
+
+	got := orch.buildVoiceLLMSessionConfig(session, "s1")
+	if got.Provider != "grok" {
+		t.Fatalf("expected grok provider from character config, got %q", got.Provider)
+	}
+	if got.Voice != "eve" {
+		t.Fatalf("expected grok voice from character config, got %q", got.Voice)
+	}
+	if orch.sessionSupportsVisualInput(session) {
+		t.Fatal("did not expect grok omni sessions to expose qwen_omni visual input")
+	}
+}
+
 func TestStandardSystemPromptWithRAGAppendsMaterialContext(t *testing.T) {
 	store, err := character.NewStore(t.TempDir())
 	if err != nil {

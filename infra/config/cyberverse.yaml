@@ -64,6 +64,23 @@ inference:
             vad_type: "semantic_vad"
             vad_threshold: 0.5 # VAD sensitivity; higher usually requires clearer speech.
             vad_silence_duration_ms: 800 # Silence duration that ends a user turn.
+        grok:
+            plugin_class: "inference.plugins.voice_llm.openai_realtime_compatible.OpenAIRealtimeCompatiblePlugin"
+            provider_label: "grok"
+            api_key: "${XAI_API_KEY}"
+            ws_url: "wss://api.x.ai/v1/realtime"
+            model: "grok-voice-think-fast-1.0"
+            voice: "eve"
+            input_sample_rate: 16000
+            output_sample_rate: 24000
+            vad_type: "server_vad"
+            vad_threshold: 0.85
+            vad_silence_duration_ms: 800
+            reasoning_effort: "high"
+            session_audio_schema: "nested"
+            websocket_compression: null
+            connect_attempts: 8
+            connect_retry_delay_seconds: 0.5
 
     persona:
         # PersonaAgent is the orchestration layer. It wraps a concrete omni

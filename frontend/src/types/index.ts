@@ -561,6 +561,15 @@ export const QWEN_OMNI_VOICE_OPTIONS: VoiceOption[] = [
   { label: '思怡 (Chloe)', value: 'Chloe' },
 ]
 
+// xAI Grok Voice Agent built-in voices — values match the voice session parameter.
+export const GROK_VOICE_OPTIONS: VoiceOption[] = [
+  { label: 'Eve', value: 'eve' },
+  { label: 'Ara', value: 'ara' },
+  { label: 'Rex', value: 'rex' },
+  { label: 'Sal', value: 'sal' },
+  { label: 'Leo', value: 'leo' },
+]
+
 // SC2.0 official voices — values match SC20_VOICES keys in doubao_config.py
 export const VOICE_OPTIONS: VoiceOption[] = [
   // Female

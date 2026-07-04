@@ -22,9 +22,9 @@ inference = [
 llm = ["openai>=1.0"]
 litellm = ["litellm>=1.80,<1.87"]
 tts = ["openai>=1.0", "scipy>=1.10"]
-omni = ["websockets>=12.0"]
-voice_llm = ["websockets>=12.0"]
-qwen = ["openai>=1.0", "websockets>=12.0", "scipy>=1.10"]
+omni = ["websockets>=12.0", "python-socks[asyncio]>=2.0"]
+voice_llm = ["websockets>=12.0", "python-socks[asyncio]>=2.0"]
+qwen = ["openai>=1.0", "websockets>=12.0", "python-socks[asyncio]>=2.0", "scipy>=1.10"]
 rag = [
     "langchain>=1.0",
     "langchain-core>=1.0",

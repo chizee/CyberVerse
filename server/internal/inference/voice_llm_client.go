@@ -51,7 +51,7 @@ func voiceLLMInputPB(input VoiceLLMInputEvent) *pb.VoiceLLMInput {
 					Data:       input.Audio,
 					SampleRate: 16000,
 					Channels:   1,
-					Format:     "float32",
+					Format:     "pcm_s16le",
 				},
 			},
 		}
