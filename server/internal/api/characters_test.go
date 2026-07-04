@@ -358,6 +358,36 @@ func TestTestCharacterVoiceSupportsGeminiProvider(t *testing.T) {
 	}
 }
 
+func TestTestCharacterVoiceSupportsOpenAIRealtimeProvider(t *testing.T) {
+	inf := &fakeInferenceService{
+		avatarInfo:        &pb.AvatarInfo{ModelName: "avatar.flash_head", OutputFps: 25, OutputWidth: 512, OutputHeight: 512},
+		checkVoiceConfigs: make(chan inference.VoiceLLMSessionConfig, 1),
+	}
+	r := newTestRouterWithInference(inf)
+
+	req := httptest.NewRequest(
+		"POST",
+		"/api/v1/characters/test-voice",
+		strings.NewReader(`{"voice_provider":"openai_realtime","voice_type":"marin"}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.Handler().ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	select {
+	case config := <-inf.checkVoiceConfigs:
+		if config.Provider != "openai_realtime" || config.Voice != "marin" {
+			t.Fatalf("unexpected check voice config: %+v", config)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for check voice config")
+	}
+}
+
 func TestTestCharacterVoiceSupportsQwenTTS(t *testing.T) {
 	inf := &fakeInferenceService{
 		ttsConfigs: make(chan inference.TTSConfig, 1),

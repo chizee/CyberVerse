@@ -1942,7 +1942,7 @@ func voiceLLMProviderOrDefault(provider string) string {
 	switch provider {
 	case "persona":
 		return "persona"
-	case "qwen_omni", "grok", "gemini":
+	case "qwen_omni", "grok", "gemini", "openai_realtime":
 		return provider
 	default:
 		return "doubao"

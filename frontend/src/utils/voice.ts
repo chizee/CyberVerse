@@ -4,6 +4,7 @@ import {
   DOUBAO_TTS_VOICE_OPTIONS,
   GEMINI_LIVE_VOICE_OPTIONS,
   GROK_VOICE_OPTIONS,
+  OPENAI_REALTIME_VOICE_OPTIONS,
   OPENAI_VOICE_OPTIONS,
   QWEN_OMNI_VOICE_OPTIONS,
   QWEN_TTS_VOICE_OPTIONS,
@@ -17,6 +18,7 @@ export const DEFAULT_QWEN_TTS_VOICE = 'Momo'
 export const DEFAULT_QWEN_OMNI_VOICE = 'Tina'
 export const DEFAULT_GROK_VOICE = 'eve'
 export const DEFAULT_GEMINI_LIVE_VOICE = 'Kore'
+export const DEFAULT_OPENAI_REALTIME_VOICE = 'marin'
 export const DEFAULT_COSYVOICE_V3_VOICE = 'longanyang'
 
 type VoiceDisplayOption = {
@@ -45,6 +47,9 @@ const geminiLiveVoiceLabelMap = new Map(
 )
 const openAIVoiceLabelMap = new Map(
   OPENAI_VOICE_OPTIONS.map(option => [option.value, option.label]),
+)
+const openAIRealtimeVoiceLabelMap = new Map(
+  OPENAI_REALTIME_VOICE_OPTIONS.map(option => [option.value, option.label]),
 )
 const cosyVoiceLabelMap = new Map(
   [
@@ -103,6 +108,10 @@ export function isGeminiLiveVoiceType(value: string): boolean {
 
 export function isOpenAIVoiceType(value: string): boolean {
   return openAIVoiceLabelMap.has(value.trim())
+}
+
+export function isOpenAIRealtimeVoiceType(value: string): boolean {
+  return openAIRealtimeVoiceLabelMap.has(value.trim())
 }
 
 export function isCosyVoiceTTSModel(model: string): boolean {
@@ -202,6 +211,7 @@ export function formatVoiceTypeDisplay(
     ?? qwenOmniVoiceLabelMap.get(trimmed)
     ?? grokVoiceLabelMap.get(trimmed)
     ?? geminiLiveVoiceLabelMap.get(trimmed)
+    ?? openAIRealtimeVoiceLabelMap.get(trimmed)
     ?? openAIVoiceLabelMap.get(trimmed)
     ?? cosyVoiceLabelMap.get(trimmed)
     ?? officialVoiceLabelMap.get(trimmed)

@@ -8,13 +8,14 @@ import CvSelect from '../components/CvSelect.vue'
 import KnowledgeSourceManager from '../components/KnowledgeSourceManager.vue'
 import { useCharacterStore } from '../stores/characters'
 import type { AgentExtensionConfig, AvatarBackend, BaiduXilingCharacterConfig, CharacterComponents, CharacterForm, ComponentOption, ComponentsResponse, ImageInfo, XunfeiAvatarConfig } from '../types'
-import { DOUBAO_TTS_VOICE_OPTIONS, GEMINI_LIVE_VOICE_OPTIONS, GROK_VOICE_OPTIONS, OPENAI_VOICE_OPTIONS, QWEN_OMNI_VOICE_OPTIONS, QWEN_TTS_MODEL_OPTIONS, QWEN_TTS_VOICE_OPTIONS, VOICE_OPTIONS } from '../types'
+import { DOUBAO_TTS_VOICE_OPTIONS, GEMINI_LIVE_VOICE_OPTIONS, GROK_VOICE_OPTIONS, OPENAI_REALTIME_VOICE_OPTIONS, OPENAI_VOICE_OPTIONS, QWEN_OMNI_VOICE_OPTIONS, QWEN_TTS_MODEL_OPTIONS, QWEN_TTS_VOICE_OPTIONS, VOICE_OPTIONS } from '../types'
 import { uploadAvatar, getCharacterImages, deleteCharacterImage, activateCharacterImage, testCharacterVoice, getComponents, getBaiduXilingFigure, getXunfeiAvatar } from '../services/api'
 import {
   DEFAULT_COSYVOICE_V3_VOICE,
   DEFAULT_DOUBAO_TTS_VOICE,
   DEFAULT_GEMINI_LIVE_VOICE,
   DEFAULT_GROK_VOICE,
+  DEFAULT_OPENAI_REALTIME_VOICE,
   DEFAULT_OFFICIAL_VOICE,
   DEFAULT_QWEN_OMNI_VOICE,
   DEFAULT_QWEN_TTS_VOICE,
@@ -28,6 +29,7 @@ import {
   isGeminiLiveVoiceType,
   isGrokVoiceType,
   isOfficialVoiceType,
+  isOpenAIRealtimeVoiceType,
   isOpenAIVoiceType,
   isQwenOmniVoiceType,
   isQwenTTSVoiceType,
@@ -206,16 +208,21 @@ const usesGrokVoice = computed(() =>
 const usesGeminiLiveVoice = computed(() =>
   form.value.mode === 'omni' && selectedOmniProvider.value === 'gemini'
 )
+const usesOpenAIRealtimeVoice = computed(() =>
+  form.value.mode === 'omni' && selectedOmniProvider.value === 'openai_realtime'
+)
 const isOpenAIVoice = computed(() => !usesDoubaoVoice.value && selectedTTS.value === 'openai')
 const omniProviderOptions = computed(() => [
   { label: t('settings.doubaoVoice'), value: 'doubao' },
   { label: 'Qwen Omni', value: 'qwen_omni' },
   { label: 'Grok Voice Think Fast 1.0', value: 'grok' },
   { label: 'Gemini 3.1 Flash Live', value: 'gemini' },
+  { label: 'GPT Realtime 1.5', value: 'openai_realtime' },
 ])
 const omniModelLabel = computed(() => {
   if (selectedOmniProvider.value === 'grok') return 'grok-voice-think-fast-1.0'
   if (selectedOmniProvider.value === 'gemini') return 'gemini-3.1-flash-live-preview'
+  if (selectedOmniProvider.value === 'openai_realtime') return 'gpt-realtime-1.5'
   if (selectedOmniProvider.value === 'qwen_omni') return 'qwen3.5-omni-flash-realtime'
   return 'Doubao Realtime'
 })
@@ -267,6 +274,7 @@ const cosyVoiceOfficialOptions = computed(() => localizedVoiceOptions(
 const qwenOmniVoiceOptions = computed(() => localizedVoiceOptions(QWEN_OMNI_VOICE_OPTIONS, locale.value))
 const grokVoiceOptions = computed(() => localizedVoiceOptions(GROK_VOICE_OPTIONS, locale.value))
 const geminiLiveVoiceOptions = computed(() => localizedVoiceOptions(GEMINI_LIVE_VOICE_OPTIONS, locale.value))
+const openAIRealtimeVoiceOptions = computed(() => localizedVoiceOptions(OPENAI_REALTIME_VOICE_OPTIONS, locale.value))
 const officialVoiceOptions = computed(() => localizedVoiceOptions(
   usesDoubaoTTS.value ? DOUBAO_TTS_VOICE_OPTIONS : VOICE_OPTIONS,
   locale.value,
@@ -281,7 +289,7 @@ const canSave = computed(() =>
 )
 const canCheckVoice = computed(() =>
   (usesDoubaoVoice.value && (voiceMode.value === 'official' || !!trimmedCustomVoiceType.value))
-  || ((usesQwenOmniVoice.value || usesGrokVoice.value || usesGeminiLiveVoice.value) && !!form.value.voice_type.trim())
+  || ((usesQwenOmniVoice.value || usesGrokVoice.value || usesGeminiLiveVoice.value || usesOpenAIRealtimeVoice.value) && !!form.value.voice_type.trim())
   || (form.value.mode !== 'omni' && selectedTTS.value === 'qwen' && !!form.value.voice_type.trim())
   || (isOpenAIVoice.value && !!form.value.voice_type.trim())
 )
@@ -336,6 +344,7 @@ function isPresetVoice(value: string): boolean {
     || isOfficialVoiceType(value)
     || isDoubaoTTSVoiceType(value)
     || isGeminiLiveVoiceType(value)
+    || isOpenAIRealtimeVoiceType(value)
     || isCosyVoiceKnownBuiltinVoice(value)
 }
 
@@ -358,11 +367,12 @@ function defaultVoiceForTTS(tts: string) {
 function defaultVoiceForOmni(provider: string) {
   if (provider === 'grok') return DEFAULT_GROK_VOICE
   if (provider === 'gemini') return DEFAULT_GEMINI_LIVE_VOICE
+  if (provider === 'openai_realtime') return DEFAULT_OPENAI_REALTIME_VOICE
   return provider === 'qwen_omni' ? DEFAULT_QWEN_OMNI_VOICE : DEFAULT_OFFICIAL_VOICE
 }
 
 function normalizeOmniProvider(provider: string) {
-  if (provider === 'qwen_omni' || provider === 'grok' || provider === 'gemini') return provider
+  if (provider === 'qwen_omni' || provider === 'grok' || provider === 'gemini' || provider === 'openai_realtime') return provider
   return 'doubao'
 }
 
@@ -551,6 +561,7 @@ function applyTTSVoiceDefault(tts: string, force = false) {
       || isQwenOmniVoiceType(current)
       || isGrokVoiceType(current)
       || isGeminiLiveVoiceType(current)
+      || isOpenAIRealtimeVoiceType(current)
       || looksLikeOtherDoubaoModeVoice
     syncVoiceInputs(looksLikeNonDoubaoVoice ? defaultVoiceForTTS(tts) : current)
   }
@@ -593,11 +604,21 @@ function applyModeVoiceDefault(force = false) {
     return
   }
 
+  if (provider === 'openai_realtime') {
+    if (force || !current || !isOpenAIRealtimeVoiceType(current)) {
+      form.value.voice_type = DEFAULT_OPENAI_REALTIME_VOICE
+    }
+    voiceMode.value = 'official'
+    customVoiceType.value = ''
+    return
+  }
+
   const looksLikeNonDoubaoVoice = isQwenTTSVoiceType(current)
     || isOpenAIVoiceType(current)
     || isQwenOmniVoiceType(current)
     || isGrokVoiceType(current)
     || isGeminiLiveVoiceType(current)
+    || isOpenAIRealtimeVoiceType(current)
     || isDoubaoTTSVoiceType(current)
   if (force || !current || looksLikeNonDoubaoVoice) {
     form.value.voice_type = defaultVoiceForOmni(provider)
@@ -673,6 +694,12 @@ function resolveVoiceType() {
   if (usesGeminiLiveVoice.value) {
     const voice = form.value.voice_type.trim() || DEFAULT_GEMINI_LIVE_VOICE
     form.value.voice_type = isGeminiLiveVoiceType(voice) ? voice : DEFAULT_GEMINI_LIVE_VOICE
+    return form.value.voice_type
+  }
+
+  if (usesOpenAIRealtimeVoice.value) {
+    const voice = form.value.voice_type.trim() || DEFAULT_OPENAI_REALTIME_VOICE
+    form.value.voice_type = isOpenAIRealtimeVoiceType(voice) ? voice : DEFAULT_OPENAI_REALTIME_VOICE
     return form.value.voice_type
   }
 
@@ -1624,6 +1651,13 @@ const pageTitle = computed(() =>
                     v-else-if="usesGeminiLiveVoice"
                     v-model="form.voice_type"
                     :options="geminiLiveVoiceOptions"
+                    :success="voiceCheckSucceeded"
+                    class="min-w-0 flex-1"
+                  />
+                  <CvSelect
+                    v-else-if="usesOpenAIRealtimeVoice"
+                    v-model="form.voice_type"
+                    :options="openAIRealtimeVoiceOptions"
                     :success="voiceCheckSucceeded"
                     class="min-w-0 flex-1"
                   />

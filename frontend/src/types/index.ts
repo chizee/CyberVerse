@@ -643,3 +643,16 @@ export const OPENAI_VOICE_OPTIONS: VoiceOption[] = [
   { label: 'sage', value: 'sage' },
   { label: 'shimmer', value: 'shimmer' },
 ]
+
+export const OPENAI_REALTIME_VOICE_OPTIONS: VoiceOption[] = [
+  { label: 'Marin / 高质量', value: 'marin', labelEn: 'Marin · Recommended' },
+  { label: 'Cedar / 高质量', value: 'cedar', labelEn: 'Cedar · Recommended' },
+  { label: 'Alloy', value: 'alloy', labelEn: 'Alloy' },
+  { label: 'Ash', value: 'ash', labelEn: 'Ash' },
+  { label: 'Ballad', value: 'ballad', labelEn: 'Ballad' },
+  { label: 'Coral', value: 'coral', labelEn: 'Coral' },
+  { label: 'Echo', value: 'echo', labelEn: 'Echo' },
+  { label: 'Sage', value: 'sage', labelEn: 'Sage' },
+  { label: 'Shimmer', value: 'shimmer', labelEn: 'Shimmer' },
+  { label: 'Verse', value: 'verse', labelEn: 'Verse' },
+]

@@ -19,6 +19,8 @@ GEMINI_API_KEY=your_gemini_api_key
 
 OPENAI_API_KEY=your_openai_api_key
 OPENAI_BASE_URL=https://api.openai.com/v1
+# Optional: use when OpenAI Realtime blocks direct regional access.
+# OPENAI_PROXY=socks5h://127.0.0.1:7897
 
 ZHIHU_ACCESS_SECRET=your_zhihu_access_secret
 ZHIHU_APP_ID=your_zhihu_oauth_app_id

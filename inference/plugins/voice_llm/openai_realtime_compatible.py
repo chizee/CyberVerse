@@ -35,12 +35,16 @@ class OpenAIRealtimeCompatiblePlugin(VoiceLLMPlugin):
         self.output_sample_rate = 24000
         self.input_audio_format = "audio/pcm"
         self.output_audio_format = "audio/pcm"
+        self.input_source_sample_rate = 16000
         self.vad_type: str | None = "server_vad"
         self.vad_threshold = 0.85
         self.vad_silence_duration_ms = 800
         self.reasoning_effort = ""
+        self.session_schema = "legacy"
         self.session_audio_schema = "nested"
+        self.proxy: str | None = None
         self.websocket_compression: str | None = None
+        self.max_message_size = 10_000_000
         self.connect_attempts = 1
         self.connect_retry_delay_seconds = 1.0
         self._active_ws: Any | None = None
@@ -57,17 +61,23 @@ class OpenAIRealtimeCompatiblePlugin(VoiceLLMPlugin):
         self.output_sample_rate = int(params.get("output_sample_rate", self.output_sample_rate))
         self.input_audio_format = str(params.get("input_audio_format") or self.input_audio_format)
         self.output_audio_format = str(params.get("output_audio_format") or self.output_audio_format)
+        self.input_source_sample_rate = int(
+            params.get("input_source_sample_rate", self.input_source_sample_rate)
+        )
         self.vad_type = self._optional_str(params.get("vad_type"), self.vad_type)
         self.vad_threshold = float(params.get("vad_threshold", self.vad_threshold))
         self.vad_silence_duration_ms = int(
             params.get("vad_silence_duration_ms", self.vad_silence_duration_ms)
         )
         self.reasoning_effort = str(params.get("reasoning_effort") or self.reasoning_effort)
+        self.session_schema = str(params.get("session_schema") or self.session_schema)
         self.session_audio_schema = str(params.get("session_audio_schema") or self.session_audio_schema)
+        self.proxy = self._optional_str(params.get("proxy"), self.proxy)
         self.websocket_compression = self._optional_str(
             params.get("websocket_compression"),
             self.websocket_compression,
         )
+        self.max_message_size = int(params.get("max_message_size", self.max_message_size))
         self.connect_attempts = max(1, int(params.get("connect_attempts", self.connect_attempts)))
         self.connect_retry_delay_seconds = float(
             params.get("connect_retry_delay_seconds", self.connect_retry_delay_seconds)
@@ -145,7 +155,12 @@ class OpenAIRealtimeCompatiblePlugin(VoiceLLMPlugin):
     async def _connect(self, websockets: Any):
         headers = {"Authorization": f"Bearer {self.api_key}"}
         url = self._connection_url()
-        kwargs = {"compression": self.websocket_compression}
+        kwargs = {
+            "compression": self.websocket_compression,
+            "max_size": self.max_message_size,
+        }
+        if self.proxy is not None:
+            kwargs["proxy"] = self.proxy
         last_error: Exception | None = None
         for attempt in range(1, self.connect_attempts + 1):
             try:
@@ -212,12 +227,13 @@ class OpenAIRealtimeCompatiblePlugin(VoiceLLMPlugin):
                     await self._send_text(ws, session_id, event.text)
                     continue
                 if event.audio:
+                    audio = self._prepare_input_audio(event.audio)
                     await self._send_json(
                         ws,
                         {
                             "type": "input_audio_buffer.append",
                             "event_id": self._event_id("audio"),
-                            "audio": base64.b64encode(event.audio).decode("ascii"),
+                            "audio": base64.b64encode(audio).decode("ascii"),
                         },
                     )
             if expects_response:
@@ -248,7 +264,7 @@ class OpenAIRealtimeCompatiblePlugin(VoiceLLMPlugin):
             {
                 "type": "response.create",
                 "event_id": self._event_id("text_response"),
-                "response": {"modalities": ["text", "audio"]},
+                "response": self._response_payload(),
             },
         )
 
@@ -377,6 +393,8 @@ class OpenAIRealtimeCompatiblePlugin(VoiceLLMPlugin):
             await output_queue.put(None)
 
     def _session_payload(self, session_config: VoiceLLMSessionConfig) -> dict[str, Any]:
+        if self.session_schema == "openai_realtime_current":
+            return self._openai_current_session_payload(session_config)
         payload: dict[str, Any] = {
             "modalities": ["text", "audio"],
             "voice": session_config.voice or self.voice,
@@ -403,6 +421,37 @@ class OpenAIRealtimeCompatiblePlugin(VoiceLLMPlugin):
             payload["reasoning"] = {"effort": self.reasoning_effort}
         return payload
 
+    def _openai_current_session_payload(self, session_config: VoiceLLMSessionConfig) -> dict[str, Any]:
+        audio_input: dict[str, Any] = {
+            "format": {"type": self.input_audio_format, "rate": self.input_sample_rate},
+        }
+        if self.vad_type is None:
+            audio_input["turn_detection"] = None
+        else:
+            audio_input["turn_detection"] = {"type": self.vad_type}
+
+        payload: dict[str, Any] = {
+            "type": "realtime",
+            "model": self.model,
+            "output_modalities": ["audio"],
+            "instructions": self._instructions(session_config),
+            "audio": {
+                "input": audio_input,
+                "output": {
+                    "format": {"type": self.output_audio_format, "rate": self.output_sample_rate},
+                    "voice": session_config.voice or self.voice,
+                },
+            },
+        }
+        if self.reasoning_effort:
+            payload["reasoning"] = {"effort": self.reasoning_effort}
+        return payload
+
+    def _response_payload(self) -> dict[str, Any]:
+        if self.session_schema == "openai_realtime_current":
+            return {"output_modalities": ["audio"]}
+        return {"modalities": ["text", "audio"]}
+
     def _instructions(self, session_config: VoiceLLMSessionConfig) -> str:
         parts: list[str] = []
         if session_config.bot_name:
@@ -427,6 +476,43 @@ class OpenAIRealtimeCompatiblePlugin(VoiceLLMPlugin):
         if normalized == "audio/pcma":
             return "g711_alaw"
         return normalized or "pcm"
+
+    def _prepare_input_audio(self, audio: bytes) -> bytes:
+        if self.input_source_sample_rate == self.input_sample_rate:
+            return audio
+        if self.input_audio_format != "audio/pcm":
+            return audio
+        return self._resample_pcm16_mono(audio, self.input_source_sample_rate, self.input_sample_rate)
+
+    @staticmethod
+    def _resample_pcm16_mono(audio: bytes, source_rate: int, target_rate: int) -> bytes:
+        if not audio or source_rate <= 0 or target_rate <= 0 or source_rate == target_rate:
+            return audio
+        sample_count = len(audio) // 2
+        if sample_count == 0:
+            return audio
+        samples = [
+            int.from_bytes(audio[index : index + 2], byteorder="little", signed=True)
+            for index in range(0, sample_count * 2, 2)
+        ]
+        target_count = max(1, round(sample_count * target_rate / source_rate))
+        if sample_count == 1:
+            return int(samples[0]).to_bytes(2, byteorder="little", signed=True) * target_count
+        ratio = source_rate / target_rate
+        output = bytearray(target_count * 2)
+        for out_index in range(target_count):
+            position = out_index * ratio
+            left = int(position)
+            right = min(left + 1, sample_count - 1)
+            fraction = position - left
+            value = round(samples[left] * (1.0 - fraction) + samples[right] * fraction)
+            value = max(-32768, min(32767, value))
+            output[out_index * 2 : out_index * 2 + 2] = int(value).to_bytes(
+                2,
+                byteorder="little",
+                signed=True,
+            )
+        return bytes(output)
 
     @staticmethod
     async def _send_json(ws: Any, payload: dict[str, Any]) -> None:
@@ -455,9 +541,12 @@ class OpenAIRealtimeCompatiblePlugin(VoiceLLMPlugin):
     def _optional_str(value: Any, default: str | None = "") -> str | None:
         if value is None:
             return default
-        if isinstance(value, str) and value.strip().lower() == "null":
+        text = str(value).strip()
+        if text.lower() == "null":
             return None
-        return str(value)
+        if text.startswith("${") and text.endswith("}"):
+            return None
+        return text
 
     @classmethod
     def _server_event_log_fields(cls, event: dict[str, Any]) -> dict[str, Any]:
