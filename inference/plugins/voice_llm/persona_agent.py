@@ -23,6 +23,7 @@ from inference.plugins.voice_llm.persona.supervisor import PendingSubAgentTask, 
 from inference.rag import RAGEngine, RAGSearchRequest
 
 logger = logging.getLogger(__name__)
+_DEFAULT_OMNI_PROVIDER = "qwen_omni"
 
 
 PERSONA_TOOL_DEFINITIONS = [
@@ -156,7 +157,7 @@ class PersonaAgentPlugin(VoiceLLMPlugin):
             config.params.get("model_provider")
             or config.params.get("default_omni_provider")
             or omni_config.get("default")
-            or ""
+            or _DEFAULT_OMNI_PROVIDER
         ).strip()
         if self.model_provider == "persona":
             raise ValueError("persona default omni provider must reference a concrete omni provider")
@@ -186,17 +187,13 @@ class PersonaAgentPlugin(VoiceLLMPlugin):
     def _provider_from_session(self, session_config: VoiceLLMSessionConfig | None) -> str:
         provider = str(getattr(session_config, "provider", "") or "").strip()
         if not provider or provider == "persona":
-            if not self.model_provider:
-                raise ValueError("persona session provider is required when inference.omni.default is not configured")
-            return self.model_provider
+            return self.model_provider or _DEFAULT_OMNI_PROVIDER
         return provider
 
     async def _model_plugin_for_provider(self, provider: str) -> VoiceLLMPlugin:
         provider = provider.strip()
         if not provider or provider == "persona":
-            if not self.model_provider:
-                raise ValueError("persona session provider is required when inference.omni.default is not configured")
-            provider = self.model_provider
+            provider = self.model_provider or _DEFAULT_OMNI_PROVIDER
         async with self._model_plugin_lock:
             if provider in self.model_plugins:
                 return self.model_plugins[provider]

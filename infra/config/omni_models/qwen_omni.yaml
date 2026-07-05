@@ -1,0 +1,10 @@
+qwen_omni:
+    plugin_class: "inference.plugins.voice_llm.qwen_omni_realtime.QwenOmniRealtimePlugin"
+    api_key: "${DASHSCOPE_API_KEY}"
+    model: "qwen3.5-omni-flash-realtime"
+    voice: "Tina"
+    input_sample_rate: 16000
+    output_sample_rate: 24000
+    vad_type: "semantic_vad"
+    vad_threshold: 0.5 # VAD sensitivity; higher usually requires clearer speech.
+    vad_silence_duration_ms: 800 # Silence duration that ends a user turn.

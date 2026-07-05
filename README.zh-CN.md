@@ -86,7 +86,7 @@ CyberVerse 采用multi-agent架构：PersonaAgent 始终驻守前台，负责与
 
 ### 插件化技术栈
 
-大脑、声音、听觉、工具、记忆和面孔均为可替换模块。你可以通过 `config/cyberverse.yaml` 组合 omni 模型、LLM、TTS、ASR、Embedding、RAG、工具调用与 Avatar 后端，并在 Web UI 的 **`/settings`** 中配置不同厂商的 API Key 与服务端点，按场景自由切换供应商与模型组合。
+大脑、声音、听觉、工具、记忆和面孔均为可替换模块。运行行为仍放在 `config/cyberverse.yaml`，omni 模型、LLM、TTS、ASR、Embedding 的 provider 定义会从内置 `infra/config/*_models/` 目录自动加载，也支持在 `config/*_models/` 下放置本地覆盖文件。你可以在 Web UI 的 **`/settings`** 中配置不同厂商的 API Key 与服务端点，按场景自由切换供应商与模型组合。
 
 ## 快速开始
 
@@ -148,6 +148,8 @@ DOUBAO_APP_ID=your_doubao_app_id
 豆包语音：按照 [火山引擎快速入门](https://www.volcengine.com/docs/6561/2119699?lang=zh) 获取 **App ID** / **API Key**，并填入 `DOUBAO_APP_ID` / `DOUBAO_ACCESS_TOKEN`。
 
 服务启动后，你也可以在 Web UI 的 **`/settings`** 页面修改 API Key 和服务端点，而不必只依赖编辑 `config/env`。
+
+omni、LLM、Embedding、TTS、ASR 的模型定义会从 `infra/config/*_models/` 自动发现；只有需要本地覆盖时，才在 `config/*_models/` 下放置同名模型文件。
 
 ### 第 4 步：创建本地配置并启用 voice-only 模式
 

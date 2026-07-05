@@ -1,0 +1,10 @@
+doubao:
+    plugin_class: "inference.plugins.voice_llm.doubao_realtime.DoubaoRealtimePlugin"
+    # Prefer DOUBAO_API_KEY for the new console auth flow; app_id/access_token are legacy auth.
+    api_key: "${DOUBAO_API_KEY}"
+    access_token: "${DOUBAO_ACCESS_TOKEN}"
+    app_id: "${DOUBAO_APP_ID}"
+    voice_type: "zh_female_default"
+    # Avoid DialogAudioIdleTimeoutError before FlashHead's first chunk arrives.
+    enable_custom_vad: true # Required for end_smooth_window_ms to take effect.
+    end_smooth_window_ms: 6000

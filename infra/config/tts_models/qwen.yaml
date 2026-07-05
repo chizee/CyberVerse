@@ -1,0 +1,10 @@
+qwen:
+    plugin_class: "inference.plugins.tts.qwen_tts_plugin.QwenTTSPlugin"
+    api_key: "${DASHSCOPE_API_KEY}"
+    # The frontend can select qwen3-tts-flash-realtime or CosyVoice
+    # models. Set DASHSCOPE_COSYVOICE_WS_URL only to override the
+    # default CosyVoice inference WebSocket endpoint.
+    model: "qwen3-tts-flash-realtime"
+    voice: "Momo"
+    sample_rate: 24000
+    target_sample_rate: 16000 # Resampled rate sent to avatar models.

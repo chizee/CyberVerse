@@ -6,6 +6,7 @@ from inference.generated import common_pb2, tts_pb2, tts_pb2_grpc
 from inference.plugins.tts.base import TTSPlugin
 
 _MODEL_PROVIDER_MARKER = "::model="
+_DEFAULT_TTS_PROVIDER = "qwen"
 
 
 class TTSGRPCService(tts_pb2_grpc.TTSServiceServicer):
@@ -14,9 +15,14 @@ class TTSGRPCService(tts_pb2_grpc.TTSServiceServicer):
         self.registry = registry
 
     def _get_plugin(self, provider: str = "") -> TTSPlugin:
-        provider = provider.strip()
+        requested = provider.strip()
+        provider = requested or _DEFAULT_TTS_PROVIDER
         if provider:
-            return self.registry.get(f"tts.{provider}")
+            try:
+                return self.registry.get(f"tts.{provider}")
+            except KeyError:
+                if requested:
+                    raise
         plugin = self.registry.get_by_category("tts")
         if plugin is None:
             raise RuntimeError("No TTS plugin initialized")

@@ -136,6 +136,143 @@ def test_multiple_vars_in_one_line():
             os.unlink(f.name)
 
 
+def test_conventional_model_dirs_are_loaded_from_infra_config_root():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        model_dir = root / "infra" / "config" / "llm_models"
+        model_dir.mkdir(parents=True)
+        (model_dir / "qwen.yaml").write_text(
+            """
+qwen:
+  plugin_class: pkg.Qwen
+  model: qwen-test
+""",
+            encoding="utf-8",
+        )
+        config_dir = root / "config"
+        config_dir.mkdir()
+        config_path = config_dir / "cyberverse.yaml"
+        config_path.write_text("inference: {}\n", encoding="utf-8")
+
+        config = load_config(config_path)
+
+    assert config["inference"]["llm"]["qwen"]["plugin_class"] == "pkg.Qwen"
+    assert config["inference"]["llm"]["qwen"]["model"] == "qwen-test"
+    assert "default" not in config["inference"]["llm"]
+
+
+def test_local_conventional_model_config_overrides_builtin_config():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        builtin_dir = root / "infra" / "config" / "tts_models"
+        local_dir = root / "config" / "tts_models"
+        builtin_dir.mkdir(parents=True)
+        local_dir.mkdir(parents=True)
+        (builtin_dir / "qwen.yaml").write_text(
+            """
+qwen:
+  plugin_class: pkg.Builtin
+  voice: BuiltinVoice
+""",
+            encoding="utf-8",
+        )
+        (local_dir / "qwen.yaml").write_text(
+            """
+qwen:
+  plugin_class: pkg.Local
+  voice: LocalVoice
+""",
+            encoding="utf-8",
+        )
+        config_path = root / "config" / "cyberverse.yaml"
+        config_path.write_text("inference: {}\n", encoding="utf-8")
+
+        config = load_config(config_path)
+
+    assert config["inference"]["tts"]["qwen"]["plugin_class"] == "pkg.Local"
+    assert config["inference"]["tts"]["qwen"]["voice"] == "LocalVoice"
+
+
+def test_inline_conventional_model_config_wins_over_external_config():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        model_dir = root / "infra" / "config" / "asr_models"
+        model_dir.mkdir(parents=True)
+        (model_dir / "qwen.yaml").write_text(
+            """
+qwen:
+  plugin_class: pkg.External
+  model: external-asr
+""",
+            encoding="utf-8",
+        )
+        config_dir = root / "config"
+        config_dir.mkdir()
+        config_path = config_dir / "cyberverse.yaml"
+        config_path.write_text(
+            """
+inference:
+  asr:
+    qwen:
+      plugin_class: pkg.Inline
+      model: inline-asr
+""",
+            encoding="utf-8",
+        )
+
+        config = load_config(config_path)
+
+    assert config["inference"]["asr"]["qwen"]["plugin_class"] == "pkg.Inline"
+    assert config["inference"]["asr"]["qwen"]["model"] == "inline-asr"
+
+
+def test_conventional_model_config_expands_env_vars():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        model_dir = root / "infra" / "config" / "embedding_models"
+        model_dir.mkdir(parents=True)
+        (model_dir / "qwen.yaml").write_text(
+            """
+qwen:
+  api_key: ${TEST_CYBERVERSE_EMBEDDING_KEY}
+  model: text-embedding-test
+""",
+            encoding="utf-8",
+        )
+        config_dir = root / "config"
+        config_dir.mkdir()
+        config_path = config_dir / "cyberverse.yaml"
+        config_path.write_text("inference: {}\n", encoding="utf-8")
+        os.environ["TEST_CYBERVERSE_EMBEDDING_KEY"] = "embedding-key"
+        try:
+            config = load_config(config_path)
+        finally:
+            del os.environ["TEST_CYBERVERSE_EMBEDDING_KEY"]
+
+    assert config["inference"]["embedding"]["qwen"]["api_key"] == "embedding-key"
+
+
+def test_conventional_model_config_file_requires_one_top_level_model():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        model_dir = root / "infra" / "config" / "llm_models"
+        model_dir.mkdir(parents=True)
+        (model_dir / "bad.yaml").write_text(
+            """
+qwen: {}
+openai: {}
+""",
+            encoding="utf-8",
+        )
+        config_dir = root / "config"
+        config_dir.mkdir()
+        config_path = config_dir / "cyberverse.yaml"
+        config_path.write_text("inference: {}\n", encoding="utf-8")
+
+        with pytest.raises(ValueError):
+            load_config(config_path)
+
+
 def test_avatar_model_config_dir_is_merged_relative_to_main_config():
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)

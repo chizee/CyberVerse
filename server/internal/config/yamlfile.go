@@ -13,6 +13,17 @@ import (
 
 var yamlMu sync.Mutex
 
+var conventionalModelConfigCategories = []struct {
+	category string
+	dirName  string
+}{
+	{category: "omni", dirName: "omni_models"},
+	{category: "llm", dirName: "llm_models"},
+	{category: "embedding", dirName: "embedding_models"},
+	{category: "tts", dirName: "tts_models"},
+	{category: "asr", dirName: "asr_models"},
+}
+
 // ReadYAMLNode reads a YAML file into a yaml.Node tree without expanding env vars.
 func ReadYAMLNode(path string) (*yaml.Node, error) {
 	data, err := os.ReadFile(path)
@@ -30,14 +41,17 @@ func ReadYAMLNode(path string) (*yaml.Node, error) {
 	return &doc, nil
 }
 
-// ReadResolvedYAMLNode reads the main config and merges external avatar model
-// configs from inference.avatar.model_config_dir for read-only consumers.
+// ReadResolvedYAMLNode reads the main config and merges external model configs
+// for read-only consumers.
 func ReadResolvedYAMLNode(path string) (*yaml.Node, error) {
 	doc, err := ReadYAMLNode(path)
 	if err != nil {
 		return nil, err
 	}
 	if err := MergeAvatarModelConfigDir(doc, path); err != nil {
+		return nil, err
+	}
+	if err := MergeConventionalModelConfigDirs(doc, path); err != nil {
 		return nil, err
 	}
 	return doc, nil
@@ -107,6 +121,67 @@ func mappingHasKey(node *yaml.Node, key string) bool {
 	return false
 }
 
+func setMappingValue(node *yaml.Node, key string, value *yaml.Node) {
+	if node == nil || node.Kind != yaml.MappingNode {
+		return
+	}
+	for i := 0; i < len(node.Content)-1; i += 2 {
+		if node.Content[i].Value == key {
+			node.Content[i+1] = value
+			return
+		}
+	}
+	node.Content = append(
+		node.Content,
+		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: key},
+		value,
+	)
+}
+
+func ensureMappingChild(node *yaml.Node, key string) (*yaml.Node, error) {
+	if node == nil || node.Kind != yaml.MappingNode {
+		return nil, fmt.Errorf("expected mapping while creating %q", key)
+	}
+	for i := 0; i < len(node.Content)-1; i += 2 {
+		if node.Content[i].Value != key {
+			continue
+		}
+		child := node.Content[i+1]
+		if child.Kind != yaml.MappingNode {
+			return nil, fmt.Errorf("node %q is not a mapping", key)
+		}
+		return child, nil
+	}
+	child := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+	node.Content = append(
+		node.Content,
+		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: key},
+		child,
+	)
+	return child, nil
+}
+
+func ensureMappingAtPath(doc *yaml.Node, dotPath string) (*yaml.Node, error) {
+	node := mappingRoot(doc)
+	if node == nil {
+		return nil, fmt.Errorf("empty yaml document")
+	}
+	if node.Kind != yaml.MappingNode {
+		return nil, fmt.Errorf("root is not a mapping")
+	}
+	if dotPath == "" {
+		return node, nil
+	}
+	for _, key := range strings.Split(dotPath, ".") {
+		child, err := ensureMappingChild(node, key)
+		if err != nil {
+			return nil, err
+		}
+		node = child
+	}
+	return node, nil
+}
+
 func cloneYAMLNode(node *yaml.Node) *yaml.Node {
 	if node == nil {
 		return nil
@@ -164,6 +239,34 @@ func avatarModelConfigFiles(dir string) ([]string, error) {
 	return files, nil
 }
 
+func modelConfigFiles(dir, category string, requireDir bool) ([]string, error) {
+	info, err := os.Stat(dir)
+	if err != nil {
+		if os.IsNotExist(err) && !requireDir {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("%s model config dir not found: %s: %w", category, dir, err)
+	}
+	if !info.IsDir() {
+		return nil, fmt.Errorf("%s model config dir is not a directory: %s", category, dir)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, fmt.Errorf("read %s model config dir %s: %w", category, dir, err)
+	}
+	files := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if strings.HasSuffix(name, ".yaml") || strings.HasSuffix(name, ".yml") {
+			files = append(files, filepath.Join(dir, name))
+		}
+	}
+	return files, nil
+}
+
 func singleAvatarModelNode(path string) (string, *yaml.Node, error) {
 	doc, err := ReadYAMLNode(path)
 	if err != nil {
@@ -184,6 +287,30 @@ func singleAvatarModelNode(path string) (string, *yaml.Node, error) {
 	}
 	if modelNode.Kind != yaml.MappingNode {
 		return "", nil, fmt.Errorf("avatar model config value must be a mapping: %s", path)
+	}
+	return modelName, modelNode, nil
+}
+
+func singleModelNode(path, category string) (string, *yaml.Node, error) {
+	doc, err := ReadYAMLNode(path)
+	if err != nil {
+		return "", nil, err
+	}
+	root := mappingRoot(doc)
+	if root == nil || root.Kind != yaml.MappingNode {
+		return "", nil, fmt.Errorf("%s model config root must be a mapping: %s", category, path)
+	}
+	if len(root.Content) != 2 {
+		return "", nil, fmt.Errorf("%s model config file must contain exactly one top-level model: %s", category, path)
+	}
+	nameNode := root.Content[0]
+	modelNode := root.Content[1]
+	modelName := strings.TrimSpace(nameNode.Value)
+	if modelName == "" {
+		return "", nil, fmt.Errorf("%s model config name must be non-empty: %s", category, path)
+	}
+	if modelNode.Kind != yaml.MappingNode {
+		return "", nil, fmt.Errorf("%s model config value must be a mapping: %s", category, path)
 	}
 	return modelName, modelNode, nil
 }
@@ -221,6 +348,85 @@ func MergeAvatarModelConfigDir(doc *yaml.Node, configPath string) error {
 			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: modelName},
 			cloneYAMLNode(modelNode),
 		)
+	}
+	return nil
+}
+
+func repoRootForConfig(configPath string) string {
+	configDir := filepath.Clean(filepath.Dir(configPath))
+	if filepath.Base(configDir) == "config" && filepath.Base(filepath.Dir(configDir)) == "infra" {
+		return filepath.Dir(filepath.Dir(configDir))
+	}
+	if filepath.Base(configDir) == "config" {
+		return filepath.Dir(configDir)
+	}
+	return configDir
+}
+
+func conventionalModelConfigDirs(configPath, dirName string) []string {
+	repoRoot := repoRootForConfig(configPath)
+	candidates := []string{
+		filepath.Join(repoRoot, "infra", "config", dirName),
+		filepath.Join(repoRoot, "config", dirName),
+		filepath.Join(filepath.Dir(configPath), dirName),
+	}
+	dirs := make([]string, 0, len(candidates))
+	seen := map[string]bool{}
+	for _, candidate := range candidates {
+		abs, err := filepath.Abs(candidate)
+		if err != nil {
+			abs = filepath.Clean(candidate)
+		}
+		if seen[abs] {
+			continue
+		}
+		seen[abs] = true
+		dirs = append(dirs, candidate)
+	}
+	return dirs
+}
+
+// MergeConventionalModelConfigDirs appends conventional external model
+// mappings to inference.<category>. Built-in configs load first, local configs
+// override them, and inline configs in the main file take precedence.
+func MergeConventionalModelConfigDirs(doc *yaml.Node, configPath string) error {
+	if _, err := ensureMappingAtPath(doc, "inference"); err != nil {
+		return err
+	}
+	for _, category := range conventionalModelConfigCategories {
+		section, err := ensureMappingAtPath(doc, "inference."+category.category)
+		if err != nil {
+			return err
+		}
+
+		inlineModels := map[string]bool{}
+		for i := 0; i < len(section.Content)-1; i += 2 {
+			if section.Content[i+1].Kind == yaml.MappingNode {
+				inlineModels[section.Content[i].Value] = true
+			}
+		}
+
+		for _, dir := range conventionalModelConfigDirs(configPath, category.dirName) {
+			files, err := modelConfigFiles(dir, category.category, false)
+			if err != nil {
+				return err
+			}
+			seenInDir := map[string]string{}
+			for _, file := range files {
+				modelName, modelNode, err := singleModelNode(file, category.category)
+				if err != nil {
+					return err
+				}
+				if previous, exists := seenInDir[modelName]; exists {
+					return fmt.Errorf("duplicate %s model config for %q: %s and %s", category.category, modelName, previous, file)
+				}
+				seenInDir[modelName] = file
+				if inlineModels[modelName] {
+					continue
+				}
+				setMappingValue(section, modelName, cloneYAMLNode(modelNode))
+			}
+		}
 	}
 	return nil
 }

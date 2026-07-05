@@ -87,7 +87,7 @@ func (r *Router) configuredComponentOptions(category string) ([]componentOption,
 			return nil, nil
 		}
 	}
-	doc, err := config.ReadYAMLNode(r.configPath)
+	doc, err := config.ReadResolvedYAMLNode(r.configPath)
 	if err != nil {
 		return nil, err
 	}
@@ -117,7 +117,7 @@ func (r *Router) configuredTTSVoice(provider string) string {
 		provider = r.pipelineDefault("tts")
 	}
 	if r.configPath != "" {
-		if doc, err := config.ReadYAMLNode(r.configPath); err == nil {
+		if doc, err := config.ReadResolvedYAMLNode(r.configPath); err == nil {
 			if section, err := config.GetNodeAtPath(doc, "inference.tts."+provider); err == nil {
 				if voice := scalarAt(section, "voice"); voice != "" {
 					return voice

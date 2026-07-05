@@ -1,0 +1,5 @@
+whisper:
+    plugin_class: "inference.plugins.asr.whisper_plugin.WhisperASRPlugin"
+    model_size: "base" # Whisper model size, such as base/small/medium.
+    language: "auto"
+    device: "cpu"

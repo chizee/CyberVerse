@@ -86,7 +86,7 @@ GPU リソースがあり Agent を「見える」存在にしたい場合は、
 
 ### プラグインベースのスタック
 
-頭脳、声、聴覚、ツール、記憶、顔はすべて差し替え可能なモジュールです。`config/cyberverse.yaml` で omni model、LLM、TTS、ASR、Embedding、RAG、ツール呼び出し、Avatar バックエンドを組み合わせ、Web UI の **`/settings`** で各ベンダーの API Key とサービスエンドポイントを設定できます。用途に応じてプロバイダーやモデル構成を自由に切り替えられます。
+頭脳、声、聴覚、ツール、記憶、顔はすべて差し替え可能なモジュールです。実行時の挙動は引き続き `config/cyberverse.yaml` に置き、omni model、LLM、TTS、ASR、Embedding の provider 定義は内蔵の `infra/config/*_models/` ディレクトリから自動的に読み込まれます。必要に応じて `config/*_models/` にローカル上書きファイルを置くこともできます。Web UI の **`/settings`** で各ベンダーの API Key とサービスエンドポイントを設定し、用途に応じてプロバイダーやモデル構成を自由に切り替えられます。
 
 ## クイックスタート
 
@@ -149,6 +149,8 @@ DOUBAO_APP_ID=your_doubao_app_id
 Doubao Voice: [Volcengine クイックスタート](https://www.volcengine.com/docs/6561/2119699?lang=zh)に従って **App ID** / **API Key** を取得し、`DOUBAO_APP_ID` / `DOUBAO_ACCESS_TOKEN` に設定します。
 
 スタック起動後は、API キーやサービスエンドポイントを `config/env` だけでなく Web UI の **`/settings`** から変更できます。
+
+omni、LLM、Embedding、TTS、ASR のモデル定義は `infra/config/*_models/` から自動検出されます。ローカルで上書きしたい場合だけ、同名のモデルファイルを `config/*_models/` に置いてください。
 
 ### ステップ 4: ローカル設定を作成して voice-only モードを有効にする
 

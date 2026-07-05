@@ -4,6 +4,8 @@ from inference.core.registry import PluginRegistry
 from inference.generated import llm_pb2, llm_pb2_grpc
 from inference.plugins.llm.base import LLMPlugin
 
+_DEFAULT_LLM_PROVIDER = "qwen"
+
 
 class LLMGRPCService(llm_pb2_grpc.LLMServiceServicer):
 
@@ -11,9 +13,14 @@ class LLMGRPCService(llm_pb2_grpc.LLMServiceServicer):
         self.registry = registry
 
     def _get_plugin(self, provider: str = "") -> LLMPlugin:
-        provider = provider.strip()
+        requested = provider.strip()
+        provider = requested or _DEFAULT_LLM_PROVIDER
         if provider:
-            return self.registry.get(f"llm.{provider}")
+            try:
+                return self.registry.get(f"llm.{provider}")
+            except KeyError:
+                if requested:
+                    raise
         plugin = self.registry.get_by_category("llm")
         if plugin is None:
             raise RuntimeError("No LLM plugin initialized")

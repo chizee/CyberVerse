@@ -5,7 +5,14 @@ from pathlib import Path
 import yaml
 
 _ENV_VAR_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
-_AVATAR_MODEL_CONFIG_GLOBS = ("*.yaml", "*.yml")
+_MODEL_CONFIG_GLOBS = ("*.yaml", "*.yml")
+_CONVENTIONAL_MODEL_CONFIG_DIRS = {
+    "omni": "omni_models",
+    "llm": "llm_models",
+    "embedding": "embedding_models",
+    "tts": "tts_models",
+    "asr": "asr_models",
+}
 _DEFAULT_CONFIG_PATH = Path("config/cyberverse.yaml")
 _LEGACY_CONFIG_PATH = Path("cyberverse_config.yaml")
 
@@ -77,11 +84,54 @@ def _dotenv_paths(config_path: Path) -> list[Path]:
     return paths
 
 
-def _avatar_model_config_files(model_config_dir: Path) -> list[Path]:
+def _model_config_files(model_config_dir: Path) -> list[Path]:
     files: list[Path] = []
-    for pattern in _AVATAR_MODEL_CONFIG_GLOBS:
+    for pattern in _MODEL_CONFIG_GLOBS:
         files.extend(model_config_dir.glob(pattern))
     return sorted({path.resolve(): path for path in files}.values(), key=lambda p: p.name)
+
+
+def _single_model_config(model_file: Path, category: str) -> tuple[str, dict]:
+    model_data = _load_yaml_file(model_file)
+    if len(model_data) != 1:
+        raise ValueError(
+            f"{category} model config file must contain exactly one top-level model: "
+            f"{model_file}"
+        )
+    model_name, model_config = next(iter(model_data.items()))
+    if not isinstance(model_name, str) or not model_name.strip():
+        raise ValueError(f"{category} model name must be a non-empty string: {model_file}")
+    if not isinstance(model_config, dict):
+        raise ValueError(f"{category} model config value must be a mapping: {model_file}")
+    return model_name, model_config
+
+
+def _merge_model_config_dir(
+    model_config_dir: Path,
+    category: str,
+    *,
+    require_dir: bool,
+) -> dict[str, dict]:
+    if not model_config_dir.exists():
+        if require_dir:
+            raise FileNotFoundError(
+                f"{category} model config dir not found: {model_config_dir}"
+            )
+        return {}
+    if not model_config_dir.is_dir():
+        raise NotADirectoryError(
+            f"{category} model config dir is not a directory: {model_config_dir}"
+        )
+
+    merged: dict[str, dict] = {}
+    seen: set[str] = set()
+    for model_file in _model_config_files(model_config_dir):
+        model_name, model_config = _single_model_config(model_file, category)
+        if model_name in seen:
+            raise ValueError(f"Duplicate {category} model config for {model_name!r}")
+        seen.add(model_name)
+        merged[model_name] = model_config
+    return merged
 
 
 def _merge_avatar_model_configs(config: dict, config_path: Path) -> dict:
@@ -99,30 +149,13 @@ def _merge_avatar_model_configs(config: dict, config_path: Path) -> dict:
     model_config_dir = Path(str(raw_model_config_dir)).expanduser()
     if not model_config_dir.is_absolute():
         model_config_dir = config_path.parent / model_config_dir
-    if not model_config_dir.exists():
-        raise FileNotFoundError(f"Avatar model config dir not found: {model_config_dir}")
-    if not model_config_dir.is_dir():
-        raise NotADirectoryError(f"Avatar model config dir is not a directory: {model_config_dir}")
 
-    external_models: set[str] = set()
-    for model_file in _avatar_model_config_files(model_config_dir):
-        model_data = _load_yaml_file(model_file)
-        if len(model_data) != 1:
-            raise ValueError(
-                "Avatar model config file must contain exactly one top-level model: "
-                f"{model_file}"
-            )
-        model_name, model_config = next(iter(model_data.items()))
-        if not isinstance(model_name, str) or not model_name.strip():
-            raise ValueError(f"Avatar model name must be a non-empty string: {model_file}")
-        if not isinstance(model_config, dict):
-            raise ValueError(
-                "Avatar model config value must be a mapping: "
-                f"{model_file}"
-            )
-        if model_name in external_models:
-            raise ValueError(f"Duplicate avatar model config for {model_name!r}")
-        external_models.add(model_name)
+    external_models = _merge_model_config_dir(
+        model_config_dir,
+        "avatar",
+        require_dir=True,
+    )
+    for model_name, model_config in external_models.items():
         # Inline model configs in the main CyberVerse config are treated as local
         # overrides and remain the write target for that model.
         if model_name not in avatar:
@@ -131,8 +164,66 @@ def _merge_avatar_model_configs(config: dict, config_path: Path) -> dict:
     return config
 
 
+def _repo_root_for_config(config_path: Path) -> Path:
+    config_dir = config_path.resolve().parent
+    if config_dir.name == "config" and config_dir.parent.name == "infra":
+        return config_dir.parent.parent
+    if config_dir.name == "config":
+        return config_dir.parent
+    return config_dir
+
+
+def _conventional_model_config_dirs(config_path: Path, dir_name: str) -> list[Path]:
+    repo_root = _repo_root_for_config(config_path)
+    candidates = [
+        repo_root / "infra" / "config" / dir_name,
+        repo_root / "config" / dir_name,
+        config_path.resolve().parent / dir_name,
+    ]
+    unique: list[Path] = []
+    seen: set[Path] = set()
+    for candidate in candidates:
+        resolved = candidate.resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        unique.append(candidate)
+    return unique
+
+
+def _merge_conventional_model_configs(config: dict, config_path: Path) -> dict:
+    inference = config.setdefault("inference", {})
+    if not isinstance(inference, dict):
+        return config
+
+    for category, dir_name in _CONVENTIONAL_MODEL_CONFIG_DIRS.items():
+        section = inference.setdefault(category, {})
+        if not isinstance(section, dict):
+            continue
+
+        preserved = {k: v for k, v in section.items() if not isinstance(v, dict)}
+        inline_models = {k: v for k, v in section.items() if isinstance(v, dict)}
+        merged_models: dict[str, dict] = {}
+
+        for model_config_dir in _conventional_model_config_dirs(config_path, dir_name):
+            merged_models.update(
+                _merge_model_config_dir(
+                    model_config_dir,
+                    category,
+                    require_dir=False,
+                )
+            )
+
+        section.clear()
+        section.update(preserved)
+        section.update(merged_models)
+        section.update(inline_models)
+
+    return config
+
+
 def load_config(config_path: str | Path) -> dict:
-    """Load YAML config with env substitution and external avatar model files.
+    """Load YAML config with env substitution and external model files.
 
     Only substitutes explicit ${VAR_NAME} patterns, not arbitrary env vars.
     Unmatched patterns are left as-is.
@@ -143,4 +234,5 @@ def load_config(config_path: str | Path) -> dict:
     os.environ["CYBERVERSE_CONFIG_DIR"] = str(config_path.parent.resolve())
     config = _load_yaml_file(config_path)
 
-    return _merge_avatar_model_configs(config, config_path)
+    config = _merge_avatar_model_configs(config, config_path)
+    return _merge_conventional_model_configs(config, config_path)

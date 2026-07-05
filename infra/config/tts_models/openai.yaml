@@ -1,0 +1,5 @@
+openai:
+    plugin_class: "inference.plugins.tts.openai_tts_plugin.OpenAITTSPlugin"
+    api_key: "${OPENAI_API_KEY}"
+    model: "tts-1"
+    voice: "nova"

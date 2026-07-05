@@ -1,0 +1,18 @@
+openai_realtime:
+    plugin_class: "inference.plugins.voice_llm.openai_realtime_compatible.OpenAIRealtimeCompatiblePlugin"
+    provider_label: "openai_realtime"
+    api_key: "${OPENAI_API_KEY}"
+    ws_url: "wss://api.openai.com/v1/realtime"
+    model: "gpt-realtime-1.5"
+    voice: "marin"
+    input_source_sample_rate: 16000
+    input_sample_rate: 24000
+    output_sample_rate: 24000
+    input_audio_format: "audio/pcm"
+    output_audio_format: "audio/pcm"
+    vad_type: "semantic_vad"
+    session_schema: "openai_realtime_current"
+    proxy: "${OPENAI_PROXY}"
+    websocket_compression: null
+    connect_attempts: 3
+    connect_retry_delay_seconds: 0.5

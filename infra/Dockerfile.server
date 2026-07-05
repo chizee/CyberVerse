@@ -11,7 +11,8 @@ FROM alpine:3.21
 RUN apk add --no-cache ca-certificates
 WORKDIR /app
 COPY --from=builder /build/cyberverse-server .
-COPY config/ ./config/
+COPY infra/config/ ./infra/config/
+COPY infra/config/ ./config/
 
 EXPOSE 8080
 CMD ["./cyberverse-server", "--config", "config/cyberverse.yaml"]

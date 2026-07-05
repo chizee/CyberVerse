@@ -1,0 +1,15 @@
+gemini:
+    plugin_class: "inference.plugins.voice_llm.gemini_live.GeminiLivePlugin"
+    api_key: "${GEMINI_API_KEY}"
+    ws_url: "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent"
+    model: "gemini-3.1-flash-live-preview"
+    voice: "Kore"
+    input_sample_rate: 16000
+    output_sample_rate: 24000
+    response_modalities: ["AUDIO"]
+    proxy: "${GEMINI_PROXY}"
+    websocket_compression: null
+    connect_attempts: 3
+    connect_retry_delay_seconds: 0.5
+    input_transcription: true
+    output_transcription: true

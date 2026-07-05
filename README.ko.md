@@ -87,7 +87,7 @@ GPU 리소스가 있고 Agent를 보이는 존재로 만들고 싶다면 avatar 
 
 ### 플러그인 기반 스택
 
-두뇌, 음성, 청각, 도구, 메모리, 얼굴은 모두 교체 가능한 모듈입니다. `config/cyberverse.yaml` 에서 omni model, LLM, TTS, ASR, Embedding, RAG, tool calls, Avatar backend를 조합하고, Web UI의 **`/settings`** 에서 벤더별 API Key와 서비스 엔드포인트를 설정할 수 있습니다. 시나리오에 따라 provider와 model 조합을 자유롭게 바꿀 수 있습니다.
+두뇌, 음성, 청각, 도구, 메모리, 얼굴은 모두 교체 가능한 모듈입니다. 런타임 동작은 계속 `config/cyberverse.yaml` 에 두고, omni model, LLM, TTS, ASR, Embedding provider 정의는 내장 `infra/config/*_models/` 디렉터리에서 자동으로 로드됩니다. 필요하면 `config/*_models/` 아래에 로컬 override 파일을 둘 수 있습니다. Web UI의 **`/settings`** 에서 벤더별 API Key와 서비스 엔드포인트를 설정하고, 시나리오에 따라 provider와 model 조합을 자유롭게 바꿀 수 있습니다.
 
 ## 빠른 시작
 
@@ -150,6 +150,8 @@ DOUBAO_APP_ID=your_doubao_app_id
 Doubao Voice: [Volcengine 빠른 시작](https://www.volcengine.com/docs/6561/2119699?lang=zh)에 따라 **App ID** / **API Key**를 확인하고 `DOUBAO_APP_ID` / `DOUBAO_ACCESS_TOKEN`에 넣습니다.
 
 스택이 실행된 뒤에는 `config/env`만 수정할 필요 없이, Web UI의 **`/settings`** 에서 API 키와 서비스 엔드포인트를 변경할 수 있습니다.
+
+omni, LLM, Embedding, TTS, ASR 모델 정의는 `infra/config/*_models/` 에서 자동으로 발견됩니다. 로컬에서 덮어쓰고 싶을 때만 같은 이름의 모델 파일을 `config/*_models/` 아래에 두세요.
 
 ### 4단계: 로컬 설정 생성 및 voice-only 모드 활성화
 

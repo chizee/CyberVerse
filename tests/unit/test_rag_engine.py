@@ -1,6 +1,12 @@
 import pytest
 
-from inference.rag.engine import HashEmbeddings, RAGEngine, RAGIndexRequest, RAGSearchRequest
+from inference.rag.engine import (
+    HashEmbeddings,
+    RAGEngine,
+    RAGIndexRequest,
+    RAGSearchRequest,
+    _embedding_config,
+)
 
 
 def test_hash_embeddings_are_deterministic():
@@ -26,6 +32,15 @@ def test_rag_engine_resolves_server_data_path_from_shared_data_dir(tmp_path, mon
     )
 
     assert resolved == source.resolve()
+
+
+def test_embedding_config_defaults_to_qwen():
+    provider, conf = _embedding_config(
+        {"inference": {"embedding": {"qwen": {"model": "text-embedding-test"}}}}
+    )
+
+    assert provider == "qwen"
+    assert conf["model"] == "text-embedding-test"
 
 
 @pytest.mark.asyncio

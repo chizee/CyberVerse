@@ -226,3 +226,135 @@ flash_head:
 		t.Fatalf("expected main config path, got %s", source)
 	}
 }
+
+func writeConventionalConfigFixture(t *testing.T, mainBody string, files map[string]map[string]string) string {
+	t.Helper()
+	root := t.TempDir()
+	for dirName, dirFiles := range files {
+		dir := filepath.Join(root, dirName)
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		for name, body := range dirFiles {
+			if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0644); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	configDir := filepath.Join(root, "config")
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(configDir, "cyberverse.yaml")
+	if err := os.WriteFile(path, []byte(mainBody), 0644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestReadResolvedYAMLNodeMergesConventionalModelDirs(t *testing.T) {
+	path := writeConventionalConfigFixture(t, "inference: {}\n", map[string]map[string]string{
+		filepath.Join("infra", "config", "llm_models"): {
+			"qwen.yaml": `
+qwen:
+  plugin_class: pkg.Qwen
+  model: qwen-test
+`,
+		},
+	})
+
+	doc, err := ReadResolvedYAMLNode(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	node, err := GetNodeAtPath(doc, "inference.llm.qwen.model")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := NodeScalarValue(node, true); got != "qwen-test" {
+		t.Fatalf("expected qwen-test, got %q", got)
+	}
+	if _, err := GetNodeAtPath(doc, "inference.llm.default"); err == nil {
+		t.Fatal("did not expect default to be injected into resolved config")
+	}
+}
+
+func TestReadResolvedYAMLNodeLocalConventionalConfigOverridesBuiltIn(t *testing.T) {
+	path := writeConventionalConfigFixture(t, "inference: {}\n", map[string]map[string]string{
+		filepath.Join("infra", "config", "tts_models"): {
+			"qwen.yaml": `
+qwen:
+  plugin_class: pkg.Builtin
+  voice: BuiltinVoice
+`,
+		},
+		filepath.Join("config", "tts_models"): {
+			"qwen.yaml": `
+qwen:
+  plugin_class: pkg.Local
+  voice: LocalVoice
+`,
+		},
+	})
+
+	doc, err := ReadResolvedYAMLNode(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	node, err := GetNodeAtPath(doc, "inference.tts.qwen.voice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := NodeScalarValue(node, true); got != "LocalVoice" {
+		t.Fatalf("expected LocalVoice, got %q", got)
+	}
+}
+
+func TestReadResolvedYAMLNodeKeepsInlineConventionalModelConfig(t *testing.T) {
+	path := writeConventionalConfigFixture(t, `
+inference:
+  asr:
+    qwen:
+      plugin_class: pkg.Inline
+      model: inline-asr
+`, map[string]map[string]string{
+		filepath.Join("infra", "config", "asr_models"): {
+			"qwen.yaml": `
+qwen:
+  plugin_class: pkg.External
+  model: external-asr
+`,
+		},
+	})
+
+	doc, err := ReadResolvedYAMLNode(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	node, err := GetNodeAtPath(doc, "inference.asr.qwen.plugin_class")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := NodeScalarValue(node, true); got != "pkg.Inline" {
+		t.Fatalf("expected inline plugin class, got %q", got)
+	}
+}
+
+func TestReadResolvedYAMLNodeRejectsDuplicateConventionalExternalModels(t *testing.T) {
+	path := writeConventionalConfigFixture(t, "inference: {}\n", map[string]map[string]string{
+		filepath.Join("infra", "config", "llm_models"): {
+			"one.yaml": `
+qwen:
+  plugin_class: pkg.One
+`,
+			"two.yaml": `
+qwen:
+  plugin_class: pkg.Two
+`,
+		},
+	})
+
+	if _, err := ReadResolvedYAMLNode(path); err == nil {
+		t.Fatal("expected duplicate external model config to fail")
+	}
+}

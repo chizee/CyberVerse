@@ -93,7 +93,7 @@ def _embedding_config(config: dict[str, Any] | None) -> tuple[str, dict[str, Any
     inference = inference if isinstance(inference, dict) else {}
     section = inference.get("embedding", {})
     section = section if isinstance(section, dict) else {}
-    default = str(section.get("default") or "fake").strip() or "fake"
+    default = str(section.get("default") or "qwen").strip() or "qwen"
     provider = section.get(default, {})
     return default, provider if isinstance(provider, dict) else {}
 
@@ -206,7 +206,7 @@ class RAGEngine:
             from langchain_openai import OpenAIEmbeddings
         except Exception as exc:
             raise RuntimeError(
-                "RAG embeddings require langchain-openai, or configure inference.embedding.default=fake"
+                "RAG embeddings require langchain-openai, or configure the fake embedding provider"
             ) from exc
 
         api_key = str(conf.get("api_key") or os.getenv("OPENAI_API_KEY") or "")

@@ -1,0 +1,13 @@
+doubao:
+    plugin_class: "inference.plugins.tts.doubao_tts_plugin.DoubaoTTSPlugin"
+    # Doubao-TTS 2.0 bidirectional WebSocket. Prefer DOUBAO_API_KEY for
+    # the new console auth flow; app_id/access_token are legacy auth.
+    api_key: "${DOUBAO_API_KEY}"
+    app_id: "${DOUBAO_APP_ID}"
+    access_token: "${DOUBAO_ACCESS_TOKEN}"
+    model: "seed-tts-2.0"
+    resource_id: "seed-tts-2.0"
+    voice: "zh_female_xiaohe_uranus_bigtts"
+    format: "pcm"
+    sample_rate: 24000
+    target_sample_rate: 16000 # Resampled rate sent to avatar models.

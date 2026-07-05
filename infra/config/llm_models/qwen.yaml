@@ -1,0 +1,7 @@
+qwen:
+    plugin_class: "inference.plugins.llm.qwen_plugin.QwenLLMPlugin"
+    api_key: "${DASHSCOPE_API_KEY}"
+    model: "qwen3.6-plus"
+    temperature: 0.7 # Sampling randomness for LLM output.
+    extra_body:
+        enable_thinking: false # Disable Qwen thinking mode for faster spoken replies.

@@ -1,0 +1,5 @@
+litellm:
+    plugin_class: "inference.plugins.llm.litellm_plugin.LiteLLMPlugin"
+    model: "anthropic/claude-sonnet-4-6" # Any litellm model string.
+    temperature: 0.7
+    # api_key: "${ANTHROPIC_API_KEY}" # Or set provider env vars directly.

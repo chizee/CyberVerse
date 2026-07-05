@@ -8,6 +8,7 @@ from inference.generated import asr_pb2, asr_pb2_grpc
 from inference.plugins.asr.base import ASRPlugin
 
 logger = logging.getLogger(__name__)
+_DEFAULT_ASR_PROVIDER = "qwen"
 
 
 class ASRGRPCService(asr_pb2_grpc.ASRServiceServicer):
@@ -16,9 +17,14 @@ class ASRGRPCService(asr_pb2_grpc.ASRServiceServicer):
         self.registry = registry
 
     def _get_plugin(self, provider: str = "") -> ASRPlugin:
-        provider = provider.strip()
+        requested = provider.strip()
+        provider = requested or _DEFAULT_ASR_PROVIDER
         if provider:
-            return self.registry.get(f"asr.{provider}")
+            try:
+                return self.registry.get(f"asr.{provider}")
+            except KeyError:
+                if requested:
+                    raise
         plugin = self.registry.get_by_category("asr")
         if plugin is None:
             raise RuntimeError("No ASR plugin initialized")

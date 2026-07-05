@@ -87,7 +87,7 @@ When you have GPU resources and want the Agent to be visible, enable avatar infe
 
 ### Plugin-Based Stack
 
-Brain, voice, hearing, tools, memory, and face are all replaceable modules. You can combine omni models, LLMs, TTS, ASR, embeddings, RAG, tool calls, and Avatar backends in `config/cyberverse.yaml`, then configure different vendors' API keys and service endpoints in the web UI at **`/settings`** to switch providers and model combinations by scenario. The [LiteLLM](https://github.com/BerriAI/litellm) plugin adds access to 100+ LLM providers (AWS Bedrock, Azure, Vertex AI, Mistral, Cohere, etc.) through a single unified interface.
+Brain, voice, hearing, tools, memory, and face are all replaceable modules. Runtime behavior stays in `config/cyberverse.yaml`, while omni, LLM, TTS, ASR, and embedding provider definitions are loaded from the built-in `infra/config/*_models/` directories and optional local overrides under `config/*_models/`. You can configure different vendors' API keys and service endpoints in the web UI at **`/settings`** to switch providers and model combinations by scenario. The [LiteLLM](https://github.com/BerriAI/litellm) plugin adds access to 100+ LLM providers (AWS Bedrock, Azure, Vertex AI, Mistral, Cohere, etc.) through a single unified interface.
 
 ## Quick Start
 
@@ -150,6 +150,8 @@ DOUBAO_APP_ID=your_doubao_app_id
 Doubao Voice: follow the [Volcengine quick start](https://www.volcengine.com/docs/6561/2119699?lang=zh) to get **App ID** / **API Key**, then fill in `DOUBAO_APP_ID` / `DOUBAO_ACCESS_TOKEN`.
 
 After the stack is running, you can change API keys and service endpoints from the web UI at **`/settings`** instead of editing `config/env` only.
+
+Omni, LLM, embedding, TTS, and ASR model definitions are discovered automatically from `infra/config/*_models/`. Create matching files under `config/*_models/` only when you want local overrides.
 
 ### Step 4: Create local config and enable voice-only mode
 
