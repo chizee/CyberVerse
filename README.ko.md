@@ -442,42 +442,7 @@ SSH 터널이 아니라 브라우저가 원격 서버에 직접 연결되게 하
 
 ## 로드맵
 
-### 1. **실시간 오디오/비디오 Agent 플랫폼**
-
-voice-first 실시간 Agent를 더 쉽게 실행하고, 커스터마이즈하고, 임베드할 수 있게 합니다.
-
-- [x] 여러 참조 이미지, 활성 이미지, 고정/랜덤 표시 모드, 선택적 얼굴 크롭, 태그, 음성 필드, 성격, 환영 메시지, 시스템 프롬프트를 포함한 캐릭터 CRUD
-- [x] WebRTC 기반 실시간 음성 세션. direct P2P(내장 TURN) 또는 LiveKit SFU
-- [x] `inference.avatar.enabled: false` 를 통한 순수 음성 세션
-- [x] omni model, LLM, TTS, ASR, Embedding, RAG, avatar를 플러그인으로 제공하며 YAML 및 UI settings로 벤더별 API 키 설정 가능
-- [x] 세션 관리: 캐릭터별 대화 기록을 디스크에 영속화하고 대화 시작 시 로드
-- [x] 음성 클로닝: 도우바오 음성 클로닝 지원
-- [x] 음성과 텍스트 혼합 입력 지원
-- [x] 모델 발화 중 음성 끊기 및 세션 중단/재개
-- [x] standard 모드 및 지원되는 omni 세션에서 사용자 카메라 입력과 화면 공유 visual frame 지원
-- [x] PersonaAgent 및 백그라운드 SubAgent task 실행
-- [x] 지식·문서·인물 생애 등 자료를 가져와 캐릭터에 맞춘 RAG 기반 답변
-- [ ] 개발자용 웹사이트 임베드(Web 컴포넌트 또는 SDK), 자체 배포 인스턴스를 자체 사이트에 연결
-- [ ] 라이브 방송용 음성·영상 스트리밍
-
-### 2. **실시간 디지털 휴먼 통화**
-
-Avatar GPU 리소스가 있을 때 voice Agent를 실시간 영상 통화로 바꿉니다.
-
-- [x] 참조 이미지를 기반으로 구성 가능한 Avatar 플러그인(FlashHead, LiveAct 등)으로 실시간 아바타 영상 구동
-- [x] 캐릭터 presence를 위한 cached idle video 재생
-- [x] 실시간 speaking segment의 오디오/비디오 동기화
-- [ ] 품질, 지연, 비용의 tradeoff가 다른 Avatar backend 추가
-- [ ] consumer GPU, workstation GPU, cloud GPU 환경을 위한 더 나은 Avatar 배포 프로파일
-
-### 3. **에이전트 네트워크**
-
-여러 에이전트를 연결해 서로 소통하고 협업하며 네트워크를 형성할 수 있게 합니다.
-
-- [ ] agent-to-agent 통신 활성화
-- [ ] 멀티 에이전트 협업 및 위임 활성화
-- [ ] 에이전트 간 공유 메모리 및 공유 지식 활성화
-- [ ] 연결된 에이전트의 개방형 네트워크 구축
+로드맵은 Yuque로 이전되었습니다: [CyberVerse 요구사항 관리](https://www.yuque.com/u32995802/ilet4r/qu7lhylertuzx7dh?singleDoc#).
 
 ## 커뮤니티
 

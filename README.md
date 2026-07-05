@@ -462,42 +462,7 @@ If you want the browser to connect to the remote server directly instead of thro
 
 ## Roadmap
 
-### 1. **Realtime Audio/Video Agent Platform**
-
-Make voice-first realtime agents easy to run, customize, and embed.
-
-- [x] Character CRUD with multiple reference images, active image, fixed/random display mode, optional face crop, tags, voice fields, personality, welcome message, and system prompt
-- [x] Realtime voice sessions over WebRTC — direct P2P (embedded TURN) or LiveKit SFU
-- [x] Pure voice sessions with `inference.avatar.enabled: false`
-- [x] Pluggable modules (omni model, LLM, TTS, ASR, embedding, RAG, avatar); configure different vendors' API keys via YAML and UI settings
-- [x] Session management: per-character chat history persisted to disk and loaded when a conversation starts
-- [x] Voice cloning: supports Doubao voice cloning
-- [x] Hybrid input: supports both voice and text in the same conversation
-- [x] Voice interruption while the model is speaking, plus session pause and resume
-- [x] User camera input and screen-sharing visual frames in standard mode and supported omni sessions
-- [x] PersonaAgent and background SubAgent task execution
-- [x] Import knowledge, documents, and biographical material for character-grounded RAG Q&A
-- [ ] Embeddable for developers (Web component or SDK) to integrate self-hosted instances into their own sites
-- [ ] Live streaming: audio/video output for broadcast-style use cases
-
-### 2. **Realtime Digital-Human Calls**
-
-When Avatar GPU resources are available, turn the voice Agent into a realtime video call.
-
-- [x] Realtime avatar video driven from reference images via configurable avatar plugins (e.g. FlashHead, LiveAct)
-- [x] Cached idle video playback for character presence
-- [x] Audio/video synchronization for realtime speaking segments
-- [ ] More avatar backends with different quality/latency/cost tradeoffs
-- [ ] Better avatar deployment profiles for consumer GPU, workstation GPU, and cloud GPU environments
-
-### 3. **Agent Network**
-
-Connect multiple agents so they can communicate, collaborate, and form networks.
-
-- [ ] Enable agent-to-agent communication
-- [ ] Enable multi-agent collaboration and delegation
-- [ ] Enable shared memory and shared knowledge between agents
-- [ ] Build an open network of connected agents
+Roadmap is maintained in Yuque / Roadmap 已迁移至语雀: [CyberVerse Requirements Management](https://www.yuque.com/u32995802/ilet4r/qu7lhylertuzx7dh?singleDoc#).
 
 ## Community
 
