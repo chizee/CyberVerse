@@ -91,6 +91,14 @@ Brain, voice, hearing, tools, memory, and face are all replaceable modules. Runt
 
 ## Quick Start
 
+### Cloud Images
+
+If you want to try CyberVerse quickly without setting up the environment dependencies manually, you can launch it from a cloud image:
+
+- [AutoDL CyberVerse Image](https://www.autodl.art/i/dsd2077/CyberVerse/CyberVerse)
+
+For local deployment, continue with the installation steps below.
+
 ### Prerequisites
 
 - Node 18+

@@ -90,6 +90,14 @@ CyberVerse 采用multi-agent架构：PersonaAgent 始终驻守前台，负责与
 
 ## 快速开始
 
+### 云端镜像
+
+如果你想快速体验 CyberVerse，避免手动配置环境依赖，可以从云端镜像启动：
+
+- [AutoDL CyberVerse 镜像](https://www.autodl.art/i/dsd2077/CyberVerse/CyberVerse)
+
+需要本地部署时，再继续按下面步骤安装。
+
 ### 前置条件
 
 - Node 18+

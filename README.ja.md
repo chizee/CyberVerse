@@ -90,6 +90,14 @@ GPU リソースがあり Agent を「見える」存在にしたい場合は、
 
 ## クイックスタート
 
+### クラウドイメージ
+
+CyberVerse をすばやく試し、環境依存関係を手動で設定する手間を避けたい場合は、クラウドイメージから起動できます：
+
+- [AutoDL CyberVerse イメージ](https://www.autodl.art/i/dsd2077/CyberVerse/CyberVerse)
+
+ローカルにデプロイする場合は、以下の手順に進んでください。
+
 ### 前提条件
 
 - Node 18+
