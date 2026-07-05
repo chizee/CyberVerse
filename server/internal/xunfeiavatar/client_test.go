@@ -6,11 +6,13 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -196,6 +198,212 @@ func TestAudioDriverPacketDelayUsesPCMDuration(t *testing.T) {
 	}
 	if got := audioDriverPacketDelay(make([]byte, 640)); got != defaultAudioFrameDelay {
 		t.Fatalf("expected small PCM packet delay to keep frame minimum, got %s", got)
+	}
+}
+
+func TestSendPCMStreamReconnectsAndReplaysAudio(t *testing.T) {
+	upgrader := websocket.Upgrader{}
+	var mu sync.Mutex
+	starts := 0
+	statusesByConnection := map[int][]int{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		conn, err := upgrader.Upgrade(w, req, nil)
+		if err != nil {
+			t.Errorf("upgrade failed: %v", err)
+			return
+		}
+		defer conn.Close()
+
+		mu.Lock()
+		starts++
+		connIndex := starts
+		mu.Unlock()
+
+		for {
+			var packet interactTestPacket
+			if err := conn.ReadJSON(&packet); err != nil {
+				return
+			}
+			switch packet.Header.Ctrl {
+			case "start":
+				writeInteractStartResponse(t, conn, packet.Header.RequestID, connIndex)
+			case "audio_driver":
+				mu.Lock()
+				statusesByConnection[connIndex] = append(statusesByConnection[connIndex], packet.Payload.Audio.Status)
+				mu.Unlock()
+				if connIndex == 1 {
+					_ = conn.Close()
+					return
+				}
+				if packet.Payload.Audio.Status == 2 {
+					writeInteractDriverDone(t, conn, packet.Header.RequestID)
+				}
+			case "stop":
+				writeInteractStopResponse(t, conn, packet.Header.RequestID)
+				return
+			default:
+				t.Errorf("unexpected ctrl %q", packet.Header.Ctrl)
+				return
+			}
+		}
+	}))
+	defer server.Close()
+
+	session := startTestSession(t, server.URL)
+	chunks := make(chan []byte, 1)
+	chunks <- make([]byte, 640)
+	close(chunks)
+	if err := session.SendPCMStream(context.Background(), chunks); err != nil {
+		t.Fatalf("SendPCMStream failed: %v", err)
+	}
+	if got := session.StreamURL(); got != "https://example.test/live/avatar-2.flv" {
+		t.Fatalf("expected stream URL to update after reconnect, got %q", got)
+	}
+	if err := session.Stop(context.Background()); err != nil {
+		t.Fatalf("Stop failed: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if starts != 2 {
+		t.Fatalf("expected initial connection plus one reconnect, got %d", starts)
+	}
+	if got := fmt.Sprint(statusesByConnection[2]); got != "[0 2]" {
+		t.Fatalf("expected replayed audio and final status on reconnected session, got %s", got)
+	}
+}
+
+func TestSendPCMStreamReturnsReconnectExhaustedAfterThreeFailedReconnects(t *testing.T) {
+	upgrader := websocket.Upgrader{}
+	var mu sync.Mutex
+	connections := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		conn, err := upgrader.Upgrade(w, req, nil)
+		if err != nil {
+			t.Errorf("upgrade failed: %v", err)
+			return
+		}
+		defer conn.Close()
+
+		mu.Lock()
+		connections++
+		connIndex := connections
+		mu.Unlock()
+		if connIndex > 1 {
+			return
+		}
+
+		for {
+			var packet interactTestPacket
+			if err := conn.ReadJSON(&packet); err != nil {
+				return
+			}
+			switch packet.Header.Ctrl {
+			case "start":
+				writeInteractStartResponse(t, conn, packet.Header.RequestID, connIndex)
+			case "audio_driver":
+				_ = conn.Close()
+				return
+			default:
+				t.Errorf("unexpected ctrl %q", packet.Header.Ctrl)
+				return
+			}
+		}
+	}))
+	defer server.Close()
+
+	session := startTestSession(t, server.URL)
+	chunks := make(chan []byte, 1)
+	chunks <- make([]byte, 640)
+	close(chunks)
+	err := session.SendPCMStream(context.Background(), chunks)
+	if !errors.Is(err, ErrReconnectExhausted) {
+		t.Fatalf("expected ErrReconnectExhausted, got %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if connections != defaultReconnectMax+1 {
+		t.Fatalf("expected initial connection plus %d reconnect attempts, got %d", defaultReconnectMax, connections)
+	}
+}
+
+func startTestSession(t *testing.T, httpURL string) *Session {
+	t.Helper()
+	wsURL := "ws" + strings.TrimPrefix(httpURL, "http") + defaultInteractPath
+	client := &Client{
+		appID:       "app-id",
+		apiKey:      "api-key",
+		apiSecret:   "api-secret",
+		interactURL: wsURL,
+		dialer:      websocket.DefaultDialer,
+	}
+	session, err := client.Start(context.Background(), &character.XunfeiAvatar{
+		AvatarID: "avatar-1",
+		SceneID:  "scene-1",
+		VCN:      "vcn-1",
+		Protocol: "flv",
+		Width:    720,
+		Height:   1280,
+	})
+	if err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	return session
+}
+
+func writeInteractStartResponse(t *testing.T, conn *websocket.Conn, requestID string, index int) {
+	t.Helper()
+	if err := conn.WriteJSON(map[string]any{
+		"header": map[string]any{
+			"code":    0,
+			"message": "success",
+			"session": fmt.Sprintf("xf-session-%d", index),
+			"sid":     fmt.Sprintf("xf-sid-%d", index),
+			"status":  0,
+		},
+		"payload": map[string]any{
+			"avatar": map[string]any{
+				"request_id": requestID,
+				"event_type": "stream_info",
+				"stream_url": fmt.Sprintf("https://example.test/live/avatar-%d.flv", index),
+			},
+		},
+	}); err != nil {
+		t.Errorf("write start response failed: %v", err)
+	}
+}
+
+func writeInteractDriverDone(t *testing.T, conn *websocket.Conn, requestID string) {
+	t.Helper()
+	if err := conn.WriteJSON(map[string]any{
+		"header": map[string]any{"code": 0, "message": "success", "sid": "xf-sid"},
+		"payload": map[string]any{
+			"avatar": map[string]any{
+				"request_id": requestID,
+				"period":     "driver",
+				"event_type": "driver_status",
+				"vmr_status": "2",
+			},
+		},
+	}); err != nil {
+		t.Errorf("write driver done failed: %v", err)
+	}
+}
+
+func writeInteractStopResponse(t *testing.T, conn *websocket.Conn, requestID string) {
+	t.Helper()
+	if err := conn.WriteJSON(map[string]any{
+		"header": map[string]any{"code": 0, "message": "success", "sid": "xf-sid", "session": "xf-session"},
+		"payload": map[string]any{
+			"avatar": map[string]any{
+				"request_id": requestID,
+				"period":     "gloable",
+				"event_type": "stop",
+			},
+		},
+	}); err != nil {
+		t.Errorf("write stop response failed: %v", err)
 	}
 }
 

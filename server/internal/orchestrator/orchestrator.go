@@ -34,6 +34,7 @@ import (
 	ragstore "github.com/cyberverse/server/internal/rag"
 	"github.com/cyberverse/server/internal/recording"
 	"github.com/cyberverse/server/internal/ws"
+	"github.com/cyberverse/server/internal/xunfeiavatar"
 	"github.com/pion/interceptor/pkg/cc"
 	"github.com/pion/webrtc/v4"
 	"google.golang.org/grpc/codes"
@@ -2939,7 +2940,7 @@ func (o *Orchestrator) runStandardPipeline(ctx context.Context, session *Session
 				return
 			}
 			log.Printf("Xunfei avatar audio stream error for session %s: %v", sessionID, err)
-			o.broadcastError(sessionID, "Xunfei avatar audio render failed")
+			o.handleXunfeiAvatarAudioError(sessionID, err)
 			return
 		}
 		return
@@ -4036,7 +4037,7 @@ func (o *Orchestrator) runVoiceLLMPipelineWithConfig(
 				}
 				if session.IsCurrentPipeline(pipelineSeq) {
 					if o.isXunfeiAvatarSession(session) {
-						o.broadcastError(sessionID, "Xunfei avatar audio render failed")
+						o.handleXunfeiAvatarAudioError(sessionID, result.err)
 					} else {
 						o.broadcastError(sessionID, "Avatar generation failed")
 					}
@@ -4565,6 +4566,18 @@ func (o *Orchestrator) broadcastError(sessionID, message string) {
 	})
 }
 
+func (o *Orchestrator) handleXunfeiAvatarAudioError(sessionID string, err error) {
+	o.broadcastError(sessionID, "Xunfei avatar audio render failed")
+	if !errors.Is(err, xunfeiavatar.ErrReconnectExhausted) {
+		return
+	}
+	if o == nil || o.sessionMgr == nil {
+		return
+	}
+	log.Printf("Xunfei avatar reconnect exhausted; stopping session %s", sessionID)
+	go o.sessionMgr.Delete(sessionID)
+}
+
 func (o *Orchestrator) SpeakAssistantText(ctx context.Context, sessionID, text string, persist bool) error {
 	if o == nil {
 		return errors.New("orchestrator is nil")
@@ -4662,7 +4675,7 @@ func (o *Orchestrator) runAssistantSpeechPipeline(ctx context.Context, session *
 				return
 			}
 			log.Printf("Xunfei avatar assistant speech error for session %s: %v", sessionID, err)
-			o.broadcastError(sessionID, "Xunfei avatar audio render failed")
+			o.handleXunfeiAvatarAudioError(sessionID, err)
 		}
 		return
 	}

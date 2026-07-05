@@ -6,8 +6,11 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -23,16 +26,43 @@ import (
 )
 
 const (
-	defaultInteractURL     = "wss://avatar.cn-huadong-1.xf-yun.com/v1/interact"
-	defaultInteractPath    = "/v1/interact"
-	defaultPingInterval    = 10 * time.Second
-	defaultDriverDoneWait  = 5 * time.Second
-	defaultAudioFrameDelay = 40 * time.Millisecond
-	defaultAudioSampleRate = 16000
-	defaultAudioMaxBytes   = 10 * 1024
-	defaultAudioEndBytes   = 1024
-	defaultVCN             = "x7_yachen_pro"
+	defaultInteractURL      = "wss://avatar.cn-huadong-1.xf-yun.com/v1/interact"
+	defaultInteractPath     = "/v1/interact"
+	defaultPingInterval     = 10 * time.Second
+	defaultDriverDoneWait   = 5 * time.Second
+	defaultReconnectWait    = 300 * time.Millisecond
+	defaultReconnectMax     = 3
+	defaultReconnectTimeout = 10 * time.Second
+	defaultAudioFrameDelay  = 40 * time.Millisecond
+	defaultAudioSampleRate  = 16000
+	defaultAudioMaxBytes    = 10 * 1024
+	defaultAudioEndBytes    = 1024
+	defaultVCN              = "x7_yachen_pro"
 )
+
+var ErrReconnectExhausted = errors.New("Xunfei avatar reconnect attempts exhausted")
+
+type ReconnectExhaustedError struct {
+	Attempts int
+	Err      error
+}
+
+func (e *ReconnectExhaustedError) Error() string {
+	if e == nil {
+		return ErrReconnectExhausted.Error()
+	}
+	if e.Err == nil {
+		return fmt.Sprintf("%s after %d attempts", ErrReconnectExhausted, e.Attempts)
+	}
+	return fmt.Sprintf("%s after %d attempts: %v", ErrReconnectExhausted, e.Attempts, e.Err)
+}
+
+func (e *ReconnectExhaustedError) Unwrap() []error {
+	if e == nil || e.Err == nil {
+		return []error{ErrReconnectExhausted}
+	}
+	return []error{ErrReconnectExhausted, e.Err}
+}
 
 type Client struct {
 	appID       string
@@ -59,6 +89,7 @@ type Session struct {
 	avatarID   string
 	avatarName string
 	vcn        string
+	cfg        *character.XunfeiAvatar
 
 	responses  chan responseEnvelope
 	readErrCh  chan error
@@ -159,57 +190,14 @@ func (c *Client) Start(ctx context.Context, cfg *character.XunfeiAvatar) (*Sessi
 	}
 	normalized.VCN = firstNonEmpty(normalized.VCN, defaultAvatarVCN())
 
-	signed, err := signedURL(c.interactURL, c.apiKey, c.apiSecret, http.MethodGet, time.Now().UTC())
+	conn, resp, streamURL, err := c.openSession(ctx, sceneID, normalized)
 	if err != nil {
 		return nil, err
-	}
-	dialer := c.dialer
-	if dialer == nil {
-		dialer = websocket.DefaultDialer
-	}
-	conn, _, err := dialer.DialContext(ctx, signed, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	if deadline, ok := ctx.Deadline(); ok {
-		_ = conn.SetWriteDeadline(deadline)
-		_ = conn.SetReadDeadline(deadline)
-		defer func() {
-			_ = conn.SetWriteDeadline(time.Time{})
-			_ = conn.SetReadDeadline(time.Time{})
-		}()
-	}
-
-	requestID := uuid.NewString()
-	if err := conn.WriteJSON(c.startRequest(requestID, sceneID, normalized)); err != nil {
-		_ = conn.Close()
-		return nil, err
-	}
-
-	var resp responseEnvelope
-	if err := conn.ReadJSON(&resp); err != nil {
-		_ = conn.Close()
-		return nil, err
-	}
-	if err := responseError(resp, "start"); err != nil {
-		_ = conn.Close()
-		return nil, err
-	}
-	if strings.TrimSpace(resp.Header.Session) == "" {
-		_ = conn.Close()
-		return nil, fmt.Errorf("Xunfei avatar start response missing session")
-	}
-	streamURL := ""
-	if resp.Payload.Avatar != nil {
-		streamURL = strings.TrimSpace(resp.Payload.Avatar.StreamURL)
-	}
-	if streamURL == "" {
-		_ = conn.Close()
-		return nil, fmt.Errorf("Xunfei avatar start response missing stream_url")
 	}
 
 	pingCtx, cancel := context.WithCancel(context.Background())
+	responses := make(chan responseEnvelope, 256)
+	readErrCh := make(chan error, 1)
 	s := &Session{
 		client:     c,
 		conn:       conn,
@@ -226,13 +214,68 @@ func (c *Client) Start(ctx context.Context, cfg *character.XunfeiAvatar) (*Sessi
 		avatarID:   normalized.AvatarID,
 		avatarName: normalized.AvatarName,
 		vcn:        normalized.VCN,
-		responses:  make(chan responseEnvelope, 256),
-		readErrCh:  make(chan error, 1),
+		cfg:        normalized,
+		responses:  responses,
+		readErrCh:  readErrCh,
 		pingCancel: cancel,
 	}
-	go s.readLoop()
+	go s.readLoop(conn, responses, readErrCh)
 	go s.pingLoop(pingCtx)
 	return s, nil
+}
+
+func (c *Client) openSession(ctx context.Context, sceneID string, cfg *character.XunfeiAvatar) (*websocket.Conn, responseEnvelope, string, error) {
+	var zero responseEnvelope
+	signed, err := signedURL(c.interactURL, c.apiKey, c.apiSecret, http.MethodGet, time.Now().UTC())
+	if err != nil {
+		return nil, zero, "", err
+	}
+	dialer := c.dialer
+	if dialer == nil {
+		dialer = websocket.DefaultDialer
+	}
+	conn, _, err := dialer.DialContext(ctx, signed, nil)
+	if err != nil {
+		return nil, zero, "", err
+	}
+
+	if deadline, ok := ctx.Deadline(); ok {
+		_ = conn.SetWriteDeadline(deadline)
+		_ = conn.SetReadDeadline(deadline)
+		defer func() {
+			_ = conn.SetWriteDeadline(time.Time{})
+			_ = conn.SetReadDeadline(time.Time{})
+		}()
+	}
+
+	requestID := uuid.NewString()
+	if err := conn.WriteJSON(c.startRequest(requestID, sceneID, cfg)); err != nil {
+		_ = conn.Close()
+		return nil, zero, "", err
+	}
+
+	var resp responseEnvelope
+	if err := conn.ReadJSON(&resp); err != nil {
+		_ = conn.Close()
+		return nil, zero, "", err
+	}
+	if err := responseError(resp, "start"); err != nil {
+		_ = conn.Close()
+		return nil, zero, "", err
+	}
+	if strings.TrimSpace(resp.Header.Session) == "" {
+		_ = conn.Close()
+		return nil, zero, "", fmt.Errorf("Xunfei avatar start response missing session")
+	}
+	streamURL := ""
+	if resp.Payload.Avatar != nil {
+		streamURL = strings.TrimSpace(resp.Payload.Avatar.StreamURL)
+	}
+	if streamURL == "" {
+		_ = conn.Close()
+		return nil, zero, "", fmt.Errorf("Xunfei avatar start response missing stream_url")
+	}
+	return conn, resp, streamURL, nil
 }
 
 func (c *Client) startRequest(requestID, sceneID string, cfg *character.XunfeiAvatar) map[string]any {
@@ -314,6 +357,38 @@ func (s *Session) SendPCMStream(ctx context.Context, chunks <-chan []byte) (err 
 		return fmt.Errorf("Xunfei avatar session is stopped")
 	}
 
+	var replayPCM []byte
+	reconnectAttempts := 0
+	collect := func(pcm []byte) {
+		replayPCM = append(replayPCM, pcm...)
+	}
+	for {
+		err = s.sendPCMStreamAttemptLocked(ctx, chunks, replayPCM, collect)
+		if err == nil {
+			return nil
+		}
+		for {
+			if ctx.Err() != nil || s.stopped.Load() || !isRetryableXunfeiAvatarError(err) {
+				return err
+			}
+			if reconnectAttempts >= defaultReconnectMax {
+				return &ReconnectExhaustedError{Attempts: reconnectAttempts, Err: err}
+			}
+			reconnectAttempts++
+			log.Printf("Xunfei avatar audio_driver reconnect attempt=%d max=%d session=%s avatar_id=%s err=%v", reconnectAttempts, defaultReconnectMax, s.session, s.avatarID, err)
+			if reconnectErr := s.reconnectLocked(ctx, reconnectAttempts); reconnectErr != nil {
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
+				err = reconnectErr
+				continue
+			}
+			break
+		}
+	}
+}
+
+func (s *Session) sendPCMStreamAttemptLocked(ctx context.Context, chunks <-chan []byte, replayPCM []byte, collect func([]byte)) (err error) {
 	requestID := uuid.NewString()
 	startedAt := time.Now()
 	started := false
@@ -406,6 +481,41 @@ func (s *Session) SendPCMStream(ctx context.Context, chunks <-chan []byte) (err 
 		pending = nil
 		return nil
 	}
+	queuePCM := func(pcm []byte) error {
+		if len(pcm) == 0 {
+			return nil
+		}
+		sourceChunks++
+		sourceBytes += len(pcm)
+		for _, part := range splitChunks(pcm, defaultAudioMaxBytes) {
+			for len(part) > 0 {
+				space := defaultAudioMaxBytes - len(pending)
+				if space <= 0 {
+					if err := sendPending(); err != nil {
+						return err
+					}
+					continue
+				}
+				take := len(part)
+				if take > space {
+					take = space
+				}
+				pending = append(pending, part[:take]...)
+				part = part[take:]
+				if len(pending) >= defaultAudioMaxBytes {
+					if err := sendPending(); err != nil {
+						return err
+					}
+				}
+			}
+		}
+		return nil
+	}
+	if len(replayPCM) > 0 {
+		if err := queuePCM(replayPCM); err != nil {
+			return err
+		}
+	}
 	for {
 		select {
 		case <-ctx.Done():
@@ -423,32 +533,87 @@ func (s *Session) SendPCMStream(ctx context.Context, chunks <-chan []byte) (err 
 			if len(pcm) == 0 {
 				continue
 			}
-			sourceChunks++
-			sourceBytes += len(pcm)
-			for _, part := range splitChunks(pcm, defaultAudioMaxBytes) {
-				for len(part) > 0 {
-					space := defaultAudioMaxBytes - len(pending)
-					if space <= 0 {
-						if err := sendPending(); err != nil {
-							return err
-						}
-						continue
-					}
-					take := len(part)
-					if take > space {
-						take = space
-					}
-					pending = append(pending, part[:take]...)
-					part = part[take:]
-					if len(pending) >= defaultAudioMaxBytes {
-						if err := sendPending(); err != nil {
-							return err
-						}
-					}
-				}
+			if collect != nil {
+				collect(pcm)
+			}
+			if err := queuePCM(pcm); err != nil {
+				return err
 			}
 		}
 	}
+}
+
+func (s *Session) reconnectLocked(ctx context.Context, attempt int) error {
+	if s == nil || s.client == nil || s.cfg == nil {
+		return fmt.Errorf("Xunfei avatar session is not configured")
+	}
+	if s.stopped.Load() {
+		return fmt.Errorf("Xunfei avatar session is stopped")
+	}
+	if s.conn != nil {
+		_ = s.conn.Close()
+	}
+	wait := defaultReconnectWait * time.Duration(attempt)
+	if wait > 0 {
+		timer := time.NewTimer(wait)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+
+	reconnectCtx, cancel := context.WithTimeout(ctx, defaultReconnectTimeout)
+	defer cancel()
+	conn, resp, streamURL, err := s.client.openSession(reconnectCtx, s.sceneID, s.cfg)
+	if err != nil {
+		return err
+	}
+	responses := make(chan responseEnvelope, 256)
+	readErrCh := make(chan error, 1)
+	s.conn = conn
+	s.session = resp.Header.Session
+	s.sid = resp.Header.SID
+	s.streamURL = streamURL
+	s.responses = responses
+	s.readErrCh = readErrCh
+	go s.readLoop(conn, responses, readErrCh)
+	log.Printf("Xunfei avatar reconnected session=%s avatar_id=%s attempt=%d stream_url=%s", s.session, s.avatarID, attempt, s.streamURL)
+	return nil
+}
+
+func isRetryableXunfeiAvatarError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	if errors.Is(err, io.EOF) {
+		return true
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	for _, token := range []string{
+		"broken pipe",
+		"connection closed",
+		"connection refused",
+		"connection reset",
+		"i/o timeout",
+		"unexpected eof",
+		"use of closed network connection",
+		"websocket: close",
+		"xunfei avatar connection closed",
+	} {
+		if strings.Contains(msg, token) {
+			return true
+		}
+	}
+	return false
 }
 
 func audioDriverPacketDelay(pcm []byte) time.Duration {
@@ -535,22 +700,22 @@ func (s *Session) pingLoop(ctx context.Context) {
 	}
 }
 
-func (s *Session) readLoop() {
+func (s *Session) readLoop(conn *websocket.Conn, responses chan<- responseEnvelope, readErrCh chan<- error) {
 	for {
 		var resp responseEnvelope
-		if err := s.conn.ReadJSON(&resp); err != nil {
+		if err := conn.ReadJSON(&resp); err != nil {
 			if s.stopped.Load() && isNormalWebSocketClose(err) {
 				err = nil
 			}
 			select {
-			case s.readErrCh <- err:
+			case readErrCh <- err:
 			default:
 			}
-			close(s.responses)
+			close(responses)
 			return
 		}
 		select {
-		case s.responses <- resp:
+		case responses <- resp:
 		default:
 		}
 	}
