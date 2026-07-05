@@ -1,5 +1,5 @@
 <h1 align="center">CyberVerse</h1>
-<p align="center"><em>CyberVerse は、オープンソースの<strong>リアルタイム音声・映像 Agent プラットフォーム</strong>です。WebRTC、ペルソナ記憶、ツール、RAG、任意のデジタルヒューマン映像機能を基盤に、音声インタラクションを中心とした AI Agent の構築を支援します。</em></p>
+<p align="center"><em>CyberVerse は、オープンソースの<strong>リアルタイムデジタルヒューマン Agent フレームワーク</strong>です。WebRTC、ペルソナ記憶、ツール、RAG、任意のデジタルヒューマン映像機能を基盤に、音声インタラクションを中心とした AI Agent の構築を支援します。</em></p>
 
 <p align="center">
   <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md"><strong>日本語</strong></a> · <a href="README.ko.md">한국어</a>
@@ -58,17 +58,20 @@
 
 ## 特長
 
-### リアルタイム音声 Agent
+### リアルタイムデジタルヒューマン映像インタラクション
 
-音声は CyberVerse のデフォルトのインタラクション方式であり、低遅延で長時間続けられるリアルタイム会話を想定しています。ユーザーはマイクで Agent と継続的に会話し、モデルの発話中にいつでも割り込み、同じ会話ターンで音声とテキスト入力を組み合わせられます。
+写真 1 枚だけで、リアルタイムにビデオ通話できるデジタルヒューマンを作成できます。ユーザーは人間とのビデオ通話のように自然に会話でき、デジタルヒューマンの発話中でもいつでも割り込み、全二重のリアルタイム対話を体験できます。
 
-各キャラクターには声、ウェルカムメッセージ、人格設定を個別に構成でき、音声クローンにも対応します。会話中のセッション中断と再開をサポートし、`inference.avatar.enabled` を `false` にすると、プラットフォームは純粋な音声モードで動作し、音声ストリームだけを配信します。ローカル Avatar GPU は不要で、コアの音声体験は変わりません。
+CyberVerse は、ローカルのデジタルヒューマンモデルである FlashHead と LiveAct を統合し、Baidu Xiling、Xunfei Digital Human などのクラウド型デジタルヒューマンにも対応します。現在のオープンソースおよび商用デジタルヒューマンの中でも優れた選択肢をカバーしています。
 
-### WebRTC による音声・映像
-
-セッション経路は WebRTC 上に構築され、デプロイ環境に応じて直接 P2P（組み込み TURN / NAT トラバーサル）または LiveKit SFU モードを選択できます。低遅延と複雑なネットワーク環境での接続性を両立します。
-
-standard モードと対応する omni セッションでは、Agent がユーザーのカメラ映像や画面共有フレームを視覚入力として受け取ることもできます。純粋なテキスト文脈に限定されず、「聞ける、見られる」対面型のインタラクションを実現します。
+| モデル | 品質 | GPU | 枚数 | 解像度 | FPS | リアルタイム可？ |
+|-------|---------|-----|-------|------------|-----|------------|
+| FlashHead 1.3B | Pro | RTX 5090 | 2 | 512×512 | 25+ | ✅ はい |
+| FlashHead 1.3B | Pro | RTX 5090 | 1 | 464x464 | 20 | ✅ はい |
+| LiveAct 18B | — | RTX PRO 6000 | 2 | 320×480 | 20 | ✅ はい |
+| LiveAct 18B | — | RTX PRO 6000 | 1 | 256×417 | 20 | ✅ はい |
+| Baidu Xiling Digital Human | クラウド API | ローカル GPU 不要 | — | プラットフォーム/アバター設定による | プラットフォーム応答 | ✅ はい |
+| Xunfei Digital Human | クラウド API | ローカル GPU 不要 | — | プラットフォーム/アバター設定による | プラットフォーム応答 | ✅ はい |
 
 ### PersonaAgent + SubAgent タスク
 
@@ -79,10 +82,6 @@ CyberVerse は multi-agent アーキテクチャを採用しています。Perso
 ### キャラクター記憶と RAG
 
 各キャラクターの会話履歴はローカルディスクに永続化され、会話へ戻ると自動的に読み込まれるため、セッションをまたいだ連続性を保てます。キャラクター用の知識ベース、文書、人物の経歴素材も取り込めます。システムはそれらをインデックス化し、検索拡張生成に利用することで、回答をキャラクターの背景や設定により近づけます。
-
-### 任意のデジタルヒューマン映像
-
-GPU リソースがあり Agent を「見える」存在にしたい場合は、avatar inference を有効にします。1 枚のキャラクター参照画像だけで、FlashHead や LiveAct などの設定可能なバックエンドを通じて、リアルタイム表情アニメーション、リップシンク、キャッシュ済み待機動画の再生を駆動できます。GPU がない場合や、まだ映像が不要な場合は、この機能を無効にすれば純粋な音声 Agent に戻せます。同じキャラクターとペルソナ設定はそのまま使えます。
 
 ### プラグインベースのスタック
 
@@ -302,6 +301,19 @@ inference:
 次に `config/avatar_models/flash_head.yaml` や `config/avatar_models/live_act.yaml` を編集します。
 これらのモデルパラメータは Web UI からも調整でき、対応するモデル設定ファイルへ書き戻されます。
 
+### Baidu Xiling H5 デジタルヒューマン
+
+Baidu Xiling を使用する場合は、認証情報を `config/env` に置きます:
+
+```env
+BAIDU_XILING_APP_ID="your-app-id"
+BAIDU_XILING_APP_KEY="your-app-key"
+# Optional when the figure needs a fixed camera.
+BAIDU_XILING_CAMERA_ID="0"
+```
+
+Baidu Xiling は Web UI でキャラクターごとに選択します。これはローカルの avatar inference モデルではないため、`inference.avatar.default` に設定しないでください。CyberVerse は引き続き orchestrator で ASR、LLM、TTS、履歴コンテキスト、キャラクター設定を処理し、16 kHz、16-bit、モノラル PCM 音声チャンクをブラウザへ送信します。フロントエンドは Baidu H5 iframe を埋め込み、公式の `sendAudioData` / `AUDIO_STREAM_RENDER` メッセージ形式でデジタルヒューマンを駆動します。
+
 ### LiveAct FP4 GEMM（任意）
 
 FP4 アクセラレーションには [LightX2V](https://github.com/ModelTC/LightX2V) から `lightx2v_kernel` をビルド・インストールする必要があります。ビルド環境では **PyTorch 2.7+** と CUTLASS のソースを用意してください。
@@ -363,27 +375,6 @@ wget -O flash_attn-2.8.1+cu12torch2.8cxx11abiTRUE-cp312-cp312-linux_x86_64.whl \
 pip install flash_attn-2.8.1+cu12torch2.8cxx11abiTRUE-cp312-cp312-linux_x86_64.whl
 ```
 
-### Avatar ハードウェアベンチマーク
-
-リアルタイムのデジタルヒューマン映像には GPU アクセラレーションが必要です。以下は FlashHead と LiveAct アバターモデルのベンチマークです。
-
-| モデル | 品質 | GPU | 枚数 | 解像度 | FPS | リアルタイム可？ |
-|-------|---------|-----|-------|------------|-----|------------|
-| FlashHead 1.3B | Pro | RTX 5090 | 2 | 512×512 | 25+ | ✅ はい |
-| FlashHead 1.3B | Pro | RTX 5090 | 1 | 464x464 | 20 | ✅ はい |
-| FlashHead 1.3B | Pro | RTX PRO 6000 | 1 | 512×512 | 20 | ✅ はい |
-| FlashHead 1.3B | Pro | RTX 4090 | 1 | 512×512 | ~10.8 | ❌ いいえ |
-| FlashHead 1.3B | Lite | RTX 4090 | 1 | 512×512 | 25+ | ✅ はい |
-| LiveAct 18B | — | RTX PRO 6000 | 2 | 320×480 | 20 | ✅ はい |
-| LiveAct 18B | — | RTX PRO 6000 | 1 | 256×417 | 20 | ✅ はい |
-
-> **Pro** は画質優先、**Lite** は速度優先です。表は代表的な **画質と計算資源のバランス** の例です。余裕があれば画質を上げられ、不足なら解像度や **Pro** / **Lite** など画質側の設定を下げてリアルタイム性を確保してください。
-
-avatar inference が有効な場合、`make inference` は `config/cyberverse.yaml` の `inference.avatar.default` を読み取り、現在の推論プロセスではその 1 つのアバターモデルだけを初期化します。次のログが出るまで待ちます。
-
-- `Active avatar model initialized: <model_name>`
-- `CyberVerse Inference Server started on port 50051`
-
 ## よくある質問 — 自己チェック（QA）
 
 アバター映像が**カクつく、止まる、音声より遅れる**ときは、まず推論が再生に追いついているかを確認してください。
@@ -425,9 +416,9 @@ INFO:...FlashHead video chunk generated: chunk_index=1 num_frames=33 512x512 fps
 
 1. **解像度または画質を下げる** — 例：LiveAct の `infer_params.size`、FlashHead の `height` / `width`、または FlashHead を `model_type: "lite"` にする。
 2. **計算資源を増やす** — GPU を増やす（`runtime.world_size`、`cuda_visible_devices`）、対応環境では FP8/FP4 GEMM やコンパイル加速を有効化、より高速な GPU を使う。
-3. **上のベンチマーク表に合わせる** — [Avatar ハードウェアベンチマーク](#avatar-ハードウェアベンチマーク) で **リアルタイム？** が「はい」の解像度・FPS・GPU の組み合わせを選ぶ。
+3. **上の対応表に合わせる** — ローカル GPU モデルでは、[リアルタイムデジタルヒューマン映像インタラクション](#リアルタイムデジタルヒューマン映像インタラクション) の **リアルタイム可？** が「はい」の解像度・FPS・GPU の組み合わせを選ぶ。
 
-純粋な音声モード（`inference.avatar.enabled: false`）では Avatar の RTP は関係しません。音声のみでカクつく場合は、ネットワーク/WebRTC や上流の音声遅延を疑い、[リモートアクセスメモ](#リモートアクセスメモ) を参照してください。
+純粋な音声モード（`inference.avatar.enabled: false`）では Avatar の RTP は関係しません。Baidu Xiling と Xunfei Digital Human はクラウド API のため、ローカル Avatar RTP も使用しません。音声のみでカクつく場合は、ネットワーク/WebRTC や上流の音声遅延を疑い、[リモートアクセスメモ](#リモートアクセスメモ) を参照してください。
 
 ## リモートアクセスメモ
 

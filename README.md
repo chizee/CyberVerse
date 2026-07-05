@@ -59,17 +59,20 @@
 
 ## Features
 
-### Realtime Voice Agent
+### Realtime Digital Human Video Interaction
 
-Voice is CyberVerse's default interaction mode, designed for low-latency realtime conversations that can run for long sessions. Users can continuously talk with an Agent through a microphone, interrupt the model while it is speaking, and mix voice and text input in the same conversation turn.
+With just one photo, you can create a digital human ready for real-time video conversation. Users can interact as naturally as a video call with a real person, interrupting or speaking over the digital human at any time for a full-duplex realtime experience.
 
-Each character can have its own voice, welcome message, and personality configuration, and voice cloning is supported. Conversations support pause and resume; when `inference.avatar.enabled` is set to `false`, the platform runs in pure voice mode, publishes only the audio stream, requires no local Avatar GPU, and keeps the core voice experience intact.
+CyberVerse integrates the local FlashHead and LiveAct digital-human models, and supports cloud digital-human offerings such as Baidu Xiling and Xunfei Digital Human, covering a strong set of current open-source and commercial digital-human options.
 
-### Audio/Video over WebRTC
-
-The session pipeline is built on WebRTC and can choose direct P2P (embedded TURN / NAT traversal) or LiveKit SFU mode based on the deployment scenario, balancing low latency with connectivity in complex network environments.
-
-In standard mode and supported omni sessions, the Agent can also receive user camera frames or screen-sharing frames as visual input, enabling face-to-face interaction that can listen and see instead of being limited to plain text context.
+| Model | Quality | GPU | Count | Resolution | FPS | Real-time? |
+|-------|---------|-----|-------|------------|-----|------------|
+| FlashHead 1.3B | Pro | RTX 5090 | 2 | 512×512 | 25+ | ✅ Yes |
+| FlashHead 1.3B | Pro | RTX 5090 | 1 | 464x464 | 20 | ✅ Yes |
+| LiveAct 18B | — | RTX PRO 6000 | 2 | 320×480 | 20 | ✅ Yes |
+| LiveAct 18B | — | RTX PRO 6000 | 1 | 256×417 | 20 | ✅ Yes |
+| Baidu Xiling Digital Human | Cloud API | No local GPU required | — | Provider/figure config | Provider response | ✅ Yes |
+| Xunfei Digital Human | Cloud API | No local GPU required | — | Provider/figure config | Provider response | ✅ Yes |
 
 ### PersonaAgent + SubAgent Tasks
 
@@ -80,10 +83,6 @@ This keeps complex tasks from slowing down voice turns. Users can keep speaking,
 ### Character Memory and RAG
 
 Each character's conversation history is persisted to local disk and automatically loaded when you re-enter a conversation, preserving continuity across sessions. You can also import knowledge bases, documents, and biographical material for a character; the system indexes them for retrieval-augmented generation, making answers better aligned with the character's background and persona.
-
-### Optional Digital Human Video
-
-When you have GPU resources and want the Agent to be visible, enable avatar inference: a single character reference image can drive realtime facial animation, lip-sync, and cached idle video playback through configurable backends such as FlashHead and LiveAct. If you do not have a GPU or do not need video yet, disable it to return to a pure voice Agent; the same character and persona configuration continues to work.
 
 ### Plugin-Based Stack
 
@@ -384,27 +383,6 @@ wget -O flash_attn-2.8.1+cu12torch2.8cxx11abiTRUE-cp312-cp312-linux_x86_64.whl \
 pip install flash_attn-2.8.1+cu12torch2.8cxx11abiTRUE-cp312-cp312-linux_x86_64.whl
 ```
 
-### Avatar Hardware Benchmarks
-
-Realtime digital-human video requires GPU acceleration. Below are benchmarks for FlashHead and LiveAct avatar models:
-
-| Model | Quality | GPU | Count | Resolution | FPS | Real-time? |
-|-------|---------|-----|-------|------------|-----|------------|
-| FlashHead 1.3B | Pro | RTX 5090 | 2 | 512×512 | 25+ | ✅ Yes |
-| FlashHead 1.3B | Pro | RTX 5090 | 1 | 464x464 | 20 | ✅ Yes |
-| FlashHead 1.3B | Pro | RTX PRO 6000 | 1 | 512×512 | 20 | ✅ Yes |
-| FlashHead 1.3B | Pro | RTX 4090 | 1 | 512×512 | ~10.8 | ❌ No |
-| FlashHead 1.3B | Lite | RTX 4090 | 1 | 512×512 | 25+ | ✅ Yes |
-| LiveAct 18B | — | RTX PRO 6000 | 2 | 320×480 | 20 | ✅ Yes |
-| LiveAct 18B | — | RTX PRO 6000 | 1 | 256×417 | 20 | ✅ Yes |
-
-> **Pro** favors visual quality; **Lite** favors speed. The table reflects typical **quality–compute** balances — more GPU headroom lets you push higher quality; tighter hardware calls for lower settings (resolution, **Pro** vs **Lite**, etc.) to stay realtime.
-
-When avatar inference is enabled, `make inference` reads `inference.avatar.default` from `config/cyberverse.yaml` and initializes exactly that one avatar model in the current inference process. Wait until you see:
-
-- `Active avatar model initialized: <model_name>`
-- `CyberVerse Inference Server started on port 50051`
-
 ## QA — Self-Check
 
 Use this section when avatar video **stutters, freezes, or falls behind** audio. The first step is to confirm whether inference can keep up with playback.
@@ -446,9 +424,9 @@ Here RTP = `2.100 / (33/20) ≈ 1.27` — also above realtime.
 
 1. **Lower resolution or quality** — e.g. LiveAct `infer_params.size`, FlashHead `height` / `width`, or FlashHead `model_type: "lite"` instead of `"pro"`.
 2. **Add compute** — more GPUs (`runtime.world_size`, `cuda_visible_devices`), enable FP8/FP4 GEMM or compile options where supported, or use a faster GPU.
-3. **Match the benchmark table** — pick a resolution/FPS/GPU row marked **Yes** under **Real-time?** in [Avatar Hardware Benchmarks](#avatar-hardware-benchmarks) above.
+3. **Match the support list** — for local GPU models, pick a resolution/FPS/GPU row marked **Yes** under **Real-time?** in [Realtime Digital Human Video Interaction](#realtime-digital-human-video-interaction) above.
 
-Pure voice mode (`inference.avatar.enabled: false`) does not use avatar RTP; stutter there is usually network/WebRTC or upstream voice latency — see [Remote Access Notes](#remote-access-notes).
+Pure voice mode (`inference.avatar.enabled: false`) does not use avatar RTP. Baidu Xiling and Xunfei digital humans are cloud APIs and do not use local avatar RTP either; stutter there is usually network/WebRTC or upstream voice latency — see [Remote Access Notes](#remote-access-notes).
 
 ## Remote Access Notes
 

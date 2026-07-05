@@ -58,17 +58,21 @@
 
 ## 功能特性
 
-### 实时语音 Agent
+### 实时数字人视频交互
 
-语音是 CyberVerse 的默认交互方式，面向低延迟、可长时间进行的实时对话。用户可以通过麦克风与 Agent 连续交流，在模型说话时随时打断，也可以在同一轮会话中混合使用语音和文本输入。
+只需一张照片，即可创建可实时视频通话的数字人。用户可以像与真人视频通话一样自然交流，在数字人说话时随时插话、打断，获得全双工的实时互动体验。
 
-每个角色可单独配置声线、欢迎语与人格设定，并支持语音克隆。对话过程中支持会话中断与恢复；将 `inference.avatar.enabled` 设为 `false` 时，平台会以纯语音模式运行，只发布音频流，无需本地 Avatar GPU，核心语音体验保持不变。
+CyberVerse 已集成 FlashHead、LiveAct 两个本地数字人模型，并支持百度曦灵、讯飞数字人等云端数字人方案，覆盖当前表现优秀的开源与商用数字人路线。
 
-### 基于 WebRTC 的音视频
+| 模型 | 档位 | GPU | 数量 | 分辨率 | FPS | 实时运行？ |
+|-------|---------|-----|-------|------------|-----|------------|
+| FlashHead 1.3B | Pro | RTX 5090 | 2 | 512×512 | 25+ | ✅ 是 |
+| FlashHead 1.3B | Pro | RTX 5090 | 1 | 464x464 | 20 | ✅ 是 |
+| LiveAct 18B | — | RTX PRO 6000 | 2 | 320×480 | 20 | ✅ 是 |
+| LiveAct 18B | — | RTX PRO 6000 | 1 | 256×417 | 20 | ✅ 是 |
+| 百度曦灵数字人 | 云端 API | 无需本地 GPU | — | 由平台/形象配置决定 | 由平台返回 | ✅ 是 |
+| 讯飞数字人 | 云端 API | 无需本地 GPU | — | 由平台/形象配置决定 | 由平台返回 | ✅ 是 |
 
-会话链路基于 WebRTC 构建，可按部署场景选择直连 P2P（内嵌 TURN / NAT 穿透）或 LiveKit SFU 模式，兼顾低延迟与复杂网络环境下的连通性。
-
-在 standard 模式及受支持的 omni 会话中，Agent 还可以接收用户摄像头画面或屏幕共享帧作为视觉输入，实现「能听、能看」的面对面式交互，而不局限于纯文本上下文。
 
 ### PersonaAgent + SubAgent 任务
 
@@ -79,10 +83,6 @@ CyberVerse 采用multi-agent架构：PersonaAgent 始终驻守前台，负责与
 ### 角色记忆与 RAG
 
 每个角色的会话历史会持久化到本地磁盘，重新进入对话时会自动加载，保证跨会话的连续感。你还可以为角色导入知识库、文档和人物生平类素材，系统会建立索引并用于检索增强生成，让回答更贴合角色背景与设定。
-
-### 可选数字人视频
-
-当你具备 GPU 资源并希望 Agent「可见」时，可开启 avatar inference：只需一张角色参考图，即可通过 FlashHead、LiveAct 等可配置后端驱动实时面部动画、口型同步，并在不说话时播放缓存的待机视频。没有 GPU 或暂时不需要视频时，关闭该能力即可退回纯语音 Agent，同一套角色与人设配置仍可继续使用。
 
 ### 插件化技术栈
 
@@ -380,27 +380,6 @@ wget -O flash_attn-2.8.1+cu12torch2.8cxx11abiTRUE-cp312-cp312-linux_x86_64.whl \
 pip install flash_attn-2.8.1+cu12torch2.8cxx11abiTRUE-cp312-cp312-linux_x86_64.whl
 ```
 
-### Avatar 硬件基准
-
-实时数字人视频需要 GPU 加速。下表为 FlashHead 和 LiveAct Avatar 模型的性能基准：
-
-| 模型 | 档位 | GPU | 数量 | 分辨率 | FPS | 实时运行？ |
-|-------|---------|-----|-------|------------|-----|------------|
-| FlashHead 1.3B | Pro | RTX 5090 | 2 | 512×512 | 25+ | ✅ 是 |
-| FlashHead 1.3B | Pro | RTX 5090 | 1 | 464x464 | 20 | ✅ 是 |
-| FlashHead 1.3B | Pro | RTX PRO 6000 | 1 | 512×512 | 20 | ✅ 是 |
-| FlashHead 1.3B | Pro | RTX 4090 | 1 | 512×512 | ~10.8 | ❌ 否 |
-| FlashHead 1.3B | Lite | RTX 4090 | 1 | 512×512 | 25+ | ✅ 是 |
-| LiveAct 18B | — | RTX PRO 6000 | 2 | 320×480 | 20 | ✅ 是 |
-| LiveAct 18B | — | RTX PRO 6000 | 1 | 256×417 | 20 | ✅ 是 |
-
-> **Pro** 偏重画质；**Lite** 偏重速度。表中配置体现画质与算力的大致平衡：算力更充裕时可进一步提高画质；算力不足时请降低画质相关选项（分辨率、Pro / Lite 档位等）以保持实时流畅。
-
-Avatar inference 启用后，`make inference` 会读取 `config/cyberverse.yaml` 中的 `inference.avatar.default`，并且只在当前推理进程中初始化该一个 Avatar 模型。等待日志中出现：
-
-- `Active avatar model initialized: <model_name>`
-- `CyberVerse Inference Server started on port 50051`
-
 ## 常见问题自检（QA）
 
 当数字人视频出现**卡顿、画面冻结或明显落后于语音**时，可先按下面步骤自检，确认推理是否跟得上播放。
@@ -442,9 +421,9 @@ INFO:...FlashHead video chunk generated: chunk_index=1 num_frames=33 512x512 fps
 
 1. **降低分辨率或画质档位** — 例如调低 LiveAct 的 `infer_params.size`、FlashHead 的 `height` / `width`，或将 FlashHead 设为 `model_type: "lite"`。
 2. **增加算力** — 增加 GPU（`runtime.world_size`、`cuda_visible_devices`），在支持时开启 FP8/FP4 GEMM 或编译加速，或换更快的显卡。
-3. **对照上方基准表** — 选择 [Avatar 硬件基准](#avatar-硬件基准) 中 **实时运行？** 为「是」的分辨率、FPS 与 GPU 组合。
+3. **对照上方支持列表** — 本地 GPU 模型请选择 [实时数字人视频交互](#实时数字人视频交互) 中 **实时运行？** 为「是」的分辨率、FPS 与 GPU 组合。
 
-纯语音模式（`inference.avatar.enabled: false`）不涉及 Avatar RTP；若仅语音卡顿，多为网络/WebRTC 或上游语音链路问题，可参考 [远程访问说明](#远程访问说明)。
+纯语音模式（`inference.avatar.enabled: false`）不涉及 Avatar RTP；百度曦灵和讯飞数字人是云端 API，也不使用本地 Avatar RTP。若仅语音卡顿，多为网络/WebRTC 或上游语音链路问题，可参考 [远程访问说明](#远程访问说明)。
 
 ## 远程访问说明
 

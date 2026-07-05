@@ -47,6 +47,7 @@
 
 ## 当前 Operations 文档
 
+- [CyberVerse AutoDL 镜像使用说明](operations/autodl-image-usage.md)
 - [www.cyberverse.cc 域名部署](operations/www-cyberverse-cc-domain-deployment.md)
 
 ## feature 文档命名建议
