@@ -10,7 +10,13 @@ openai_realtime:
     output_sample_rate: 24000
     input_audio_format: "audio/pcm"
     output_audio_format: "audio/pcm"
-    vad_type: "semantic_vad"
+    input_transcription_model: "gpt-realtime-whisper"
+    vad_type: "server_vad"
+    vad_threshold: 0.5
+    vad_prefix_padding_ms: 300
+    vad_silence_duration_ms: 500
+    vad_create_response: true
+    vad_interrupt_response: true
     session_schema: "openai_realtime_current"
     proxy: "${OPENAI_PROXY}"
     websocket_compression: null

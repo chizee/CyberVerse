@@ -39,6 +39,13 @@ class OpenAIRealtimeCompatiblePlugin(VoiceLLMPlugin):
         self.vad_type: str | None = "server_vad"
         self.vad_threshold = 0.85
         self.vad_silence_duration_ms = 800
+        self.vad_prefix_padding_ms = 300
+        self.vad_create_response = True
+        self.vad_interrupt_response = True
+        self.vad_eagerness = ""
+        self.input_transcription_model = ""
+        self.input_transcription_language = ""
+        self.input_transcription_prompt = ""
         self.reasoning_effort = ""
         self.session_schema = "legacy"
         self.session_audio_schema = "nested"
@@ -68,6 +75,27 @@ class OpenAIRealtimeCompatiblePlugin(VoiceLLMPlugin):
         self.vad_threshold = float(params.get("vad_threshold", self.vad_threshold))
         self.vad_silence_duration_ms = int(
             params.get("vad_silence_duration_ms", self.vad_silence_duration_ms)
+        )
+        self.vad_prefix_padding_ms = int(
+            params.get("vad_prefix_padding_ms", self.vad_prefix_padding_ms)
+        )
+        self.vad_create_response = self._bool(
+            params.get("vad_create_response"),
+            self.vad_create_response,
+        )
+        self.vad_interrupt_response = self._bool(
+            params.get("vad_interrupt_response"),
+            self.vad_interrupt_response,
+        )
+        self.vad_eagerness = str(params.get("vad_eagerness") or self.vad_eagerness)
+        self.input_transcription_model = str(
+            params.get("input_transcription_model") or self.input_transcription_model
+        )
+        self.input_transcription_language = str(
+            params.get("input_transcription_language") or self.input_transcription_language
+        )
+        self.input_transcription_prompt = str(
+            params.get("input_transcription_prompt") or self.input_transcription_prompt
         )
         self.reasoning_effort = str(params.get("reasoning_effort") or self.reasoning_effort)
         self.session_schema = str(params.get("session_schema") or self.session_schema)
@@ -305,12 +333,20 @@ class OpenAIRealtimeCompatiblePlugin(VoiceLLMPlugin):
                     continue
 
                 if event_type in {
+                    "conversation.item.input_audio_transcription.delta",
                     "conversation.item.input_audio_transcription.completed",
                     "conversation.item.input_audio_transcription.updated",
                 }:
                     transcript = str(event.get("transcript") or "")
                     if not transcript:
                         transcript = str(event.get("delta") or "")
+                    if event_type == "conversation.item.input_audio_transcription.delta":
+                        if transcript:
+                            turn_state.ensure_turn()
+                            turn_state.user_text += transcript
+                        continue
+                    if not transcript:
+                        transcript = turn_state.user_text
                     if transcript:
                         turn_state.ensure_turn()
                         await output_queue.put(
@@ -320,6 +356,19 @@ class OpenAIRealtimeCompatiblePlugin(VoiceLLMPlugin):
                                 reply_id=turn_state.reply_id,
                             )
                         )
+                    continue
+
+                if event_type == "conversation.item.input_audio_transcription.failed":
+                    logger.warning(
+                        "%s input audio transcription failed session=%s fields=%s",
+                        self.provider_label,
+                        session_id or self.provider_label,
+                        json.dumps(
+                            self._server_event_log_fields(event),
+                            ensure_ascii=False,
+                            sort_keys=True,
+                        ),
+                    )
                     continue
 
                 if event_type in {"response.output_audio_transcript.delta", "response.audio_transcript.delta"}:
@@ -425,10 +474,13 @@ class OpenAIRealtimeCompatiblePlugin(VoiceLLMPlugin):
         audio_input: dict[str, Any] = {
             "format": {"type": self.input_audio_format, "rate": self.input_sample_rate},
         }
+        transcription = self._input_transcription_payload()
+        if transcription is not None:
+            audio_input["transcription"] = transcription
         if self.vad_type is None:
             audio_input["turn_detection"] = None
         else:
-            audio_input["turn_detection"] = {"type": self.vad_type}
+            audio_input["turn_detection"] = self._openai_current_turn_detection_payload()
 
         payload: dict[str, Any] = {
             "type": "realtime",
@@ -445,6 +497,33 @@ class OpenAIRealtimeCompatiblePlugin(VoiceLLMPlugin):
         }
         if self.reasoning_effort:
             payload["reasoning"] = {"effort": self.reasoning_effort}
+        return payload
+
+    def _input_transcription_payload(self) -> dict[str, Any] | None:
+        model = self.input_transcription_model.strip()
+        if not model:
+            return None
+        payload: dict[str, Any] = {"model": model}
+        language = self.input_transcription_language.strip()
+        if language:
+            payload["language"] = language
+        prompt = self.input_transcription_prompt.strip()
+        if prompt:
+            payload["prompt"] = prompt
+        return payload
+
+    def _openai_current_turn_detection_payload(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "type": self.vad_type,
+            "create_response": self.vad_create_response,
+            "interrupt_response": self.vad_interrupt_response,
+        }
+        if self.vad_type == "server_vad":
+            payload["threshold"] = self.vad_threshold
+            payload["prefix_padding_ms"] = self.vad_prefix_padding_ms
+            payload["silence_duration_ms"] = self.vad_silence_duration_ms
+        if self.vad_type == "semantic_vad" and self.vad_eagerness.strip():
+            payload["eagerness"] = self.vad_eagerness.strip()
         return payload
 
     def _response_payload(self) -> dict[str, Any]:
@@ -548,6 +627,19 @@ class OpenAIRealtimeCompatiblePlugin(VoiceLLMPlugin):
             return None
         return text
 
+    @staticmethod
+    def _bool(value: Any, default: bool) -> bool:
+        if value is None:
+            return default
+        if isinstance(value, bool):
+            return value
+        text = str(value).strip().lower()
+        if text in {"1", "true", "yes", "on"}:
+            return True
+        if text in {"0", "false", "no", "off"}:
+            return False
+        return default
+
     @classmethod
     def _server_event_log_fields(cls, event: dict[str, Any]) -> dict[str, Any]:
         event_type = str(event.get("type") or "")
@@ -624,6 +716,7 @@ class _RealtimeTurnState:
     turn_index: int = 0
     question_id: str = ""
     reply_id: str = ""
+    user_text: str = ""
     assistant_text: str = ""
     has_audio: bool = False
 
@@ -636,6 +729,7 @@ class _RealtimeTurnState:
         timestamp = int(time.time() * 1000)
         self.question_id = f"{self.session_id}_q_{self.turn_index}_{timestamp}"
         self.reply_id = ""
+        self.user_text = ""
         self.assistant_text = ""
         self.has_audio = False
 
@@ -646,5 +740,6 @@ class _RealtimeTurnState:
     def reset(self) -> None:
         self.question_id = ""
         self.reply_id = ""
+        self.user_text = ""
         self.assistant_text = ""
         self.has_audio = False

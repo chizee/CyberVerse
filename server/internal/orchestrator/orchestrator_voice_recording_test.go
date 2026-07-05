@@ -1,6 +1,7 @@
 package orchestrator
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"os"
@@ -107,6 +108,47 @@ func (f *voiceRecordingInferenceStub) ConverseStream(context.Context, <-chan inf
 func (f *voiceRecordingInferenceStub) Interrupt(context.Context, string) error { return nil }
 func (f *voiceRecordingInferenceStub) Close() error                            { return nil }
 
+type voiceInputCaptureInferenceStub struct {
+	*voiceRecordingInferenceStub
+	configs chan inference.VoiceLLMSessionConfig
+	inputs  chan inference.VoiceLLMInputEvent
+}
+
+func newVoiceInputCaptureInferenceStub() *voiceInputCaptureInferenceStub {
+	return &voiceInputCaptureInferenceStub{
+		voiceRecordingInferenceStub: newVoiceRecordingInferenceStub(),
+		configs:                     make(chan inference.VoiceLLMSessionConfig, 1),
+		inputs:                      make(chan inference.VoiceLLMInputEvent, 1),
+	}
+}
+
+func (f *voiceInputCaptureInferenceStub) ConverseStream(
+	ctx context.Context,
+	inputCh <-chan inference.VoiceLLMInputEvent,
+	config inference.VoiceLLMSessionConfig,
+) (<-chan *pb.VoiceLLMOutput, <-chan error) {
+	close(f.started)
+	f.configs <- config
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case input, ok := <-inputCh:
+				if !ok {
+					return
+				}
+				if len(input.Audio) == 0 && input.Text == "" && input.Image == nil {
+					continue
+				}
+				f.inputs <- input
+				return
+			}
+		}
+	}()
+	return f.outputs, f.errs
+}
+
 func newVoiceRecordingHarness(t *testing.T) (*Orchestrator, *Session, *character.Store, *voiceRecordingInferenceStub) {
 	t.Helper()
 
@@ -136,6 +178,73 @@ func newVoiceRecordingHarness(t *testing.T) (*Orchestrator, *Session, *character
 	orch := New(inf, nil, sessionMgr, recorder, charStore)
 
 	return orch, session, charStore, inf
+}
+
+func TestHandleAudioStreamForOpenAIRealtimeForwardsMicPCMToVoiceLLM(t *testing.T) {
+	root := t.TempDir()
+	charStore, err := character.NewStore(filepath.Join(root, "characters"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	char, err := charStore.Create(&character.Character{
+		Name:          "GPT Runtime",
+		VoiceProvider: "openai_realtime",
+		VoiceType:     "marin",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sessionMgr := NewSessionManager(4)
+	t.Cleanup(sessionMgr.Stop)
+	session, err := sessionMgr.Create("session-openai-realtime", ModeOmni, char.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	inf := newVoiceInputCaptureInferenceStub()
+	orch := New(inf, nil, sessionMgr, nil, charStore)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	audioCh := make(chan []byte, 1)
+
+	if err := orch.HandleAudioStream(ctx, session.ID, audioCh); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case <-inf.started:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for OpenAI realtime voice stream start")
+	}
+
+	select {
+	case cfg := <-inf.configs:
+		if cfg.Provider != "openai_realtime" {
+			t.Fatalf("expected openai_realtime provider, got %q", cfg.Provider)
+		}
+		if cfg.Voice != "marin" {
+			t.Fatalf("expected marin voice, got %q", cfg.Voice)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for OpenAI realtime voice config")
+	}
+
+	wantPCM := []byte{1, 0, 2, 0, 3, 0, 4, 0}
+	audioCh <- wantPCM
+
+	select {
+	case got := <-inf.inputs:
+		if !bytes.Equal(got.Audio, wantPCM) {
+			t.Fatalf("expected mic PCM %v, got %v", wantPCM, got.Audio)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for mic PCM to reach OpenAI realtime voice stream")
+	}
+
+	close(inf.outputs)
+	close(inf.errs)
+	session.WaitPipelineDone(time.Second)
 }
 
 func waitForFile(t *testing.T, path string) []byte {
@@ -354,6 +463,84 @@ func TestVoiceTurnDropsUnkeyedStaleFinalAfterBargeIn(t *testing.T) {
 	}
 	if got := string(waitForFile(t, filepath.Join(sessionDir, "turn2.txt"))); got != "第二轮回答" {
 		t.Fatalf("unexpected turn2 transcript: %q", got)
+	}
+}
+
+func TestVoiceTurnCancelsActiveAvatarOnBargeIn(t *testing.T) {
+	orch, session, _, inf := newVoiceRecordingHarness(t)
+
+	if err := orch.HandleAudioStream(context.Background(), session.ID, make(chan []byte)); err != nil {
+		t.Fatal(err)
+	}
+	<-inf.started
+
+	inf.outputs <- &pb.VoiceLLMOutput{UserTranscript: "第一问", QuestionId: "q1", ReplyId: "r1"}
+	inf.outputs <- &pb.VoiceLLMOutput{
+		Audio:      &pb.AudioChunk{Data: []byte{1, 0, 2, 0}, SampleRate: 24000, Channels: 1, Format: "pcm_s16le"},
+		Transcript: "正在回答",
+		QuestionId: "q1",
+		ReplyId:    "r1",
+	}
+	<-inf.avatarStarted
+
+	inf.outputs <- &pb.VoiceLLMOutput{BargeIn: true, QuestionId: "q2", ReplyId: "r2"}
+	select {
+	case <-inf.avatarDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected active avatar worker to be cancelled after barge-in")
+	}
+
+	inf.outputs <- &pb.VoiceLLMOutput{UserTranscript: "第二问", QuestionId: "q2", ReplyId: "r2"}
+	inf.outputs <- &pb.VoiceLLMOutput{Transcript: "第二轮回答", IsFinal: true, QuestionId: "q2", ReplyId: "r2"}
+	close(inf.outputs)
+	close(inf.errs)
+	session.WaitPipelineDone(2 * time.Second)
+
+	history := session.HistorySnapshot()
+	if len(history) != 3 {
+		t.Fatalf("expected two users and one assistant after barge-in, got %+v", history)
+	}
+	if history[2].Role != "assistant" || history[2].Content != "第二轮回答" {
+		t.Fatalf("unexpected assistant history after barge-in: %+v", history)
+	}
+}
+
+func TestVoiceTurnKeepsEarlyAssistantAudioWhenUserTranscriptArrivesLate(t *testing.T) {
+	orch, session, _, inf := newVoiceRecordingHarness(t)
+
+	if err := orch.HandleAudioStream(context.Background(), session.ID, make(chan []byte)); err != nil {
+		t.Fatal(err)
+	}
+	<-inf.started
+
+	inf.outputs <- &pb.VoiceLLMOutput{BargeIn: true, QuestionId: "q1", ReplyId: "r1"}
+	inf.outputs <- &pb.VoiceLLMOutput{
+		Audio:      &pb.AudioChunk{Data: []byte{1, 0, 2, 0}, SampleRate: 24000, Channels: 1, Format: "pcm_s16le"},
+		Transcript: "早到回答",
+		QuestionId: "q1",
+		ReplyId:    "r1",
+	}
+	select {
+	case <-inf.avatarStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected early assistant audio to start the current voice turn")
+	}
+
+	inf.outputs <- &pb.VoiceLLMOutput{UserTranscript: "用户问题", QuestionId: "q1", ReplyId: "r1"}
+	close(inf.avatarRelease)
+	close(inf.outputs)
+	close(inf.errs)
+	session.WaitPipelineDone(2 * time.Second)
+
+	history := session.HistorySnapshot()
+	if len(history) != 2 {
+		t.Fatalf("expected one user and one assistant message, got %+v", history)
+	}
+	if history[0].Role != "user" || history[0].Content != "用户问题" {
+		t.Fatalf("late user transcript was not attached to current turn: %+v", history)
+	}
+	if history[1].Role != "assistant" || history[1].Content != "早到回答" {
+		t.Fatalf("early assistant response was not preserved: %+v", history)
 	}
 }
 

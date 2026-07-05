@@ -226,6 +226,7 @@ type voicePipelineTurn struct {
 	recAudioBuf         []byte
 	recAudioSR          int
 	historySaved        bool
+	userTranscriptSaved bool
 	conversationSaved   bool
 	transcriptSaved     bool
 	rawAudioSaved       bool
@@ -3639,6 +3640,44 @@ func (o *Orchestrator) runVoiceLLMPipelineWithConfig(
 		return ""
 	}
 
+	turnMatchesOutput := func(turn *voicePipelineTurn, questionID, replyID string) bool {
+		if turn == nil {
+			return false
+		}
+		matched := false
+		if questionID != "" {
+			if turn.questionID != "" && turn.questionID != questionID {
+				return false
+			}
+			matched = true
+		}
+		if replyID != "" {
+			if turn.replyID != "" && turn.replyID != replyID {
+				return false
+			}
+			matched = true
+		}
+		return matched || (turn.questionID == "" && turn.replyID == "")
+	}
+
+	saveUserTranscript := func(turn *voicePipelineTurn, text string) {
+		if turn == nil || turn.userTranscriptSaved || strings.TrimSpace(text) == "" {
+			return
+		}
+		if turn.userFinalAt.IsZero() {
+			turn.userFinalAt = time.Now()
+		}
+		session.AddMessage(ChatMessage{Role: "user", Content: text, TurnSeq: turn.seq})
+		o.broadcastJSON(sessionID, map[string]any{
+			"type":     "transcript",
+			"text":     text,
+			"is_final": true,
+			"speaker":  "user",
+			"turn_seq": turn.seq,
+		})
+		turn.userTranscriptSaved = true
+	}
+
 	startAvatarWorker := func(turn *voicePipelineTurn) {
 		if turn == nil || turn.aborted || turn.avatarStarted {
 			return
@@ -4060,10 +4099,10 @@ func (o *Orchestrator) runVoiceLLMPipelineWithConfig(
 			}
 
 			if currentTurn != nil {
-				if outputQuestionID != "" {
+				if outputQuestionID != "" && (currentTurn.questionID == "" || currentTurn.questionID == outputQuestionID) {
 					currentTurn.questionID = outputQuestionID
 				}
-				if outputReplyID != "" {
+				if outputReplyID != "" && (currentTurn.replyID == "" || currentTurn.replyID == outputReplyID) {
 					currentTurn.replyID = outputReplyID
 				}
 			} else {
@@ -4091,38 +4130,45 @@ func (o *Orchestrator) runVoiceLLMPipelineWithConfig(
 						continue
 					}
 				} else {
-					if currentTurn != nil {
-						abortTurn(currentTurn, true)
-						currentTurn = nil
-						currentTurnDone = nil
-						pendingAssistantMustMatchKey = true
+					if currentTurn != nil && turnMatchesOutput(currentTurn, outputQuestionID, outputReplyID) {
+						saveUserTranscript(currentTurn, userText)
+						if !voiceOutputHasAssistantContent(output) && !voiceOutputIsFinal(output) {
+							continue
+						}
+					} else {
+						if currentTurn != nil {
+							abortTurn(currentTurn, true)
+							currentTurn = nil
+							currentTurnDone = nil
+							pendingAssistantMustMatchKey = true
+						}
+						if outputQuestionID != "" {
+							pendingQuestionID = outputQuestionID
+						}
+						if outputReplyID != "" {
+							pendingReplyID = outputReplyID
+						}
+						seq := reservePendingTurn()
+						pendingTurnAssistantReady = true
+						pendingUserFinalAt = time.Now()
+						logVoiceTrace(
+							"go_user_transcript_received",
+							sessionID,
+							seq,
+							pendingReplyID,
+							pendingQuestionID,
+							pendingUserFinalAt,
+						)
+						session.AddMessage(ChatMessage{Role: "user", Content: userText, TurnSeq: seq})
+						o.broadcastJSON(sessionID, map[string]any{
+							"type":     "transcript",
+							"text":     userText,
+							"is_final": true,
+							"speaker":  "user",
+							"turn_seq": seq,
+						})
+						broadcastProcessing(seq)
 					}
-					if outputQuestionID != "" {
-						pendingQuestionID = outputQuestionID
-					}
-					if outputReplyID != "" {
-						pendingReplyID = outputReplyID
-					}
-					seq := reservePendingTurn()
-					pendingTurnAssistantReady = true
-					pendingUserFinalAt = time.Now()
-					logVoiceTrace(
-						"go_user_transcript_received",
-						sessionID,
-						seq,
-						pendingReplyID,
-						pendingQuestionID,
-						pendingUserFinalAt,
-					)
-					session.AddMessage(ChatMessage{Role: "user", Content: userText, TurnSeq: seq})
-					o.broadcastJSON(sessionID, map[string]any{
-						"type":     "transcript",
-						"text":     userText,
-						"is_final": true,
-						"speaker":  "user",
-						"turn_seq": seq,
-					})
-					broadcastProcessing(seq)
 				}
 			}
 
@@ -4137,7 +4183,7 @@ func (o *Orchestrator) runVoiceLLMPipelineWithConfig(
 			}
 
 			if pendingTurnSeq != 0 && !pendingTurnAssistantReady && currentTurn == nil && voiceOutputHasAssistantContent(output) {
-				continue
+				pendingTurnAssistantReady = true
 			}
 			if pendingTurnSeq != 0 && pendingTurnAssistantReady && pendingAssistantMustMatchKey && currentTurn == nil && voiceOutputHasAssistantContent(output) {
 				if expectedKey := pendingTurnKey(); expectedKey != "" && turnKey != expectedKey {
