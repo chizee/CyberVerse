@@ -10,7 +10,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   renderFinished: [{ requestId: string }]
   renderError: [{ requestId: string; code?: number; body?: unknown }]
-  stateChanged: [{ rtcReady: boolean; wsReady: boolean }]
+  stateChanged: [{ rtcReady: boolean; wsReady: boolean; wsReadyState?: number }]
 }>()
 
 const iframeRef = ref<HTMLIFrameElement | null>(null)
@@ -106,8 +106,13 @@ function handleIframeMessage(event: MessageEvent) {
     return
   }
   if (type === 'wsState') {
-    wsReady.value = Number(content.readyState) === 1
-    emit('stateChanged', { rtcReady: rtcReady.value, wsReady: wsReady.value })
+    const readyState = Number(content.readyState)
+    wsReady.value = readyState === 1
+    emit('stateChanged', {
+      rtcReady: rtcReady.value,
+      wsReady: wsReady.value,
+      wsReadyState: Number.isFinite(readyState) ? readyState : undefined,
+    })
     flushPendingAudio()
     return
   }

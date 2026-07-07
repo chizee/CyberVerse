@@ -96,6 +96,36 @@ func TestCreateSession(t *testing.T) {
 	}
 }
 
+func TestCreateSessionLocalImageCharacterReturnsIdleImageURL(t *testing.T) {
+	r := newTestRouter()
+	char, err := r.charStore.Create(&character.Character{
+		Name:          "Local Image",
+		AvatarBackend: character.AvatarBackendLocalImage,
+		AvatarImage:   "/api/v1/characters/local/images/avatar.png",
+		VoiceType:     "温柔文雅",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	body := `{"mode":"omni","character_id":"` + char.ID + `"}`
+	req := httptest.NewRequest("POST", "/api/v1/sessions", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.Handler().ServeHTTP(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp CreateSessionResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.IdleImageURL != "/api/v1/characters/local/images/avatar.png" {
+		t.Fatalf("expected local avatar image as idle image, got %q", resp.IdleImageURL)
+	}
+}
+
 func TestCreateSessionAcceptsLegacyVoiceLLMMode(t *testing.T) {
 	r := newTestRouter()
 	req := httptest.NewRequest("POST", "/api/v1/sessions", strings.NewReader(`{"mode": "voice_llm"}`))

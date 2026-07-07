@@ -968,9 +968,10 @@ func TestCreateSessionXunfeiCharacterReturnsAvatarConfig(t *testing.T) {
 		Name:          "Xunfei Character",
 		AvatarBackend: character.AvatarBackendXunfei,
 		Xunfei: &character.XunfeiAvatar{
-			AvatarID: "avatar-1",
-			SceneID:  "scene-1",
-			VCN:      "vcn-1",
+			AvatarID:     "avatar-1",
+			SceneID:      "scene-1",
+			VCN:          "vcn-1",
+			ThumbnailURL: "https://example.com/xunfei-thumb.png",
 		},
 		VoiceType: "Momo",
 	})
@@ -1012,6 +1013,9 @@ func TestCreateSessionXunfeiCharacterReturnsAvatarConfig(t *testing.T) {
 	}
 	if resp.Xunfei.AudioSampleRate != 16000 || resp.Xunfei.AudioMaxPCMBytes != 10240 {
 		t.Fatalf("unexpected Xunfei audio limits: %+v", resp.Xunfei)
+	}
+	if resp.IdleImageURL != "https://example.com/xunfei-thumb.png" {
+		t.Fatalf("expected Xunfei thumbnail as standby image, got %q", resp.IdleImageURL)
 	}
 	if resp.AudioInput == nil || !resp.AudioInput.Enabled {
 		t.Fatalf("expected audio input to be enabled for Xunfei session, got %+v", resp.AudioInput)

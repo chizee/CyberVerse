@@ -28,6 +28,8 @@ const baiduPlayerRef = ref<InstanceType<typeof BaiduXilingPlayer> | null>(null)
 const xunfeiPlayerRef = ref<InstanceType<typeof XunfeiAvatarPlayer> | null>(null)
 const pendingBaiduAudioEvents: BaiduXilingAudioEvent[] = []
 const sessionVideoShellRef = ref<HTMLElement | null>(null)
+const avatarFallbackBadgeRef = ref<HTMLElement | null>(null)
+const avatarFallbackPopoverRef = ref<HTMLElement | null>(null)
 const visualPreviewShellRef = ref<HTMLElement | null>(null)
 const visualPreviewRef = ref<HTMLVideoElement | null>(null)
 const visualPreviewPosition = ref<{ x: number; y: number } | null>(null)
@@ -108,8 +110,18 @@ const toggleOutputMute = isDirectMode ? dp.toggleOutputMute : lk.toggleOutputMut
 const webrtcDisconnect = isDirectMode ? dp.disconnect : lk.disconnect
 const setAVSyncLoggingEnabled = isDirectMode ? dp.setAVSyncLoggingEnabled : lk.setAVSyncLoggingEnabled
 
+type BaiduXilingConnectionState = {
+  rtcReady: boolean
+  wsReady: boolean
+  wsReadyState?: number
+}
+
 const baiduOutputMuted = ref(false)
+const baiduXilingConnectionState = ref<BaiduXilingConnectionState>({ rtcReady: false, wsReady: false })
+const baiduAvatarError = ref('')
 const xunfeiConnectionState = ref({ streamReady: false, autoplayBlocked: false })
+const xunfeiAvatarError = ref('')
+const showAvatarFallbackDetails = ref(false)
 const outputMutedVisual = computed(() => isExternalAvatarSession.value ? baiduOutputMuted.value : isOutputMuted.value)
 const outputButtonTitle = computed(() => {
   if (isXunfeiSession.value && xunfeiConnectionState.value.autoplayBlocked) {
@@ -117,11 +129,29 @@ const outputButtonTitle = computed(() => {
   }
   return outputMutedVisual.value ? t('session.outputUnmute') : t('session.outputMute')
 })
+const baiduAvatarReady = computed(() =>
+  isBaiduXilingSession.value
+  && baiduXilingConnectionState.value.rtcReady
+  && baiduXilingConnectionState.value.wsReady
+  && !baiduAvatarError.value
+)
+const baiduVoiceFallbackActive = computed(() => isBaiduXilingSession.value && !!baiduAvatarError.value)
+const xunfeiVoiceFallbackActive = computed(() => isXunfeiSession.value && !!xunfeiAvatarError.value)
+const externalAvatarFallbackActive = computed(() => baiduVoiceFallbackActive.value || xunfeiVoiceFallbackActive.value)
+const baiduAvatarNotice = computed(() => {
+  if (!isBaiduXilingSession.value) return ''
+  if (baiduAvatarError.value) return baiduAvatarError.value
+  if (!baiduAvatarReady.value) return t('session.baiduConnecting')
+  return ''
+})
 const mediaConnected = computed(() => {
-  if (isBaiduXilingSession.value) return chatConnected.value && connectionState.value === 'connected'
+  if (isBaiduXilingSession.value) {
+    const voiceReady = !shouldUseMediaPeer.value || connectionState.value === 'connected'
+    return chatConnected.value && voiceReady && (baiduAvatarReady.value || baiduVoiceFallbackActive.value)
+  }
   if (isXunfeiSession.value) {
     return chatConnected.value
-      && xunfeiConnectionState.value.streamReady
+      && (xunfeiConnectionState.value.streamReady || xunfeiVoiceFallbackActive.value)
       && (!shouldUseMediaPeer.value || connectionState.value === 'connected')
   }
   if (!shouldUseMediaPeer.value) return chatConnected.value
@@ -161,6 +191,11 @@ const {
 } = useChat(() => sessionId.value)
 
 registerBaiduXilingAudioHandler((event) => {
+  if (baiduVoiceFallbackActive.value) {
+    void playBaiduVoiceFallbackEvent(event)
+    return
+  }
+  bufferBaiduVoiceFallbackEvent(event)
   const player = baiduPlayerRef.value
   if (!player) {
     pendingBaiduAudioEvents.push(event)
@@ -170,7 +205,7 @@ registerBaiduXilingAudioHandler((event) => {
 })
 
 watch(baiduPlayerRef, (player) => {
-  if (!player || pendingBaiduAudioEvents.length === 0) return
+  if (!player || baiduAvatarError.value || pendingBaiduAudioEvents.length === 0) return
   const events = pendingBaiduAudioEvents.splice(0)
   for (const event of events) {
     player.sendAudioEvent(event)
@@ -198,6 +233,8 @@ const visualPreviewStyle = computed(() => {
 
 const VISUAL_PREVIEW_MARGIN = 12
 const BAIDU_ACTIVE_SESSION_PREFIX = 'cyberverse.baidu_xiling.active.'
+const BAIDU_AVATAR_READY_TIMEOUT_MS = 15000
+const BAIDU_FALLBACK_AUDIO_SAMPLE_RATE = 16000
 
 type VisualPreviewDragState = {
   pointerId: number
@@ -218,6 +255,12 @@ type ChatSidebarResizeState = {
 }
 
 let chatSidebarResizeState: ChatSidebarResizeState | null = null
+let baiduAvatarReadyTimer: ReturnType<typeof window.setTimeout> | null = null
+const baiduVoiceFallbackEvents: BaiduXilingAudioEvent[] = []
+let baiduVoiceAudioContext: AudioContext | null = null
+let baiduVoiceGainNode: GainNode | null = null
+let baiduVoiceNextPlayAt = 0
+let baiduVoiceSources: AudioBufferSourceNode[] = []
 
 const chatSidebarStyle = computed<Record<string, string> | undefined>(() => {
   if (chatSidebarWidth.value === null) return undefined
@@ -236,8 +279,186 @@ watch([chatConnected, connectionState], ([chatReady, mediaState]) => {
   }
 })
 
+watch(baiduAvatarReady, (ready) => {
+  if (ready) {
+    clearBaiduAvatarReadyTimer()
+  }
+})
+
 function baiduActiveSessionKey(): string {
   return `${BAIDU_ACTIVE_SESSION_PREFIX}${characterId.value}`
+}
+
+function clearBaiduAvatarReadyTimer() {
+  if (!baiduAvatarReadyTimer) return
+  window.clearTimeout(baiduAvatarReadyTimer)
+  baiduAvatarReadyTimer = null
+}
+
+function markBaiduAvatarError(message: string) {
+  baiduAvatarError.value = message
+  pendingBaiduAudioEvents.splice(0)
+  clearBaiduAvatarReadyTimer()
+  void flushBaiduVoiceFallbackAudio()
+}
+
+function clearBaiduVoiceFallbackBuffer() {
+  baiduVoiceFallbackEvents.splice(0)
+}
+
+function bufferBaiduVoiceFallbackEvent(event: BaiduXilingAudioEvent) {
+  if (event.first) {
+    clearBaiduVoiceFallbackBuffer()
+  }
+  if (event.audio) {
+    baiduVoiceFallbackEvents.push(event)
+  }
+}
+
+function resetBaiduVoiceFallbackPlayback(closeContext = false) {
+  for (const source of baiduVoiceSources) {
+    try {
+      source.stop()
+    } catch {}
+  }
+  baiduVoiceSources = []
+  baiduVoiceNextPlayAt = 0
+  if (closeContext && baiduVoiceAudioContext) {
+    void baiduVoiceAudioContext.close()
+    baiduVoiceAudioContext = null
+    baiduVoiceGainNode = null
+  }
+}
+
+function ensureBaiduVoiceAudioContext(): AudioContext | null {
+  if (baiduVoiceAudioContext && baiduVoiceAudioContext.state !== 'closed') {
+    applyBaiduVoiceOutputMuted()
+    return baiduVoiceAudioContext
+  }
+  const AudioContextCtor = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+  if (!AudioContextCtor) return null
+  const ctx = new AudioContextCtor()
+  baiduVoiceAudioContext = ctx
+  baiduVoiceGainNode = ctx.createGain()
+  baiduVoiceGainNode.connect(ctx.destination)
+  applyBaiduVoiceOutputMuted()
+  return ctx
+}
+
+function applyBaiduVoiceOutputMuted() {
+  if (!baiduVoiceGainNode) return
+  baiduVoiceGainNode.gain.value = baiduOutputMuted.value ? 0 : 1
+}
+
+function decodeBase64PCM16(base64: string): Int16Array {
+  const binary = window.atob(base64)
+  const bytes = new Uint8Array(binary.length)
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i)
+  }
+  const length = Math.floor(bytes.byteLength / 2)
+  const pcm = new Int16Array(length)
+  const view = new DataView(bytes.buffer)
+  for (let i = 0; i < length; i++) {
+    pcm[i] = view.getInt16(i * 2, true)
+  }
+  return pcm
+}
+
+async function playBaiduVoiceFallbackEvent(event: BaiduXilingAudioEvent) {
+  if (event.first) {
+    resetBaiduVoiceFallbackPlayback(false)
+  }
+  if (!event.audio) return
+  const ctx = ensureBaiduVoiceAudioContext()
+  const output = baiduVoiceGainNode
+  if (!ctx || !output) return
+  if (ctx.state === 'suspended') {
+    await ctx.resume().catch(() => {})
+  }
+  const pcm = decodeBase64PCM16(event.audio)
+  if (pcm.length === 0) return
+  const sampleRate = baiduXilingConfig.value?.audio_sample_rate || BAIDU_FALLBACK_AUDIO_SAMPLE_RATE
+  const buffer = ctx.createBuffer(1, pcm.length, sampleRate)
+  const channel = buffer.getChannelData(0)
+  for (let i = 0; i < pcm.length; i++) {
+    channel[i] = Math.max(-1, Math.min(1, pcm[i] / 32768))
+  }
+  const source = ctx.createBufferSource()
+  source.buffer = buffer
+  source.connect(output)
+  const startAt = Math.max(ctx.currentTime + 0.02, baiduVoiceNextPlayAt || 0)
+  source.start(startAt)
+  baiduVoiceNextPlayAt = startAt + buffer.duration
+  baiduVoiceSources.push(source)
+  source.onended = () => {
+    baiduVoiceSources = baiduVoiceSources.filter(item => item !== source)
+  }
+}
+
+async function flushBaiduVoiceFallbackAudio() {
+  if (!baiduVoiceFallbackEvents.length) return
+  const events = baiduVoiceFallbackEvents.splice(0)
+  for (const event of events) {
+    await playBaiduVoiceFallbackEvent(event)
+  }
+}
+
+function armBaiduAvatarReadyTimer() {
+  clearBaiduAvatarReadyTimer()
+  if (!isBaiduXilingSession.value) return
+  baiduAvatarReadyTimer = window.setTimeout(() => {
+    if (!baiduAvatarReady.value) {
+      markBaiduAvatarError(t('session.baiduConnectionTimeout'))
+    }
+  }, BAIDU_AVATAR_READY_TIMEOUT_MS)
+}
+
+function readBaiduErrorDetail(body: unknown): string {
+  if (!body) return ''
+  if (typeof body === 'string') return body.trim()
+  if (typeof body !== 'object') return ''
+  const record = body as Record<string, unknown>
+  for (const key of ['message', 'msg', 'error', 'reason']) {
+    const value = record[key]
+    if (typeof value === 'string' && value.trim()) return value.trim()
+  }
+  return ''
+}
+
+function withBaiduErrorDetail(message: string, detail: string): string {
+  if (!detail) return message
+  return t('session.baiduErrorWithDetail', { message, detail })
+}
+
+function handleBaiduStateChanged(state: BaiduXilingConnectionState) {
+  baiduXilingConnectionState.value = state
+  if (state.rtcReady && state.wsReady) {
+    baiduAvatarError.value = ''
+    clearBaiduVoiceFallbackBuffer()
+    resetBaiduVoiceFallbackPlayback(true)
+    clearBaiduAvatarReadyTimer()
+    return
+  }
+  if (state.wsReadyState === WebSocket.CLOSED) {
+    markBaiduAvatarError(t('session.baiduConnectionClosed'))
+  }
+}
+
+function handleBaiduRenderError(payload: { code?: number; body?: unknown }) {
+  const detail = readBaiduErrorDetail(payload.body) || (payload.code ? `code=${payload.code}` : '')
+  markBaiduAvatarError(withBaiduErrorDetail(t('session.baiduRenderError'), detail))
+}
+
+function handleXunfeiStateChanged(state: { streamReady: boolean; autoplayBlocked: boolean }) {
+  xunfeiConnectionState.value = state
+  if (state.streamReady) {
+    xunfeiAvatarError.value = ''
+  }
+}
+
+function handleXunfeiRenderError(payload: { message?: string }) {
+  xunfeiAvatarError.value = payload.message || t('session.xunfeiRenderError')
 }
 
 function markBaiduSessionActive() {
@@ -468,6 +689,7 @@ watchEffect(() => {
 const launchIdleUrls = launchState.value?.idle_video_urls
 const launchIdleUrl = launchState.value?.idle_video_url || ''
 const idleImageUrl = ref(launchState.value?.idle_image_url || '')
+const voiceAgentVisualImage = computed(() => idleImageUrl.value.trim())
 if (idleStrategy.value === 'cached_video' && launchIdleUrls && launchIdleUrls.length > 0) {
   idleVideoUrls.value = launchIdleUrls
 } else if (idleStrategy.value === 'cached_video' && launchIdleUrl) {
@@ -531,6 +753,20 @@ const displayMode = computed<'webrtc' | 'standby' | 'placeholder'>(() => {
   }
   return result
 })
+const isLocalVoiceAgentVisualActive = computed(() =>
+  !isExternalAvatarSession.value
+  && (launchState.value?.avatar_enabled === false || displayMode.value === 'placeholder')
+)
+const shouldShowVoiceAgentVisual = computed(() =>
+  !!voiceAgentVisualImage.value && (isLocalVoiceAgentVisualActive.value || externalAvatarFallbackActive.value)
+)
+const shouldShowAvatarFallbackBadge = computed(() => externalAvatarFallbackActive.value && shouldShowVoiceAgentVisual.value)
+
+watch(shouldShowAvatarFallbackBadge, (visible) => {
+  if (!visible) {
+    showAvatarFallbackDetails.value = false
+  }
+})
 
 watchEffect(() => {
   setAVSyncLoggingEnabled(avatarStatus.value === 'speaking' && displayMode.value === 'webrtc')
@@ -541,6 +777,19 @@ watch(displayMode, (mode, previousMode) => {
   dp.requestMediaResetIfNeeded('standby')
 })
 
+function handleAvatarFallbackGlobalPointerDown(event: PointerEvent) {
+  if (!showAvatarFallbackDetails.value) return
+  const target = event.target
+  if (!(target instanceof Node)) {
+    showAvatarFallbackDetails.value = false
+    return
+  }
+  if (avatarFallbackBadgeRef.value?.contains(target) || avatarFallbackPopoverRef.value?.contains(target)) {
+    return
+  }
+  showAvatarFallbackDetails.value = false
+}
+
 // Auto-connect on mount using session params from query
 onMounted(async () => {
   if (queryLaunchState && Object.keys(route.query).length > 0) {
@@ -550,10 +799,12 @@ onMounted(async () => {
   if (isBaiduXilingSession.value) {
     window.addEventListener('storage', handleBaiduActiveSessionChange)
     markBaiduSessionActive()
+    armBaiduAvatarReadyTimer()
   }
 
   window.addEventListener('resize', keepVisualPreviewInBounds)
   window.addEventListener('resize', keepChatSidebarWidthInBounds)
+  window.addEventListener('pointerdown', handleAvatarFallbackGlobalPointerDown)
 
   const startedAt = Date.now()
 
@@ -597,9 +848,12 @@ onUnmounted(() => {
   stopVisualPreviewDragging()
   stopChatSidebarResize()
   clearBaiduSessionActive()
+  clearBaiduAvatarReadyTimer()
+  resetBaiduVoiceFallbackPlayback(true)
   window.removeEventListener('storage', handleBaiduActiveSessionChange)
   window.removeEventListener('resize', keepVisualPreviewInBounds)
   window.removeEventListener('resize', keepChatSidebarWidthInBounds)
+  window.removeEventListener('pointerdown', handleAvatarFallbackGlobalPointerDown)
   visualInput.stop(undefined, true)
 })
 
@@ -630,6 +884,10 @@ function toggleChatPanel() {
 async function handleOutputButtonClick() {
   if (isBaiduXilingSession.value) {
     baiduOutputMuted.value = !baiduOutputMuted.value
+    applyBaiduVoiceOutputMuted()
+    if (!baiduOutputMuted.value && baiduVoiceAudioContext?.state === 'suspended') {
+      await baiduVoiceAudioContext.resume().catch(() => {})
+    }
     baiduPlayerRef.value?.muteAudio(baiduOutputMuted.value)
     return
   }
@@ -666,13 +924,16 @@ function micDockBarHeight(level: number): string {
         ref="baiduPlayerRef"
         :config="baiduXilingConfig"
         class="w-full flex-1 min-h-0"
+        @state-changed="handleBaiduStateChanged"
+        @render-error="handleBaiduRenderError"
       />
       <XunfeiAvatarPlayer
         v-else-if="isXunfeiSession && xunfeiConfig"
         ref="xunfeiPlayerRef"
         :config="xunfeiConfig"
         class="w-full flex-1 min-h-0"
-        @state-changed="xunfeiConnectionState = $event"
+        @state-changed="handleXunfeiStateChanged"
+        @render-error="handleXunfeiRenderError"
       />
       <VideoPlayer
         v-else
@@ -684,6 +945,17 @@ function micDockBarHeight(level: number): string {
         class="w-full flex-1 min-h-0"
         @standby-failed="onStandbyMp4Failed"
       />
+
+      <div
+        v-if="shouldShowVoiceAgentVisual"
+        class="voice-agent-visual"
+        aria-hidden="true"
+      >
+        <img class="voice-agent-visual-bg" :src="voiceAgentVisualImage" alt="" />
+        <div class="voice-agent-portrait">
+          <img :src="voiceAgentVisualImage" alt="" />
+        </div>
+      </div>
 
       <!-- Back button (top-left, glass) -->
       <button @click="handleDisconnect"
@@ -699,6 +971,19 @@ function micDockBarHeight(level: number): string {
         <span v-if="debugState.jitter.stutterCount > 0" class="ml-1 text-yellow-400">
           {{ debugState.jitter.stutterCount }} stutters
         </span>
+      </button>
+
+      <button
+        v-if="shouldShowAvatarFallbackBadge"
+        ref="avatarFallbackBadgeRef"
+        type="button"
+        class="avatar-fallback-badge"
+        :title="t('session.avatarFallbackDetail')"
+        :aria-label="t('session.avatarFallbackTitle')"
+        :aria-expanded="showAvatarFallbackDetails"
+        @click="showAvatarFallbackDetails = !showAvatarFallbackDetails"
+      >
+        <span>Voice Agent</span>
       </button>
 
       <button
@@ -785,6 +1070,14 @@ function micDockBarHeight(level: number): string {
       </div>
 
       <div
+        v-if="baiduAvatarNotice && !shouldShowVoiceAgentVisual"
+        class="baidu-avatar-status"
+        :class="{ error: !!baiduAvatarError }"
+      >
+        {{ baiduAvatarNotice }}
+      </div>
+
+      <div
         v-if="hasVisualInputCapability && visualInput.error.value"
         class="absolute bottom-24 left-1/2 -translate-x-1/2 z-10 max-w-[min(90vw,28rem)] px-3 py-2 bg-black/80 border border-red-400/30 text-red-100 text-xs rounded-cv-md"
       >
@@ -819,6 +1112,17 @@ function micDockBarHeight(level: number): string {
             <path d="M4 4l8 8M12 4l-8 8" stroke-linecap="round" />
           </svg>
         </button>
+      </div>
+
+      <div
+        v-if="shouldShowAvatarFallbackBadge && showAvatarFallbackDetails"
+        ref="avatarFallbackPopoverRef"
+        class="avatar-fallback-popover"
+        role="status"
+        @click="showAvatarFallbackDetails = false"
+      >
+        <div class="avatar-fallback-popover-title">{{ t('session.avatarFallbackTitle') }}</div>
+        <div class="avatar-fallback-popover-detail">{{ t('session.avatarFallbackDetail') }}</div>
       </div>
 
       <!-- Control bar (bottom center, floating) -->
@@ -978,6 +1282,77 @@ function micDockBarHeight(level: number): string {
   background: #000;
 }
 
+.voice-agent-visual {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  padding: 64px clamp(16px, 3vw, 48px) 124px;
+  background: #05070a;
+  pointer-events: none;
+}
+
+.voice-agent-visual::before,
+.voice-agent-visual::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 1;
+  width: clamp(76px, 18vw, 260px);
+  border-color: rgba(255, 255, 255, 0.12);
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.025));
+  backdrop-filter: blur(22px) saturate(1.18);
+  -webkit-backdrop-filter: blur(22px) saturate(1.18);
+}
+
+.voice-agent-visual::before {
+  left: 0;
+  border-right: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.voice-agent-visual::after {
+  right: 0;
+  border-left: 1px solid rgba(255, 255, 255, 0.1);
+  transform: scaleX(-1);
+}
+
+.voice-agent-visual-bg {
+  position: absolute;
+  inset: -44px;
+  width: calc(100% + 88px);
+  height: calc(100% + 88px);
+  object-fit: cover;
+  object-position: center;
+  filter: blur(34px) saturate(0.92) brightness(0.48);
+  transform: scale(1.06);
+  opacity: 0.72;
+}
+
+.voice-agent-portrait {
+  position: relative;
+  z-index: 2;
+  width: min(44vw, 58vh, 640px);
+  max-width: calc(100% - 32px);
+  max-height: 100%;
+  aspect-ratio: 3 / 4;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border-radius: 8px;
+}
+
+.voice-agent-portrait img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  object-position: center;
+}
+
 .session-chat-sidebar {
   position: relative;
   flex: 0 0 var(--chat-sidebar-width, clamp(360px, 40vw, 560px));
@@ -1103,6 +1478,90 @@ function micDockBarHeight(level: number): string {
   background: rgba(0, 0, 0, 0.9);
 }
 
+.baidu-avatar-status {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: 11;
+  width: min(90vw, 460px);
+  transform: translate(-50%, -50%);
+  padding: 14px 16px;
+  border: 1px solid rgba(96, 165, 250, 0.36);
+  border-radius: 8px;
+  background: rgba(5, 7, 12, 0.86);
+  color: var(--color-cv-text);
+  text-align: center;
+  line-height: 1.6;
+  font-size: 13px;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.46);
+}
+
+.baidu-avatar-status.error {
+  border-color: rgba(248, 113, 113, 0.45);
+  color: #fecaca;
+}
+
+.avatar-fallback-popover {
+  position: absolute;
+  top: 64px;
+  right: 20px;
+  z-index: 12;
+  width: min(86vw, 360px);
+  padding: 12px 14px;
+  border: 1px solid rgba(125, 211, 252, 0.24);
+  border-radius: 8px;
+  background: rgba(7, 13, 20, 0.78);
+  color: var(--color-cv-text);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  cursor: pointer;
+}
+
+.avatar-fallback-popover-title {
+  margin-bottom: 4px;
+  color: #dbeafe;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.avatar-fallback-popover-detail {
+  color: var(--color-cv-text-secondary);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.avatar-fallback-badge {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  z-index: 10;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  padding: 0 12px;
+  border: 1px solid rgba(125, 211, 252, 0.28);
+  border-radius: 999px;
+  background: rgba(14, 31, 45, 0.58);
+  color: #dbeafe;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    border-color 160ms ease,
+    background-color 160ms ease,
+    color 160ms ease;
+}
+
+.avatar-fallback-badge:hover,
+.avatar-fallback-badge[aria-expanded="true"] {
+  border-color: rgba(125, 211, 252, 0.42);
+  background: rgba(23, 47, 68, 0.72);
+  color: #eff6ff;
+}
+
 .dock-waveform-background {
   position: absolute;
   right: 0;
@@ -1186,6 +1645,26 @@ function micDockBarHeight(level: number): string {
   .session-chat-sidebar {
     flex-basis: var(--chat-sidebar-width, min(82vw, 420px));
     width: var(--chat-sidebar-width, min(82vw, 420px));
+  }
+
+  .voice-agent-visual {
+    padding: 72px 12px 124px;
+  }
+
+  .voice-agent-visual::before,
+  .voice-agent-visual::after {
+    width: clamp(52px, 16vw, 120px);
+  }
+
+  .voice-agent-portrait {
+    width: min(78vw, 54vh, 420px);
+    max-width: calc(100% - 24px);
+  }
+
+  .avatar-fallback-popover {
+    top: 60px;
+    right: 14px;
+    width: min(88vw, 340px);
   }
 
   .visual-preview {

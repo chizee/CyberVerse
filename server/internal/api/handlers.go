@@ -289,12 +289,12 @@ func (r *Router) handleCreateSession(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 		resp.BaiduXiling = baiduConfig
+		resp.IdleImageURL = characterStandbyImageURL(sessionCharacter)
 		if useCachedIdleVideo {
 			resp.IdleVideoURLs = baiduXilingPreviewVideoURLs(sessionCharacter)
 			if len(resp.IdleVideoURLs) > 0 {
 				resp.IdleVideoURL = resp.IdleVideoURLs[0]
 			}
-			resp.IdleImageURL = baiduXilingPreviewImageURL(sessionCharacter)
 		}
 	} else if isXunfeiCharacter {
 		if r.orch == nil {
@@ -315,10 +315,12 @@ func (r *Router) handleCreateSession(w http.ResponseWriter, req *http.Request) {
 			xunfeiConfig.PlaybackURL = "/api/v1/xunfei/sessions/" + sessionID + "/stream.flv"
 		}
 		resp.Xunfei = xunfeiConfig
+		resp.IdleImageURL = characterStandbyImageURL(sessionCharacter)
 	} else if r.orch != nil && body.CharacterID != "" && useCachedIdleVideo && (sessionCharacter == nil || sessionCharacter.AvatarBackend == character.AvatarBackendLocalImage) {
 		target := r.currentIdleVideoTarget(req.Context())
 		// Return any already-cached idle video URLs immediately; generation happens in background.
 		if char, err := r.charStore.Get(body.CharacterID); err == nil {
+			resp.IdleImageURL = characterStandbyImageURL(char)
 			resp.IdleVideoURLs = r.idleVideoURLs(char.ID, char.ActiveImage, target)
 			if len(resp.IdleVideoURLs) > 0 {
 				resp.IdleVideoURL = resp.IdleVideoURLs[0]
@@ -431,6 +433,33 @@ func baiduXilingPreviewImageURL(c *character.Character) string {
 		return url
 	}
 	return strings.TrimSpace(c.BaiduXiling.SourceImageURL)
+}
+
+func xunfeiPreviewImageURL(c *character.Character) string {
+	if c == nil || c.Xunfei == nil {
+		return ""
+	}
+	if url := strings.TrimSpace(c.Xunfei.ThumbnailURL); url != "" {
+		return url
+	}
+	return strings.TrimSpace(c.Xunfei.SourceImageURL)
+}
+
+func characterStandbyImageURL(c *character.Character) string {
+	if c == nil {
+		return ""
+	}
+	if url := strings.TrimSpace(c.AvatarImage); url != "" {
+		return url
+	}
+	switch c.AvatarBackend {
+	case character.AvatarBackendBaiduXiling:
+		return baiduXilingPreviewImageURL(c)
+	case character.AvatarBackendXunfei:
+		return xunfeiPreviewImageURL(c)
+	default:
+		return ""
+	}
 }
 
 func (r *Router) handleDeleteSession(w http.ResponseWriter, req *http.Request) {
