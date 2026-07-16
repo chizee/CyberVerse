@@ -229,10 +229,12 @@ class MilvusBackend(VectorStoreBackend):
         if self._local_db is not None and not self._local_db.exists():
             return
         safe_source = str(source_id).replace('"', '\\"')
-        try:
-            self._client().delete(expr=f'source_id == "{safe_source}"')
-        except Exception:
-            logger.debug("Milvus source delete failed for source_id=%s", source_id, exc_info=True)
+        # ``langchain-milvus`` swallows ``MilvusException`` internally and returns
+        # ``False`` instead of raising, so a failed remote deletion would silently
+        # leave stale chunks behind. Surface that explicitly.
+        result = self._client().delete(expr=f'source_id == "{safe_source}"')
+        if result is False:
+            raise RuntimeError(f"Milvus deletion failed for source_id={source_id!r}")
 
     def search(self, query: str, k: int) -> list[tuple[Any, float]]:
         raw = self._client().similarity_search_with_score(query, k=k)

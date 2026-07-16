@@ -349,8 +349,8 @@ class RAGEngine:
     async def search(self, req: RAGSearchRequest) -> list[RAGSearchResult]:
         return await asyncio.to_thread(self._search_sync, req)
 
-    async def delete_character_index(self, character_dir: str) -> None:
+    async def delete_character_index(self, character_id: str, character_dir: str) -> None:
         def _drop() -> None:
-            self._backend("", character_dir).drop()
+            self._backend(character_id, character_dir).drop()
 
         await asyncio.to_thread(_drop)
