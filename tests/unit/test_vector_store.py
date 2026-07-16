@@ -114,6 +114,8 @@ def test_milvus_delete_source_raises_on_false(tmp_path):
     backend = _remote_milvus(tmp_path)
 
     class _FalseClient:
+        col = object()  # collection exists
+
         def delete(self, expr=None):
             return False  # langchain-milvus returns False on a caught failure
 
@@ -127,9 +129,28 @@ def test_milvus_delete_source_succeeds_when_not_false(tmp_path):
     backend = _remote_milvus(tmp_path)
 
     class _OkClient:
+        col = object()  # collection exists
+
         def delete(self, expr=None):
             return {"delete_count": 3}
 
     backend._store = _OkClient()
 
     backend.delete_source("source_1")  # should not raise
+
+
+def test_milvus_delete_source_is_noop_before_collection_exists(tmp_path):
+    # Regression: a first-ever index against a remote server has no collection
+    # yet, so delete must be skipped rather than raising on the benign
+    # "collection not found" False return.
+    backend = _remote_milvus(tmp_path)
+
+    class _NoCollectionClient:
+        col = None
+
+        def delete(self, expr=None):
+            raise AssertionError("delete must not run when the collection is absent")
+
+    backend._store = _NoCollectionClient()
+
+    backend.delete_source("source_1")  # should not raise or call delete

@@ -228,11 +228,17 @@ class MilvusBackend(VectorStoreBackend):
     def delete_source(self, source_id: str) -> None:
         if self._local_db is not None and not self._local_db.exists():
             return
+        store = self._client()
+        if getattr(store, "col", None) is None:
+            # The collection has not been created yet (e.g. first index against a
+            # remote server), so there is nothing to delete. Attempting a delete
+            # here would surface below as a benign "collection not found" failure.
+            return
         safe_source = str(source_id).replace('"', '\\"')
         # ``langchain-milvus`` swallows ``MilvusException`` internally and returns
-        # ``False`` instead of raising, so a failed remote deletion would silently
-        # leave stale chunks behind. Surface that explicitly.
-        result = self._client().delete(expr=f'source_id == "{safe_source}"')
+        # ``False`` instead of raising, so a failed deletion on an existing
+        # collection would otherwise silently leave stale chunks behind.
+        result = store.delete(expr=f'source_id == "{safe_source}"')
         if result is False:
             raise RuntimeError(f"Milvus deletion failed for source_id={source_id!r}")
 
@@ -243,7 +249,7 @@ class MilvusBackend(VectorStoreBackend):
     def index_exists(self) -> bool:
         if self._local_db is not None:
             return self._local_db.exists()
-        return True
+        return self._client().col is not None
 
     def drop(self) -> None:
         if self._local_db is not None:
