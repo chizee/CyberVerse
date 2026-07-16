@@ -7,12 +7,15 @@ import logging
 import math
 import os
 import re
-import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from inference.plugins.qwen_endpoint import dashscope_base_url
+from inference.rag.vector_store import (
+    VectorStoreBackend,
+    create_vector_store_backend,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -53,25 +56,6 @@ class RAGSearchResult:
     filename: str
     content: str
     score: float
-
-
-def _safe_collection_name(character_id: str) -> str:
-    clean = re.sub(r"[^A-Za-z0-9_-]+", "_", character_id or "")
-    clean = clean.replace("-", "_").strip("_")
-    if not clean:
-        clean = "default"
-    name = f"cv_{clean}"
-    if len(name) < 3:
-        name = (name + "___")[:3]
-    return name[:512]
-
-
-def _knowledge_dir(character_dir: str | Path) -> Path:
-    return Path(character_dir).expanduser().resolve() / "knowledge"
-
-
-def _chroma_dir(character_dir: str | Path) -> Path:
-    return _knowledge_dir(character_dir) / "chroma"
 
 
 def _data_relative_path(path: Path) -> Path | None:
@@ -225,15 +209,12 @@ class RAGEngine:
         self._embeddings = OpenAIEmbeddings(**kwargs)
         return self._embeddings
 
-    def _vector_store(self, character_id: str, character_dir: str):
-        from langchain_chroma import Chroma
-
-        persist_dir = _chroma_dir(character_dir)
-        persist_dir.mkdir(parents=True, exist_ok=True)
-        return Chroma(
-            collection_name=_safe_collection_name(character_id),
+    def _backend(self, character_id: str, character_dir: str) -> VectorStoreBackend:
+        return create_vector_store_backend(
+            _settings_from_config(self.config),
+            character_id=character_id,
+            character_dir=character_dir,
             embedding_function=self._embedding_model(),
-            persist_directory=str(persist_dir),
         )
 
     def _load_text_document(self, path: Path, metadata: dict[str, Any]) -> list[Any]:
@@ -305,46 +286,36 @@ class RAGEngine:
         docs = self._load_documents(req)
         chunks = self._splitter().split_documents(docs)
         chunks = [chunk for chunk in chunks if chunk.page_content.strip()]
-        store = self._vector_store(req.character_id, req.character_dir)
+        backend = self._backend(req.character_id, req.character_dir)
 
         self._delete_source_sync(req.character_id, req.character_dir, req.source_id)
         ids = [f"{req.source_id}:{i}" for i in range(len(chunks))]
-        if chunks:
-            store.add_documents(chunks, ids=ids)
+        backend.add(chunks, ids)
         return len(chunks)
 
     def _delete_source_sync(self, character_id: str, character_dir: str, source_id: str) -> None:
         if not character_dir or not source_id:
             return
-        persist_dir = _chroma_dir(character_dir)
-        if not persist_dir.exists():
+        backend = self._backend(character_id, character_dir)
+        if not backend.index_exists():
             return
-        store = self._vector_store(character_id, character_dir)
-        collection = getattr(store, "_collection", None)
-        if collection is None:
-            return
-        try:
-            collection.delete(where={"source_id": source_id})
-        except Exception:
-            logger.debug("RAG source delete failed; recreating collection may be required", exc_info=True)
+        backend.delete_source(source_id)
 
     def _search_sync(self, req: RAGSearchRequest) -> list[RAGSearchResult]:
         query = (req.query or "").strip()
         if not req.character_dir or not query:
             return []
-        persist_dir = _chroma_dir(req.character_dir)
-        if not persist_dir.exists():
+        backend = self._backend(req.character_id, req.character_dir)
+        if not backend.index_exists():
             return []
-        store = self._vector_store(req.character_id, req.character_dir)
         top_k = req.top_k if req.top_k > 0 else self.default_top_k
         max_chars = req.max_context_chars if req.max_context_chars > 0 else self.default_max_context_chars
         min_score = req.min_score if req.min_score > 0 else self.default_min_score
 
-        raw_results = store.similarity_search_with_score(query, k=top_k)
+        raw_results = backend.search(query, top_k)
         results: list[RAGSearchResult] = []
         used_chars = 0
-        for doc, raw_score in raw_results:
-            score = 1.0 / (1.0 + max(float(raw_score), 0.0))
+        for doc, score in raw_results:
             if score < min_score:
                 continue
             content = (doc.page_content or "").strip()
@@ -378,5 +349,8 @@ class RAGEngine:
     async def search(self, req: RAGSearchRequest) -> list[RAGSearchResult]:
         return await asyncio.to_thread(self._search_sync, req)
 
-    async def delete_character_index(self, character_dir: str) -> None:
-        await asyncio.to_thread(shutil.rmtree, _chroma_dir(character_dir), True)
+    async def delete_character_index(self, character_id: str, character_dir: str) -> None:
+        def _drop() -> None:
+            self._backend(character_id, character_dir).drop()
+
+        await asyncio.to_thread(_drop)

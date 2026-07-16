@@ -103,3 +103,68 @@ async def test_rag_engine_indexes_searches_and_deletes_text_source(tmp_path):
         )
     )
     assert results == []
+
+
+@pytest.mark.asyncio
+async def test_rag_engine_indexes_searches_and_deletes_with_milvus_backend(tmp_path):
+    pytest.importorskip("langchain_milvus")
+    pytest.importorskip("pymilvus")
+    # The local test exercises the embedded Milvus Lite engine, which only ships
+    # wheels for Linux/macOS; skip where it is unavailable (e.g. Windows).
+    pytest.importorskip("milvus_lite")
+
+    source_path = tmp_path / "source.txt"
+    source_path.write_text("晴天出生在海边，后来成为工程师。", encoding="utf-8")
+    engine = RAGEngine(
+        {
+            "pipeline": {
+                "rag": {
+                    "vector_store": "milvus",
+                    "chunk_chars": 120,
+                    "chunk_overlap_chars": 0,
+                    "top_k": 3,
+                    "max_context_chars": 500,
+                    "min_score": 0.0,
+                }
+            },
+            "inference": {"embedding": {"default": "fake", "fake": {"dimensions": 64}}},
+        }
+    )
+    request = RAGIndexRequest(
+        character_id="char_1",
+        character_dir=str(tmp_path / "character"),
+        source_id="source_1",
+        source_type="",
+        title="profile",
+        filename="source.txt",
+        mime_type="text/plain",
+        source_path=str(source_path),
+    )
+
+    chunk_count = await engine.index_source(request)
+    assert chunk_count >= 1
+
+    results = await engine.search(
+        RAGSearchRequest(
+            character_id="char_1",
+            character_dir=request.character_dir,
+            query="晴天在哪里出生",
+            top_k=3,
+            min_score=0.0,
+        )
+    )
+    assert results
+    assert results[0].source_id == "source_1"
+    assert 0.0 <= results[0].score <= 1.0
+
+    await engine.delete_source("char_1", request.character_dir, "source_1")
+    results = await engine.search(
+        RAGSearchRequest(
+            character_id="char_1",
+            character_dir=request.character_dir,
+            query="晴天在哪里出生",
+            top_k=3,
+            min_score=0.0,
+        )
+    )
+    assert results == []
