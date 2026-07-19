@@ -16,6 +16,20 @@
   <a href="docs/assets/logo.png"><img src="docs/assets/logo.png" alt="CyberVerse logo" width="100%"/></a>
 </p>
 
+## Sponsor
+
+<details open>
+<summary>Click to collapse</summary>
+
+<table>
+<tr>
+<td width="180"><a href="https://passport.compshare.cn/register?referral_code=IBmJcGPVu1RF78dMihkQCX"><img src="https://www.compshare.cn/logo-compshare.png" alt="Compshare" width="150"></a></td>
+<td>Thanks to Compshare (优云智算) for sponsoring CyberVerse! Compshare is UCloud's AI cloud platform, offering on-demand GPU rental and model API services. <strong>Its core GPU rental service provides rapidly provisioned GPU instances with usage-based billing for model, algorithm, and application development.</strong> Compshare also provides one-stop access to domestic and international models, with support for Claude Code, Codex, and direct API use. <a href="https://passport.compshare.cn/register?referral_code=IBmJcGPVu1RF78dMihkQCX">Register through this invitation link</a>.</td>
+</tr>
+</table>
+
+</details>
+
 ---
 
 ### One Photo. A Living Digital Human.

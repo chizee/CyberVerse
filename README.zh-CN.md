@@ -16,6 +16,20 @@
   <a href="docs/assets/logo.png"><img src="docs/assets/logo.png" alt="CyberVerse logo" width="100%"/></a>
 </p>
 
+## 赞助商
+
+<details open>
+<summary>点击折叠</summary>
+
+<table>
+<tr>
+<td width="180"><a href="https://passport.compshare.cn/register?referral_code=IBmJcGPVu1RF78dMihkQCX"><img src="https://www.compshare.cn/logo-compshare.png" alt="优云智算" width="150"></a></td>
+<td>感谢优云智算赞助 CyberVerse！优云智算是 UCloud 旗下 AI 云平台，提供 GPU 云算力租赁与模型 API 服务。<strong>其中，GPU 云算力租赁是优云智算的核心服务：面向模型、算法和应用开发者提供秒级启动、流体计费的 GPU 实例。</strong>同时，优云智算还提供国内外主流模型的一站式 API 接入，支持 Claude Code、Codex 及 API 调用。欢迎通过<a href="https://passport.compshare.cn/register?referral_code=IBmJcGPVu1RF78dMihkQCX">此邀请链接</a>注册。</td>
+</tr>
+</table>
+
+</details>
+
 ---
 
 ### 一张照片，让数字人真正「活」起来。

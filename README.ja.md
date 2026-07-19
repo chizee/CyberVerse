@@ -16,6 +16,20 @@
   <a href="docs/assets/logo.png"><img src="docs/assets/logo.png" alt="CyberVerse logo" width="100%"/></a>
 </p>
 
+## スポンサー
+
+<details open>
+<summary>クリックして折りたたむ</summary>
+
+<table>
+<tr>
+<td width="180"><a href="https://passport.compshare.cn/register?referral_code=IBmJcGPVu1RF78dMihkQCX"><img src="https://www.compshare.cn/logo-compshare.png" alt="Compshare" width="150"></a></td>
+<td>CyberVerse をご支援いただいている Compshare（优云智算）に感謝します！Compshare は UCloud 傘下の AI クラウドプラットフォームで、オンデマンド GPU レンタルとモデル API サービスを提供しています。<strong>中核となる GPU レンタルサービスでは、モデル・アルゴリズム・アプリケーション開発者向けに、迅速に起動でき、使用量に応じて課金される GPU インスタンスを提供しています。</strong>また、国内外の主要モデルにワンストップでアクセスでき、Claude Code、Codex、API からの利用に対応しています。<a href="https://passport.compshare.cn/register?referral_code=IBmJcGPVu1RF78dMihkQCX">こちらの招待リンクから登録できます</a>。</td>
+</tr>
+</table>
+
+</details>
+
 ---
 ### たった一枚の写真から、息づくデジタルヒューマンへ。
 
